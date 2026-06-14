@@ -34,7 +34,7 @@ feature/backend-frontend-mvp
 Current backend baseline:
 
 ```powershell
-python -m py_compile web_mvp.py mvp_runner.py apps/api/jstudy_api/app.py apps/api/jstudy_api/ui.py packages/core/jstudy_core/pipeline.py packages/core/jstudy_core/cli.py packages/core/jstudy_core/citations.py packages/core/jstudy_core/jobs.py packages/core/jstudy_core/providers.py packages/core/jstudy_core/settings.py packages/core/jstudy_core/storage.py
+python -m py_compile web_mvp.py mvp_runner.py apps/api/jstudy_api/app.py apps/api/jstudy_api/ui.py apps/api/jstudy_api/admin_ui.py packages/core/jstudy_core/admin_settings.py packages/core/jstudy_core/pipeline.py packages/core/jstudy_core/cli.py packages/core/jstudy_core/citations.py packages/core/jstudy_core/jobs.py packages/core/jstudy_core/providers.py packages/core/jstudy_core/settings.py packages/core/jstudy_core/storage.py
 python -m unittest discover -s tests -v
 ```
 
@@ -78,6 +78,7 @@ Current backend module ownership:
 ```text
 apps/api/jstudy_api       FastAPI app and HTTP contract
 packages/core/jstudy_core Pipeline orchestration, job lifecycle and JSON persistence, provider calls, citations, runtime settings
+packages/core/jstudy_core/admin_settings.py JSON-backed operator settings, content-pack config, mnemonic JSON rendering
 packages/core/jstudy_core/citations.py Evidence item and citation-link contracts
 packages/core/jstudy_core/providers.py External model-provider HTTP calls
 packages/core/jstudy_core/storage.py Local output path contracts and JSON file helpers
@@ -130,6 +131,8 @@ Deployment should be portable across servers:
 - no manually installed app dependencies outside containers
 - secrets in `.env`, never in Git
 - `SILICONFLOW_API_KEY` is the deployment API key source
+- `JSTUDY_ADMIN_TOKEN` should be set before exposing `/admin/settings`
+- `JSTUDY_SETTINGS_DIR` should point at a mounted persistent settings directory in containerized deployment
 - `JSTUDY_JOBS_DIR`, `JSTUDY_SOUL_PATH`, and `JSTUDY_MNEMONICS_PATH` should point at mounted deployment paths when containerized
 - `JSTUDY_MAX_PDF_BYTES` should be set explicitly for server deployment
 - persistent files mounted under a data volume

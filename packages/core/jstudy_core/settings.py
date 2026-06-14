@@ -1,19 +1,29 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
+from packages.core.jstudy_core.admin_settings import (
+    DEFAULT_SETTINGS_DIR_NAME,
+    AdminSettingsService,
+    active_content_pack,
+    active_model,
+    active_profile,
+)
 from packages.core.jstudy_core.providers import (
     DEFAULT_CHAT_MODEL,
     DEFAULT_EMBED_MODEL,
+    SILICONFLOW_BASE_URL,
     probe_siliconflow_provider,
 )
+from packages.retrieval.hybrid import RagConfig
 
 
 DEFAULT_API_KEY_ENV = "SILICONFLOW_API_KEY"
 DEFAULT_API_KEY_FILE_ENV = "SILICONFLOW_API_KEY_FILE"
+SETTINGS_DIR_ENV = "JSTUDY_SETTINGS_DIR"
 JOBS_DIR_ENV = "JSTUDY_JOBS_DIR"
 SOUL_PATH_ENV = "JSTUDY_SOUL_PATH"
 MNEMONICS_PATH_ENV = "JSTUDY_MNEMONICS_PATH"
@@ -59,21 +69,65 @@ class RuntimeSettings:
     api_key_path: Path | None
     chat_model: str
     embed_model: str
+    admin_settings_dir: Path | None = None
+    api_key: str = ""
+    chat_base_url: str = SILICONFLOW_BASE_URL
+    embed_base_url: str = SILICONFLOW_BASE_URL
+    rag_config: RagConfig = field(default_factory=RagConfig)
+    parser_config: dict[str, Any] = field(default_factory=dict)
+    content_pack: dict[str, Any] = field(default_factory=dict)
+    search_config: dict[str, Any] = field(default_factory=dict)
     max_pdf_bytes: int = DEFAULT_MAX_PDF_BYTES
     job_retention_hours: int = 0
 
     @classmethod
     def from_env(cls, project_root: Path, jobs_root: Path | None = None) -> "RuntimeSettings":
+        settings_dir = env_path(SETTINGS_DIR_ENV, project_root / DEFAULT_SETTINGS_DIR_NAME)
+        admin_settings = AdminSettingsService(settings_dir)
+        catalog = admin_settings.load_model_catalog()
+        runtime = admin_settings.load_runtime()
+        content = admin_settings.load_content_pack()
+        pack = active_content_pack(content)
+        llm_profile = active_profile(catalog, "llm") or {}
+        llm_model = active_model(catalog, "llm") or {}
+        embedding_profile = active_profile(catalog, "embedding") or {}
+        embedding_model = active_model(catalog, "embedding") or {}
+        search_profile = active_profile(catalog, "search") or {}
+        api_key_path = _catalog_path(project_root, llm_profile.get("api_key_path"))
+        if api_key_path is None:
+            api_key_path = project_root / "siliconflow api key.txt"
+
         return cls(
             project_root=project_root,
             jobs_root=jobs_root or env_path(JOBS_DIR_ENV, project_root / "web_jobs"),
-            soul_path=env_path(SOUL_PATH_ENV, project_root / "soul.md"),
-            mnemonics_path=env_path(MNEMONICS_PATH_ENV, project_root / "mnemonics.md"),
-            api_key_path=env_path(DEFAULT_API_KEY_FILE_ENV, project_root / "siliconflow api key.txt"),
-            chat_model=os.getenv("SILICONFLOW_CHAT_MODEL", DEFAULT_CHAT_MODEL).strip() or DEFAULT_CHAT_MODEL,
-            embed_model=os.getenv("SILICONFLOW_EMBED_MODEL", DEFAULT_EMBED_MODEL).strip() or DEFAULT_EMBED_MODEL,
-            max_pdf_bytes=env_int(MAX_PDF_BYTES_ENV, DEFAULT_MAX_PDF_BYTES),
-            job_retention_hours=env_nonnegative_int(JOB_RETENTION_HOURS_ENV, 0),
+            soul_path=env_path(SOUL_PATH_ENV, _project_path(project_root, pack.get("soul_path"), "soul.md")),
+            mnemonics_path=env_path(
+                MNEMONICS_PATH_ENV,
+                _project_path(project_root, pack.get("mnemonics_path"), "mnemonics.md"),
+            ),
+            api_key_path=env_path(DEFAULT_API_KEY_FILE_ENV, api_key_path),
+            chat_model=os.getenv("SILICONFLOW_CHAT_MODEL", str(llm_model.get("model") or DEFAULT_CHAT_MODEL)).strip()
+            or DEFAULT_CHAT_MODEL,
+            embed_model=os.getenv(
+                "SILICONFLOW_EMBED_MODEL",
+                str(embedding_model.get("model") or DEFAULT_EMBED_MODEL),
+            ).strip()
+            or DEFAULT_EMBED_MODEL,
+            admin_settings_dir=settings_dir,
+            api_key=str(llm_profile.get("api_key") or embedding_profile.get("api_key") or "").strip(),
+            chat_base_url=str(llm_profile.get("base_url") or SILICONFLOW_BASE_URL).strip()
+            or SILICONFLOW_BASE_URL,
+            embed_base_url=str(embedding_profile.get("base_url") or SILICONFLOW_BASE_URL).strip()
+            or SILICONFLOW_BASE_URL,
+            rag_config=RagConfig(**runtime["rag"]),
+            parser_config=runtime["parser"],
+            content_pack=pack,
+            search_config=search_profile,
+            max_pdf_bytes=env_int(MAX_PDF_BYTES_ENV, runtime["jobs"]["max_pdf_bytes"]),
+            job_retention_hours=env_nonnegative_int(
+                JOB_RETENTION_HOURS_ENV,
+                runtime["jobs"]["job_retention_hours"],
+            ),
         )
 
     def readiness(
@@ -114,11 +168,15 @@ class RuntimeSettings:
         return {"name": name, "status": "ok", "detail": str(path)}
 
     def _api_key_check(self) -> dict[str, str]:
+        if os.getenv(DEFAULT_API_KEY_ENV, "").strip():
+            return {"name": "api_key", "status": "ok", "detail": DEFAULT_API_KEY_ENV}
+        if self.api_key:
+            return {"name": "api_key", "status": "ok", "detail": "admin settings"}
         try:
             read_api_key(self.api_key_path)
         except RuntimeError as exc:
             return {"name": "api_key", "status": "error", "detail": str(exc)}
-        source = DEFAULT_API_KEY_ENV if os.getenv(DEFAULT_API_KEY_ENV, "").strip() else str(self.api_key_path)
+        source = str(self.api_key_path)
         return {"name": "api_key", "status": "ok", "detail": source}
 
     def _max_pdf_bytes_check(self) -> dict[str, str]:
@@ -141,15 +199,43 @@ class RuntimeSettings:
         return {"name": "job_retention_hours", "status": "ok", "detail": detail}
 
     def _provider_connectivity_check(self, provider_probe: ProviderProbe) -> dict[str, Any]:
-        try:
-            api_key = read_api_key(self.api_key_path)
-        except RuntimeError as exc:
-            return {"name": "provider_connectivity", "status": "error", "detail": str(exc)}
+        api_key = self._effective_api_key()
+        if not api_key:
+            return {"name": "provider_connectivity", "status": "error", "detail": "API key is missing"}
 
         try:
             return provider_probe(api_key, self.chat_model, self.embed_model)
         except Exception as exc:
             return {"name": "provider_connectivity", "status": "error", "detail": str(exc)[:200]}
+
+    def _effective_api_key(self) -> str:
+        env_key = os.getenv(DEFAULT_API_KEY_ENV, "").strip()
+        if env_key:
+            return env_key
+        if self.api_key:
+            return self.api_key
+        try:
+            return read_api_key(self.api_key_path)
+        except RuntimeError:
+            return ""
+
+
+def _project_path(project_root: Path, value: Any, default: str) -> Path:
+    text = str(value or default).strip() or default
+    path = Path(text)
+    if path.is_absolute():
+        return path
+    return project_root / path
+
+
+def _catalog_path(project_root: Path, value: Any) -> Path | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    path = Path(text)
+    if path.is_absolute():
+        return path
+    return project_root / path
 
 
 def read_api_key(path: Path | None, env_var: str = DEFAULT_API_KEY_ENV) -> str:

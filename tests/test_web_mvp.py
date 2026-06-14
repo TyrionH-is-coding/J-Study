@@ -1,9 +1,11 @@
 import json
+import os
 import sys
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 import fitz
 from fastapi.testclient import TestClient
@@ -12,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from apps.api.jstudy_api.app import INDEX_HTML, create_app  # noqa: E402
+from packages.core.jstudy_core.admin_settings import AdminSettingsService  # noqa: E402
 from packages.core.jstudy_core.jobs import JobStore  # noqa: E402
 from packages.core.jstudy_core.settings import RuntimeSettings  # noqa: E402
 
@@ -84,6 +87,89 @@ class WebMvpTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.headers["cache-control"], "no-store")
         self.assertEqual(response.json(), {"status": "ok", "service": "jstudy-api"})
+
+    def test_admin_settings_page_is_served(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            settings = self.ready_settings(root)
+            client = TestClient(create_app(settings=settings))
+
+            response = client.get("/admin/settings")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("adminSettingsApp", response.text)
+        self.assertIn("/api/admin/settings", response.text)
+
+    def test_admin_settings_endpoint_requires_token_when_configured(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            settings = self.ready_settings(root)
+            client = TestClient(create_app(settings=settings))
+
+            with patch.dict(os.environ, {"JSTUDY_ADMIN_TOKEN": "secret"}, clear=False):
+                blocked = client.get("/api/admin/settings")
+                allowed = client.get("/api/admin/settings?admin_token=secret")
+
+        self.assertEqual(blocked.status_code, 401)
+        self.assertEqual(allowed.status_code, 200)
+
+    def test_admin_settings_api_redacts_and_persists_settings(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            service = AdminSettingsService(root / "data" / "settings")
+            payload = service.load_all()
+            payload["model_catalog"]["services"]["llm"]["profiles"][0]["api_key"] = "sk-secret"
+            service.save_all(payload)
+            settings = RuntimeSettings.from_env(root)
+            client = TestClient(create_app(settings=settings))
+
+            loaded = client.get("/api/admin/settings").json()
+            loaded["runtime"]["rag"]["chunk_max_chars"] = 900
+            loaded["content_pack"]["packs"][0]["name"] = "Medicine Pilot"
+            saved = client.put("/api/admin/settings", json=loaded)
+            restored = service.load_all()
+
+        self.assertEqual(loaded["model_catalog"]["services"]["llm"]["profiles"][0]["api_key"], "")
+        self.assertTrue(loaded["model_catalog"]["services"]["llm"]["profiles"][0]["api_key_set"])
+        self.assertEqual(saved.status_code, 200)
+        self.assertEqual(restored["runtime"]["rag"]["chunk_max_chars"], 900)
+        self.assertEqual(restored["content_pack"]["packs"][0]["name"], "Medicine Pilot")
+        self.assertEqual(
+            restored["model_catalog"]["services"]["llm"]["profiles"][0]["api_key"],
+            "sk-secret",
+        )
+
+    def test_admin_settings_diagnostic_uses_provider_probe(self):
+        calls = []
+
+        def probe(api_key: str, chat_model: str, embed_model: str):
+            calls.append((api_key, chat_model, embed_model))
+            return {
+                "name": "provider_connectivity",
+                "status": "ok",
+                "detail": "chat and embedding reachable",
+            }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            soul = root / "soul.md"
+            mnemonics = root / "mnemonics.md"
+            soul.write_text("soul", encoding="utf-8")
+            mnemonics.write_text("mnemonics", encoding="utf-8")
+            service = AdminSettingsService(root / "data" / "settings")
+            payload = service.load_all()
+            payload["model_catalog"]["services"]["llm"]["profiles"][0]["api_key"] = "catalog-key"
+            payload["model_catalog"]["services"]["llm"]["profiles"][0]["models"][0]["model"] = "chat-model"
+            payload["model_catalog"]["services"]["embedding"]["profiles"][0]["models"][0]["model"] = "embed-model"
+            service.save_all(payload)
+            settings = RuntimeSettings.from_env(root)
+            client = TestClient(create_app(settings=settings, provider_probe=probe))
+
+            response = client.post("/api/admin/settings/test/llm")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "ok")
+        self.assertEqual(calls, [("catalog-key", "chat-model", "embed-model")])
 
     def test_readiness_endpoint_reports_degraded_runtime_config(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -289,6 +375,62 @@ class WebMvpTest(unittest.TestCase):
         self.assertEqual(pdf_info["page_count"], 2)
         self.assertEqual(page_png.headers["content-type"], "image/png")
         self.assertTrue(page_png.content.startswith(b"\x89PNG"))
+
+    def test_generate_job_uses_admin_runtime_model_and_rag_settings(self):
+        captured = {}
+
+        def fake_runner(**kwargs):
+            captured.update(kwargs)
+            output_dir = kwargs["output_dir"]
+            output_prefix = kwargs["output_prefix"]
+            output_dir.mkdir(parents=True, exist_ok=True)
+            markdown = output_dir / f"{output_prefix}-output.md"
+            evidence = output_dir / f"{output_prefix}-evidence.json"
+            evidence_links = output_dir / f"{output_prefix}-evidence_links.json"
+            quality = output_dir / f"{output_prefix}-quality.json"
+            markdown.write_text("Fact\n", encoding="utf-8")
+            evidence.write_text("[]", encoding="utf-8")
+            evidence_links.write_text("[]", encoding="utf-8")
+            quality.write_text(json.dumps({"status": "pass"}), encoding="utf-8")
+            return {
+                "markdown": markdown,
+                "evidence": evidence,
+                "evidence_links": evidence_links,
+                "quality": quality,
+            }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            soul = root / "soul.md"
+            mnemonics = root / "mnemonics.md"
+            soul.write_text("soul", encoding="utf-8")
+            mnemonics.write_text("mnemonics", encoding="utf-8")
+            service = AdminSettingsService(root / "data" / "settings")
+            payload = service.load_all()
+            payload["model_catalog"]["services"]["llm"]["profiles"][0]["api_key"] = "catalog-key"
+            payload["model_catalog"]["services"]["llm"]["profiles"][0]["base_url"] = "https://chat.example/v1"
+            payload["model_catalog"]["services"]["llm"]["profiles"][0]["models"][0]["model"] = "catalog-chat"
+            payload["model_catalog"]["services"]["embedding"]["profiles"][0]["base_url"] = "https://embed.example/v1"
+            payload["model_catalog"]["services"]["embedding"]["profiles"][0]["models"][0]["model"] = "catalog-embed"
+            payload["runtime"]["rag"]["chunk_max_chars"] = 888
+            payload["runtime"]["rag"]["per_query_limit"] = 4
+            service.save_all(payload)
+            settings = RuntimeSettings.from_env(root)
+            client = TestClient(create_app(runner=fake_runner, settings=settings))
+
+            response = client.post(
+                "/api/generate",
+                files={"pdf": ("lecture.pdf", self.make_pdf_bytes(), "application/pdf")},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(captured["api_key"], "catalog-key")
+        self.assertEqual(captured["chat_base_url"], "https://chat.example/v1")
+        self.assertEqual(captured["embed_base_url"], "https://embed.example/v1")
+        self.assertEqual(captured["chat_model"], "catalog-chat")
+        self.assertEqual(captured["embed_model"], "catalog-embed")
+        self.assertEqual(captured["rag_config"].chunk_max_chars, 888)
+        self.assertEqual(captured["rag_config"].per_query_limit, 4)
 
     def test_default_job_store_persists_completed_job_status_between_app_instances(self):
         def fake_runner(

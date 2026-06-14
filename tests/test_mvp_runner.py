@@ -206,6 +206,20 @@ content: 一嗅二视三动眼。
         self.assertEqual(result, {"ok": True})
         self.assertEqual(urlopen.call_count, 2)
 
+    @patch("packages.core.jstudy_core.providers.urllib.request.urlopen")
+    def test_siliconflow_post_accepts_custom_base_url(self, urlopen):
+        urlopen.return_value = FakeHttpResponse()
+
+        siliconflow_post(
+            "embeddings",
+            {"model": "x", "input": ["a"]},
+            "key",
+            base_url="https://models.example/v1",
+        )
+
+        request = urlopen.call_args.args[0]
+        self.assertEqual(request.full_url, "https://models.example/v1/embeddings")
+
     @patch("packages.core.jstudy_core.providers.siliconflow_post")
     def test_probe_siliconflow_provider_checks_chat_and_embedding(self, post):
         calls = []
@@ -289,6 +303,63 @@ content: 一嗅二视三动眼。
             self.assertTrue(cache.exists())
             self.assertEqual(quality["status"], "pass")
             self.assertEqual(evidence_links[0]["target"]["page"], 1)
+
+    @patch("packages.core.jstudy_core.pipeline.extract_pdf_pages")
+    @patch("packages.core.jstudy_core.providers.embed_texts")
+    def test_run_mvp_uses_runtime_api_key_and_base_urls(self, embed_texts, extract_pdf_pages):
+        extract_pdf_pages.return_value = [
+            {
+                "page": 1,
+                "text": "alpha overview: beta detail with enough lecture content for retrieval and evidence citation.",
+            }
+        ]
+        embed_calls = []
+
+        def fake_embed(texts, api_key, model, base_url):
+            embed_calls.append((texts, api_key, model, base_url))
+            return [[1.0, 0.0] for _ in texts]
+
+        embed_texts.side_effect = fake_embed
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            pdf = root / "lecture.pdf"
+            soul = root / "soul.md"
+            mnemonics = root / "mnemonics.md"
+            api_key = root / "api-key.txt"
+            output_dir = root / "out"
+            pdf.write_bytes(b"%PDF-1.4\n")
+            soul.write_text("rules", encoding="utf-8")
+            mnemonics.write_text("", encoding="utf-8")
+            api_key.write_text("file-key", encoding="utf-8")
+
+            with patch(
+                "packages.core.jstudy_core.pipeline.build_study_queries",
+                return_value=[StudyQuery("sample", "Sample", "alpha overview")],
+            ), patch("packages.core.jstudy_core.providers.generate_markdown") as generate_markdown:
+                generate_markdown.return_value = "Fact <!-- evidence: E001 -->"
+
+                run_mvp(
+                    pdf_path=pdf,
+                    soul_path=soul,
+                    mnemonics_path=mnemonics,
+                    api_key_path=api_key,
+                    output_dir=output_dir,
+                    chat_model="chat",
+                    embed_model="embed",
+                    output_prefix="case",
+                    rag_config=RagConfig(top_k_candidates=1, per_query_limit=1),
+                    api_key="runtime-key",
+                    chat_base_url="https://chat.example/v1",
+                    embed_base_url="https://embed.example/v1",
+                )
+
+        self.assertTrue(embed_calls)
+        self.assertTrue(all(call[1] == "runtime-key" for call in embed_calls))
+        self.assertTrue(all(call[3] == "https://embed.example/v1" for call in embed_calls))
+        generate_markdown.assert_called_once()
+        self.assertEqual(generate_markdown.call_args.kwargs["api_key"], "runtime-key")
+        self.assertEqual(generate_markdown.call_args.kwargs["base_url"], "https://chat.example/v1")
 
     @patch("packages.core.jstudy_core.providers.embed_texts")
     def test_embed_texts_cached_reuses_existing_vectors(self, embed_texts):

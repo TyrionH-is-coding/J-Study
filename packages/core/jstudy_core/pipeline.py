@@ -76,10 +76,13 @@ def run_mvp(
     rag_config: RagConfig | None = None,
     embedding_cache_path: Path | None = None,
     outline_path: Path | None = None,
+    api_key: str | None = None,
+    chat_base_url: str = SILICONFLOW_BASE_URL,
+    embed_base_url: str = SILICONFLOW_BASE_URL,
 ) -> dict[str, Path]:
     rag_config = rag_config or RagConfig()
     embedding_cache_path = embedding_cache_path or output_dir / ".mvp_cache" / "embeddings.json"
-    api_key = read_api_key(api_key_path)
+    resolved_api_key = api_key or read_api_key(api_key_path)
     pages = extract_pdf_pages(pdf_path)
     chunks = chunk_pages(
         pages,
@@ -91,17 +94,19 @@ def run_mvp(
 
     chunk_embeddings = providers.embed_texts_cached(
         [chunk.text for chunk in chunks],
-        api_key=api_key,
+        api_key=resolved_api_key,
         model=embed_model,
         cache_path=embedding_cache_path,
+        base_url=embed_base_url,
     )
 
     study_queries = build_study_queries()
     query_embeddings = providers.embed_texts_cached(
         [study_query.query for study_query in study_queries],
-        api_key=api_key,
+        api_key=resolved_api_key,
         model=embed_model,
         cache_path=embedding_cache_path,
+        base_url=embed_base_url,
     )
 
     selected_chunks, retrieval_trace = select_evidence_chunks(
@@ -158,7 +163,15 @@ def run_mvp(
         mnemonic_hits,
         outline=outline_path.read_text(encoding="utf-8") if outline_path else "",
     )
-    markdown = providers.generate_markdown(messages, api_key=api_key, model=chat_model)
+    if chat_base_url == SILICONFLOW_BASE_URL:
+        markdown = providers.generate_markdown(messages, api_key=resolved_api_key, model=chat_model)
+    else:
+        markdown = providers.generate_markdown(
+            messages,
+            api_key=resolved_api_key,
+            model=chat_model,
+            base_url=chat_base_url,
+        )
     output_paths.markdown.write_text(markdown + "\n", encoding="utf-8")
     write_json(output_paths.evidence_links, citations.build_evidence_links(markdown, evidence))
     write_json(output_paths.quality, audit_output_quality(markdown, evidence))

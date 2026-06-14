@@ -20,9 +20,10 @@ def siliconflow_post(
     api_key: str,
     timeout: int = 120,
     retries: int = 2,
+    base_url: str = SILICONFLOW_BASE_URL,
 ) -> dict[str, Any]:
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-    url = f"{SILICONFLOW_BASE_URL}/{endpoint.lstrip('/')}"
+    url = f"{base_url.rstrip('/')}/{endpoint.lstrip('/')}"
 
     for attempt in range(retries + 1):
         request = urllib.request.Request(
@@ -62,6 +63,7 @@ def embed_texts(
     api_key: str,
     model: str = DEFAULT_EMBED_MODEL,
     batch_size: int = 24,
+    base_url: str = SILICONFLOW_BASE_URL,
 ) -> list[list[float]]:
     embeddings: list[list[float]] = []
     for start in range(0, len(texts), batch_size):
@@ -70,6 +72,7 @@ def embed_texts(
             "embeddings",
             {"model": model, "input": batch},
             api_key,
+            base_url=base_url,
         )
         rows = response.get("data", [])
         if len(rows) != len(batch):
@@ -92,9 +95,15 @@ def embed_texts_cached(
     api_key: str,
     model: str = DEFAULT_EMBED_MODEL,
     cache_path: Path | None = None,
+    base_url: str = SILICONFLOW_BASE_URL,
 ) -> list[list[float]]:
     if cache_path is None:
-        return embed_texts(texts, api_key=api_key, model=model)
+        return _embed_texts_with_optional_base_url(
+            texts,
+            api_key=api_key,
+            model=model,
+            base_url=base_url,
+        )
 
     cache: dict[str, Any] = {}
     if cache_path.exists():
@@ -116,7 +125,12 @@ def embed_texts_cached(
         missing_keys.append(key)
 
     if missing_texts:
-        fetched = embed_texts(missing_texts, api_key=api_key, model=model)
+        fetched = _embed_texts_with_optional_base_url(
+            missing_texts,
+            api_key=api_key,
+            model=model,
+            base_url=base_url,
+        )
         for index, key, embedding in zip(missing_indexes, missing_keys, fetched):
             embeddings[index] = embedding
             cache[key] = {
@@ -132,10 +146,22 @@ def embed_texts_cached(
     return [embedding for embedding in embeddings if embedding is not None]
 
 
+def _embed_texts_with_optional_base_url(
+    texts: list[str],
+    api_key: str,
+    model: str,
+    base_url: str,
+) -> list[list[float]]:
+    if base_url == SILICONFLOW_BASE_URL:
+        return embed_texts(texts, api_key=api_key, model=model)
+    return embed_texts(texts, api_key=api_key, model=model, base_url=base_url)
+
+
 def generate_markdown(
     messages: list[dict[str, str]],
     api_key: str,
     model: str = DEFAULT_CHAT_MODEL,
+    base_url: str = SILICONFLOW_BASE_URL,
 ) -> str:
     response = siliconflow_post(
         "chat/completions",
@@ -148,6 +174,7 @@ def generate_markdown(
         api_key,
         timeout=240,
         retries=1,
+        base_url=base_url,
     )
     try:
         return response["choices"][0]["message"]["content"].strip()

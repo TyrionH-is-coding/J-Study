@@ -26,6 +26,7 @@ Current important files:
 ```text
 apps/api/jstudy_api/    FastAPI MVP service and temporary UI module
 packages/core/          Pipeline orchestration, job lifecycle, output storage, runtime settings, CLI
+packages/core/jstudy_core/admin_settings.py JSON-backed admin settings and mnemonic rendering
 packages/core/jstudy_core/citations.py Evidence item and citation-link contracts
 packages/core/jstudy_core/cli.py Legacy CLI entrypoint implementation
 packages/core/jstudy_core/jobs.py MVP job lifecycle store with JSON persistence
@@ -38,7 +39,8 @@ packages/domains/       Medicine domain pack and future subject packs
 web_mvp.py              Compatibility shim for the old Uvicorn entrypoint
 mvp_runner.py           Compatibility shim for the old CLI entrypoint
 soul.md                 Medicine output style and study-material template
-mnemonics.md            Medicine mnemonic seed library
+mnemonics.md            Medicine mnemonic seed library rendered for prompts
+data/settings/          Runtime admin settings, model catalog, and structured mnemonics (created at runtime)
 rag-config.example.json Example RAG settings
 tests/                  Current backend and rendering contract tests
 docs/                   Product, architecture, roadmap, and development docs
@@ -68,7 +70,7 @@ docs/
 Run from the repository root:
 
 ```powershell
-python -m py_compile web_mvp.py mvp_runner.py apps/api/jstudy_api/app.py apps/api/jstudy_api/ui.py packages/core/jstudy_core/pipeline.py packages/core/jstudy_core/cli.py packages/core/jstudy_core/citations.py packages/core/jstudy_core/jobs.py packages/core/jstudy_core/providers.py packages/core/jstudy_core/settings.py packages/core/jstudy_core/storage.py
+python -m py_compile web_mvp.py mvp_runner.py apps/api/jstudy_api/app.py apps/api/jstudy_api/ui.py apps/api/jstudy_api/admin_ui.py packages/core/jstudy_core/admin_settings.py packages/core/jstudy_core/pipeline.py packages/core/jstudy_core/cli.py packages/core/jstudy_core/citations.py packages/core/jstudy_core/jobs.py packages/core/jstudy_core/providers.py packages/core/jstudy_core/settings.py packages/core/jstudy_core/storage.py
 python -m unittest discover -s tests -v
 ```
 
@@ -85,6 +87,8 @@ $env:SILICONFLOW_API_KEY="your-key"
 ```
 
 For deployment, start from [.env.example](.env.example) and keep real secrets out of Git.
+Operators can use `/admin/settings` to edit JSON-backed runtime settings instead of editing files by hand. Set `JSTUDY_ADMIN_TOKEN` in deployment; then open `/admin/settings?admin_token=...` or send `Authorization: Bearer ...`.
+The admin settings directory defaults to `data/settings` and can be moved with `JSTUDY_SETTINGS_DIR`.
 `JSTUDY_JOBS_DIR`, `JSTUDY_SOUL_PATH`, and `JSTUDY_MNEMONICS_PATH` can be used to move runtime data and domain templates outside the repository in Docker or on a server.
 `JSTUDY_MAX_PDF_BYTES` controls the upload limit for courseware PDFs; the default is 50 MB.
 `JSTUDY_JOB_RETENTION_HOURS` is optional and defaults to `0`, which disables cleanup of completed or failed jobs.
@@ -106,6 +110,17 @@ Use `/api/readiness?probe_provider=true` during deployment to run a live Silicon
 `POST /api/generate` returns `503` with the readiness payload when required runtime configuration is missing.
 Job status is persisted in `JSTUDY_JOBS_DIR/jobs.json`; jobs that were queued or running during a server restart are marked failed because the MVP has no separate worker queue yet.
 Completed jobs expose retrieval diagnostics at `/api/jobs/{job_id}/trace`.
+
+Admin settings:
+
+```text
+GET /admin/settings
+GET /api/admin/settings
+PUT /api/admin/settings
+POST /api/admin/settings/test/{llm|embedding|search}
+```
+
+The first admin settings version stores model catalog, RAG settings, web-search settings, parser settings, content-pack paths, and `mnemonics.json`. Structured mnemonic JSON is rendered back to Markdown for the existing prompt flow.
 
 Run the current MVP service with the compatibility entrypoint:
 

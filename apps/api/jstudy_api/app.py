@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import inspect
+import os
 from pathlib import Path
 import re
 from typing import Any, Callable
@@ -8,13 +10,15 @@ import unicodedata
 from uuid import uuid4
 
 import fitz
-from fastapi import BackgroundTasks, FastAPI, File, HTTPException, Response, UploadFile
+from fastapi import BackgroundTasks, FastAPI, File, HTTPException, Request, Response, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse
 
+from apps.api.jstudy_api.admin_ui import ADMIN_SETTINGS_HTML
 from apps.api.jstudy_api.ui import INDEX_HTML
 
+from packages.core.jstudy_core.admin_settings import AdminSettingsService
 from packages.core.jstudy_core.jobs import JobRecord, JobStore
-from packages.core.jstudy_core.pipeline import RagConfig, run_mvp
+from packages.core.jstudy_core.pipeline import run_mvp
 from packages.core.jstudy_core.settings import RuntimeSettings
 from packages.core.jstudy_core.storage import read_json
 
@@ -26,6 +30,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 ROOT = PROJECT_ROOT
 NO_STORE_CACHE_CONTROL = "no-store"
 PRIVATE_CACHE_CONTROL = "private, max-age=0, must-revalidate"
+ADMIN_TOKEN_ENV = "JSTUDY_ADMIN_TOKEN"
 
 
 def private_cache_headers() -> dict[str, str]:
@@ -72,6 +77,26 @@ def format_job_error(exc: Exception) -> str:
     return type(exc).__name__
 
 
+def filter_runner_kwargs(runner: Runner, kwargs: dict[str, Any]) -> dict[str, Any]:
+    signature = inspect.signature(runner)
+    parameters = signature.parameters.values()
+    if any(parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in parameters):
+        return kwargs
+    allowed = set(signature.parameters)
+    return {key: value for key, value in kwargs.items() if key in allowed}
+
+
+def require_admin(request: Request) -> None:
+    expected = os.getenv(ADMIN_TOKEN_ENV, "").strip()
+    if not expected:
+        return
+    auth = request.headers.get("authorization", "").strip()
+    bearer = auth[7:].strip() if auth.lower().startswith("bearer ") else ""
+    query = request.query_params.get("admin_token", "").strip()
+    if expected not in {bearer, query}:
+        raise HTTPException(status_code=401, detail="Admin token required")
+
+
 def create_app(
     base_dir: Path | None = None,
     runner: Runner = run_mvp,
@@ -84,6 +109,13 @@ def create_app(
     jobs_root = base_dir or runtime.jobs_root
     jobs_root.mkdir(parents=True, exist_ok=True)
     jobs = job_store or JobStore(store_path=jobs_root / "jobs.json")
+    admin_settings = AdminSettingsService(
+        runtime.admin_settings_dir or runtime.project_root / "data" / "settings"
+    )
+
+    def refresh_runtime() -> None:
+        nonlocal runtime
+        runtime = RuntimeSettings.from_env(runtime.project_root, jobs_root=jobs_root)
 
     def cleanup_expired_jobs() -> None:
         if runtime.job_retention_hours <= 0:
@@ -109,18 +141,24 @@ def create_app(
         job = jobs.require(job_id)
         jobs.mark_running(job_id)
         try:
+            runner_kwargs = {
+                "pdf_path": job.pdf_path,
+                "soul_path": runtime.soul_path,
+                "mnemonics_path": runtime.mnemonics_path,
+                "api_key_path": runtime.api_key_path,
+                "output_dir": job.output_dir,
+                "chat_model": runtime.chat_model,
+                "embed_model": runtime.embed_model,
+                "output_prefix": "result",
+                "rag_config": runtime.rag_config,
+                "embedding_cache_path": jobs_root / ".cache" / "embeddings.json",
+                "outline_path": job.outline_path,
+                "api_key": runtime.api_key or None,
+                "chat_base_url": runtime.chat_base_url,
+                "embed_base_url": runtime.embed_base_url,
+            }
             outputs = runner(
-                pdf_path=job.pdf_path,
-                soul_path=runtime.soul_path,
-                mnemonics_path=runtime.mnemonics_path,
-                api_key_path=runtime.api_key_path,
-                output_dir=job.output_dir,
-                chat_model=runtime.chat_model,
-                embed_model=runtime.embed_model,
-                output_prefix="result",
-                rag_config=RagConfig(),
-                embedding_cache_path=jobs_root / ".cache" / "embeddings.json",
-                outline_path=job.outline_path,
+                **filter_runner_kwargs(runner, runner_kwargs)
             )
             quality_path = outputs.get("quality")
             quality = read_json(quality_path) if quality_path and quality_path.exists() else {}
@@ -131,6 +169,63 @@ def create_app(
     @app.get("/", response_class=HTMLResponse)
     def index() -> str:
         return INDEX_HTML
+
+    @app.get("/admin/settings", response_class=HTMLResponse)
+    def admin_settings_page(request: Request) -> str:
+        require_admin(request)
+        return ADMIN_SETTINGS_HTML
+
+    @app.get("/api/admin/settings")
+    def get_admin_settings(request: Request, response: Response) -> dict[str, Any]:
+        require_admin(request)
+        set_no_store(response)
+        return admin_settings.load_public()
+
+    @app.put("/api/admin/settings")
+    def update_admin_settings(
+        request: Request,
+        response: Response,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        require_admin(request)
+        set_no_store(response)
+        saved = admin_settings.save_public(payload)
+        if any(str(item.get("content", "")).strip() for item in saved["mnemonics"]["items"]):
+            admin_settings.sync_mnemonics_markdown(runtime.project_root)
+        refresh_runtime()
+        return admin_settings.load_public()
+
+    @app.post("/api/admin/settings/test/{service_name}")
+    def test_admin_setting(
+        service_name: str,
+        request: Request,
+        response: Response,
+    ) -> dict[str, Any]:
+        require_admin(request)
+        set_no_store(response)
+        if service_name in {"llm", "embedding"}:
+            check = runtime.readiness(
+                probe_provider=True,
+                provider_probe=provider_probe,
+            )
+            checks = {check["name"]: check for check in check["checks"]}
+            return checks.get(
+                "provider_connectivity",
+                {"name": "provider_connectivity", "status": "error", "detail": "probe not available"},
+            )
+        if service_name == "search":
+            search = runtime.search_config
+            provider = str(search.get("provider") or "none")
+            api_key = str(search.get("api_key") or "")
+            base_url = str(search.get("base_url") or "")
+            if provider == "none":
+                return {"name": "search", "status": "ok", "detail": "search disabled"}
+            if provider in {"brave", "tavily", "jina", "perplexity", "serper"} and not api_key:
+                return {"name": "search", "status": "error", "detail": f"{provider} requires api_key"}
+            if provider == "searxng" and not base_url:
+                return {"name": "search", "status": "error", "detail": "searxng requires base_url"}
+            return {"name": "search", "status": "ok", "detail": provider}
+        raise HTTPException(status_code=404, detail="Unknown settings service")
 
     @app.get("/api/health")
     def health(response: Response) -> dict[str, str]:

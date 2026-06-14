@@ -10,6 +10,8 @@ services:
       SILICONFLOW_API_KEY_FILE: ${SILICONFLOW_API_KEY_FILE:-}
       SILICONFLOW_CHAT_MODEL: ${SILICONFLOW_CHAT_MODEL:-deepseek-ai/DeepSeek-V4-Pro}
       SILICONFLOW_EMBED_MODEL: ${SILICONFLOW_EMBED_MODEL:-BAAI/bge-m3}
+      JSTUDY_ADMIN_TOKEN: ${JSTUDY_ADMIN_TOKEN:-}
+      JSTUDY_SETTINGS_DIR: /app/data/settings
       JSTUDY_JOBS_DIR: /app/data/jobs
       JSTUDY_SOUL_PATH: /app/soul.md
       JSTUDY_MNEMONICS_PATH: /app/mnemonics.md
@@ -19,6 +21,7 @@ services:
       - "${JSTUDY_API_PORT:-8765}:8765"
     volumes:
       - ../../data/jobs:/app/data/jobs
+      - ../../data/settings:/app/data/settings
     healthcheck:
       test:
         [
