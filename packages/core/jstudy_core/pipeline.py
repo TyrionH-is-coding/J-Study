@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import re
 import sys
@@ -11,6 +10,7 @@ from typing import Any
 
 from packages.core.jstudy_core import providers
 from packages.core.jstudy_core.settings import read_api_key
+from packages.core.jstudy_core.storage import build_output_paths, write_json
 from packages.domains.medicine import (
     StudyQuery,
     audit_output_quality,
@@ -118,10 +118,6 @@ def build_evidence_links(markdown: str, evidence: list[dict[str, Any]]) -> list[
     return links
 
 
-def write_json(path: Path, payload: Any) -> None:
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-
-
 def run_mvp(
     pdf_path: Path,
     soul_path: Path,
@@ -180,15 +176,10 @@ def run_mvp(
     )
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    chunks_path = output_dir / f"{output_prefix}-chunks.json"
-    trace_path = output_dir / f"{output_prefix}-retrieval_trace.json"
-    evidence_path = output_dir / f"{output_prefix}-evidence.json"
-    evidence_links_path = output_dir / f"{output_prefix}-evidence_links.json"
-    markdown_path = output_dir / f"{output_prefix}-output.md"
-    quality_path = output_dir / f"{output_prefix}-quality.json"
+    output_paths = build_output_paths(output_dir, output_prefix)
 
     write_json(
-        chunks_path,
+        output_paths.chunks,
         [
             {
                 **asdict(chunk),
@@ -198,7 +189,7 @@ def run_mvp(
         ],
     )
     write_json(
-        trace_path,
+        output_paths.trace,
         {
             "pdf": str(pdf_path),
             "chat_model": chat_model,
@@ -213,7 +204,7 @@ def run_mvp(
             "mnemonic_hits": mnemonic_hits,
         },
     )
-    write_json(evidence_path, evidence)
+    write_json(output_paths.evidence, evidence)
 
     messages = build_generation_prompt(
         soul_path.read_text(encoding="utf-8"),
@@ -222,18 +213,11 @@ def run_mvp(
         outline=outline_path.read_text(encoding="utf-8") if outline_path else "",
     )
     markdown = providers.generate_markdown(messages, api_key=api_key, model=chat_model)
-    markdown_path.write_text(markdown + "\n", encoding="utf-8")
-    write_json(evidence_links_path, build_evidence_links(markdown, evidence))
-    write_json(quality_path, audit_output_quality(markdown, evidence))
+    output_paths.markdown.write_text(markdown + "\n", encoding="utf-8")
+    write_json(output_paths.evidence_links, build_evidence_links(markdown, evidence))
+    write_json(output_paths.quality, audit_output_quality(markdown, evidence))
 
-    return {
-        "chunks": chunks_path,
-        "trace": trace_path,
-        "evidence": evidence_path,
-        "evidence_links": evidence_links_path,
-        "markdown": markdown_path,
-        "quality": quality_path,
-    }
+    return output_paths.as_dict()
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:

@@ -33,7 +33,7 @@ Deliverables:
 - add explicit dependency file - done
 - split runtime settings and job lifecycle - done
 - split provider calls - done
-- split storage/output contracts - next
+- split storage/output contracts - done
 
 Acceptance:
 

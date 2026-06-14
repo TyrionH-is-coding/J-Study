@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any, Callable
 from uuid import uuid4
@@ -16,16 +15,13 @@ from packages.core.jstudy_core.pipeline import (
     RagConfig,
     run_mvp,
 )
+from packages.core.jstudy_core.storage import read_json
 
 Runner = Callable[..., dict[str, Path]]
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 ROOT = PROJECT_ROOT
-
-
-def read_json(path: Path) -> Any:
-    return json.loads(path.read_text(encoding="utf-8"))
 
 
 async def save_upload(upload: UploadFile, target: Path) -> None:

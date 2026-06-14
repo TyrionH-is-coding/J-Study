@@ -2,7 +2,7 @@
 
 ## Summary
 
-J-Study is a single-server MVP that should evolve into a formally structured product. The current backend now has canonical package paths: `apps/api/jstudy_api/app.py` serves the FastAPI MVP, `packages/core/jstudy_core/pipeline.py` orchestrates the generation pipeline, `packages/core/jstudy_core/jobs.py` owns the in-memory MVP job lifecycle, `packages/core/jstudy_core/providers.py` owns SiliconFlow chat and embedding calls, `packages/core/jstudy_core/settings.py` owns runtime secret lookup, `packages/parsers` owns document parsing, `packages/retrieval` owns chunking and hybrid retrieval, and `packages/domains/medicine.py` owns the first subject pack. Root-level `web_mvp.py` and `mvp_runner.py` remain compatibility shims for old commands.
+J-Study is a single-server MVP that should evolve into a formally structured product. The current backend now has canonical package paths: `apps/api/jstudy_api/app.py` serves the FastAPI MVP, `packages/core/jstudy_core/pipeline.py` orchestrates the generation pipeline, `packages/core/jstudy_core/jobs.py` owns the in-memory MVP job lifecycle, `packages/core/jstudy_core/providers.py` owns SiliconFlow chat and embedding calls, `packages/core/jstudy_core/settings.py` owns runtime secret lookup, `packages/core/jstudy_core/storage.py` owns local output file contracts, `packages/parsers` owns document parsing, `packages/retrieval` owns chunking and hybrid retrieval, and `packages/domains/medicine.py` owns the first subject pack. Root-level `web_mvp.py` and `mvp_runner.py` remain compatibility shims for old commands.
 
 ## Target Repository Structure
 
