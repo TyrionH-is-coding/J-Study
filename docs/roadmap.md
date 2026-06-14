@@ -75,9 +75,9 @@ Deliverables:
 - backend Docker Compose scaffold - done
 - frontend Dockerfile after `apps/web` exists
 - reverse proxy config
-- `.env.example`
-- mounted `data/` directory
-- deployment runbook
+- `.env.example` - done for backend runtime settings
+- mounted `data/` directory - done for backend jobs
+- deployment runbook - done for backend-only Docker Compose; full runbook after frontend and reverse proxy exist
 
 Acceptance:
 
