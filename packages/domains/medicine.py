@@ -232,11 +232,41 @@ def extract_evidence_refs(markdown: str) -> set[str]:
     return refs
 
 
+def audit_section_citations(markdown: str) -> dict[str, Any]:
+    headings = list(re.finditer(r"(?m)^(#{1,6})\s+(.+?)\s*$", markdown))
+    uncited_sections: list[str] = []
+    cited_section_count = 0
+    section_count = 0
+
+    for index, heading in enumerate(headings):
+        title = heading.group(2).strip()
+        body_start = heading.end()
+        body_end = headings[index + 1].start() if index + 1 < len(headings) else len(markdown)
+        body = markdown[body_start:body_end]
+        if not body.strip():
+            continue
+
+        section_count += 1
+        if extract_evidence_refs(body):
+            cited_section_count += 1
+        else:
+            uncited_sections.append(title)
+
+    coverage = cited_section_count / section_count if section_count else 0.0
+    return {
+        "section_count": section_count,
+        "cited_section_count": cited_section_count,
+        "section_citation_coverage": round(coverage, 3),
+        "uncited_sections": uncited_sections,
+    }
+
+
 def audit_output_quality(markdown: str, evidence: list[dict[str, Any]]) -> dict[str, Any]:
     evidence_ids = {str(item.get("id")) for item in evidence if item.get("id")}
     referenced_ids = extract_evidence_refs(markdown)
     unknown_refs = sorted(referenced_ids - evidence_ids)
     unused_evidence = sorted(evidence_ids - referenced_ids)
+    section_audit = audit_section_citations(markdown)
     issues: list[dict[str, Any]] = []
 
     if not referenced_ids:
@@ -279,15 +309,29 @@ def audit_output_quality(markdown: str, evidence: list[dict[str, Any]]) -> dict[
             }
         )
 
+    if section_audit["uncited_sections"]:
+        issues.append(
+            {
+                "code": "uncited_sections",
+                "severity": "warning",
+                "message": "Some markdown sections do not contain hidden evidence comments.",
+                "sections": section_audit["uncited_sections"],
+            }
+        )
+
     status = "fail" if any(issue["severity"] == "error" for issue in issues) else "pass"
     return {
         "status": status,
         "metrics": {
             "evidence_count": len(evidence_ids),
             "referenced_evidence_count": len(referenced_ids),
+            "section_count": section_audit["section_count"],
+            "cited_section_count": section_audit["cited_section_count"],
+            "section_citation_coverage": section_audit["section_citation_coverage"],
             "issue_count": len(issues),
         },
         "unknown_evidence_refs": unknown_refs,
         "unused_evidence": unused_evidence,
+        "uncited_sections": section_audit["uncited_sections"],
         "issues": issues,
     }

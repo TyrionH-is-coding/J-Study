@@ -315,6 +315,30 @@ content: 一嗅二视三动眼。
         self.assertIn("E999", report["unknown_evidence_refs"])
         self.assertIn("engineering_language", {issue["code"] for issue in report["issues"]})
 
+    def test_audit_output_quality_reports_section_citation_coverage(self):
+        markdown = "## Cited\n\nFact. <!-- evidence: E001 -->\n\n## Uncited\n\nExplanation without citation."
+        evidence = [{"id": "E001", "page": 1, "chunk_id": "C001", "excerpt": "Fact"}]
+
+        report = audit_output_quality(markdown, evidence)
+
+        self.assertEqual(report["status"], "pass")
+        self.assertEqual(report["metrics"]["section_count"], 2)
+        self.assertEqual(report["metrics"]["cited_section_count"], 1)
+        self.assertEqual(report["metrics"]["section_citation_coverage"], 0.5)
+        self.assertEqual(report["uncited_sections"], ["Uncited"])
+        issue = next(issue for issue in report["issues"] if issue["code"] == "uncited_sections")
+        self.assertEqual(issue["severity"], "warning")
+
+    def test_audit_output_quality_ignores_empty_container_headings(self):
+        markdown = "# Title\n\n## Cited\n\nFact. <!-- evidence: E001 -->"
+        evidence = [{"id": "E001", "page": 1, "chunk_id": "C001", "excerpt": "Fact"}]
+
+        report = audit_output_quality(markdown, evidence)
+
+        self.assertEqual(report["status"], "pass")
+        self.assertEqual(report["metrics"]["section_count"], 1)
+        self.assertEqual(report["uncited_sections"], [])
+
     def test_build_evidence_links_maps_markdown_refs_to_pdf_targets(self):
         markdown = "Fact A <!-- evidence: E002 E001 -->\n\nFact B <!-- evidence: E001 -->"
         evidence = [

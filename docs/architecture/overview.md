@@ -163,6 +163,8 @@ Job status persists to `JSTUDY_JOBS_DIR/jobs.json` so completed and failed jobs 
 
 Completed jobs expose the retrieval trace through `GET /api/jobs/{job_id}/trace`. This returns the selected chunks, query traces, RAG settings, and mnemonic hits already written by the pipeline so backend quality issues can be reviewed without shell access to the server.
 
+The generated quality report checks whether hidden evidence comments exist, whether cited evidence IDs are valid, whether retrieved evidence was left unused, whether implementation-facing wording leaked into the output, and whether each markdown section has citation coverage. Missing section citations are warnings so the MVP can surface review risk without blocking otherwise valid output.
+
 ## Current Technical Debt
 
 The MVP intentionally has several temporary choices:

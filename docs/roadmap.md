@@ -92,7 +92,7 @@ Goal: make generated output more stable and auditable.
 
 Deliverables:
 
-- stronger quality report
+- stronger quality report - done for evidence-id validation, unused-evidence warnings, implementation wording checks, and section citation coverage
 - parser/retrieval trace review tools - done for retrieval trace API
 - better failed-job errors - done with exception type in job status
 - upload limits - done for courseware PDF type and size
@@ -103,6 +103,7 @@ Acceptance:
 
 - failed jobs explain what failed
 - generated output cites valid evidence IDs
+- quality reports show citation coverage by markdown section
 - low-quality output is flagged before user trust is damaged
 
 ## Phase 5: Multi-Discipline Domain Packs
