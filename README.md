@@ -25,7 +25,10 @@ Current important files:
 
 ```text
 apps/api/jstudy_api/    FastAPI MVP service and temporary built-in test UI
-packages/core/          PDF -> retrieval -> prompt -> Markdown pipeline
+packages/core/          Pipeline orchestration, LLM calls, citations, CLI
+packages/parsers/       PyMuPDF parser implementation
+packages/retrieval/     Chunking, BM25/RRF, retrieval adapter
+packages/domains/       Medicine domain pack and future subject packs
 web_mvp.py              Compatibility shim for the old Uvicorn entrypoint
 mvp_runner.py           Compatibility shim for the old CLI entrypoint
 soul.md                 Medicine output style and study-material template
@@ -42,7 +45,7 @@ apps/
   api/                  FastAPI backend
   web/                  Next.js + shadcn/ui frontend
 packages/
-  core/                 Shared workflow contracts, jobs, citations, result types
+  core/                 Shared workflow orchestration, citations, result types
   parsers/              PyMuPDF default parser, future MinerU parser
   retrieval/            Chunking, embedding, BM25/RRF, RAG adapter
   domains/

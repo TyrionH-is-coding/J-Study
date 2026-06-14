@@ -73,6 +73,16 @@ Domain code should provide subject behavior:
 
 Medicine is the first domain pack, not the product boundary.
 
+Current backend module ownership:
+
+```text
+apps/api/jstudy_api       FastAPI app and HTTP contract
+packages/core/jstudy_core Pipeline orchestration, provider calls, citations
+packages/parsers          Document parsing implementations
+packages/retrieval        Chunking and retrieval logic
+packages/domains          Subject-specific behavior
+```
+
 ## Parser Standards
 
 All parsers should return page-aware text. Future parsers can return richer layout data, but page number must remain available for citation.

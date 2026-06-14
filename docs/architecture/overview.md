@@ -2,7 +2,7 @@
 
 ## Summary
 
-J-Study is a single-server MVP that should evolve into a formally structured product. The current backend now has canonical package paths: `apps/api/jstudy_api/app.py` serves the FastAPI MVP and `packages/core/jstudy_core/pipeline.py` runs the generation pipeline. Root-level `web_mvp.py` and `mvp_runner.py` remain compatibility shims for old commands.
+J-Study is a single-server MVP that should evolve into a formally structured product. The current backend now has canonical package paths: `apps/api/jstudy_api/app.py` serves the FastAPI MVP, `packages/core/jstudy_core/pipeline.py` orchestrates the generation pipeline, `packages/parsers` owns document parsing, `packages/retrieval` owns chunking and hybrid retrieval, and `packages/domains/medicine.py` owns the first subject pack. Root-level `web_mvp.py` and `mvp_runner.py` remain compatibility shims for old commands.
 
 ## Target Repository Structure
 
@@ -16,9 +16,9 @@ packages/
   core/
     # workflow contracts, job models, citations, output result types
   parsers/
-    # document parser interface and implementations
+    # PyMuPDF parser now; future MinerU implementation
   retrieval/
-    # chunking, embedding, BM25/RRF, RAG adapters
+    # chunking, BM25/RRF, RAG adapters
   domains/
     medicine/
       # first subject pack
@@ -29,7 +29,7 @@ deploy/
 docs/
 ```
 
-The first backend reorganization step is implemented. Further steps should split the current pipeline into parser, retrieval, and domain modules without changing API behavior.
+The first backend reorganization steps are implemented. Further steps should split runtime settings, job state, storage, and provider calls without changing API behavior.
 
 ## Runtime Flow
 
@@ -99,7 +99,7 @@ The current MVP retrieval approach is:
 - low-value chunk filtering
 - per-query evidence limits
 
-This should move into `packages/retrieval/` so it can be reused across domains.
+This lives in `packages/retrieval/` so it can be reused across domains.
 
 ## Domain Layer
 
@@ -160,7 +160,7 @@ Future components can include Redis, Postgres, object storage, and a separate wo
 The MVP intentionally has several temporary choices:
 
 - `apps/api/jstudy_api/app.py` still combines API and temporary UI
-- `packages/core/jstudy_core/pipeline.py` still combines parsing, retrieval, prompt building, generation, audit, and CLI
+- `packages/core/jstudy_core/pipeline.py` still combines provider calls, evidence item building, citation links, orchestration, and CLI
 - root-level `web_mvp.py` and `mvp_runner.py` are compatibility shims
 - job state is in memory
 - outputs are local files
