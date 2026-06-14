@@ -102,6 +102,7 @@ GET /api/readiness
 ```
 
 `/api/health` only confirms the API process is alive. `/api/readiness` checks the jobs directory, domain prompt files, API key source, and PDF upload limit.
+Use `/api/readiness?probe_provider=true` during deployment to run a live SiliconFlow chat and embedding connectivity probe.
 `POST /api/generate` returns `503` with the readiness payload when required runtime configuration is missing.
 Job status is persisted in `JSTUDY_JOBS_DIR/jobs.json`; jobs that were queued or running during a server restart are marked failed because the MVP has no separate worker queue yet.
 Completed jobs expose retrieval diagnostics at `/api/jobs/{job_id}/trace`.

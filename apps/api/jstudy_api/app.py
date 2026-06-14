@@ -19,6 +19,7 @@ from packages.core.jstudy_core.settings import RuntimeSettings
 from packages.core.jstudy_core.storage import read_json
 
 Runner = Callable[..., dict[str, Path]]
+ProviderProbe = Callable[[str, str, str], dict[str, Any]]
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -76,6 +77,7 @@ def create_app(
     runner: Runner = run_mvp,
     job_store: JobStore | None = None,
     settings: RuntimeSettings | None = None,
+    provider_probe: ProviderProbe | None = None,
 ) -> FastAPI:
     app = FastAPI(title="J Study MVP")
     runtime = settings or RuntimeSettings.from_env(ROOT, jobs_root=base_dir)
@@ -136,9 +138,12 @@ def create_app(
         return {"status": "ok", "service": "jstudy-api"}
 
     @app.get("/api/readiness")
-    def readiness(response: Response) -> dict[str, Any]:
+    def readiness(response: Response, probe_provider: bool = False) -> dict[str, Any]:
         set_no_store(response)
-        return {"service": "jstudy-api", **runtime.readiness()}
+        return {
+            "service": "jstudy-api",
+            **runtime.readiness(probe_provider=probe_provider, provider_probe=provider_probe),
+        }
 
     @app.post("/api/generate")
     async def generate(

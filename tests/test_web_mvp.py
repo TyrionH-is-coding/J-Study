@@ -111,6 +111,30 @@ class WebMvpTest(unittest.TestCase):
         self.assertEqual(checks["mnemonics_path"]["status"], "error")
         self.assertEqual(checks["api_key"]["status"], "error")
 
+    def test_readiness_endpoint_runs_provider_probe_only_when_requested(self):
+        calls = []
+
+        def probe(api_key: str, chat_model: str, embed_model: str):
+            calls.append((api_key, chat_model, embed_model))
+            return {
+                "name": "provider_connectivity",
+                "status": "ok",
+                "detail": "chat and embedding reachable",
+            }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            settings = self.ready_settings(root)
+            client = TestClient(create_app(settings=settings, provider_probe=probe))
+
+            plain = client.get("/api/readiness").json()
+            probed = client.get("/api/readiness?probe_provider=true").json()
+
+        self.assertEqual(calls, [("key", "chat-model", "embed-model")])
+        self.assertNotIn("provider_connectivity", {check["name"] for check in plain["checks"]})
+        checks = {check["name"]: check for check in probed["checks"]}
+        self.assertEqual(checks["provider_connectivity"]["status"], "ok")
+
     def test_generate_rejects_unready_runtime_config(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

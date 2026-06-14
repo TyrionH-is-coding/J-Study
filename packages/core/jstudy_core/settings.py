@@ -3,9 +3,13 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
-from packages.core.jstudy_core.providers import DEFAULT_CHAT_MODEL, DEFAULT_EMBED_MODEL
+from packages.core.jstudy_core.providers import (
+    DEFAULT_CHAT_MODEL,
+    DEFAULT_EMBED_MODEL,
+    probe_siliconflow_provider,
+)
 
 
 DEFAULT_API_KEY_ENV = "SILICONFLOW_API_KEY"
@@ -16,6 +20,7 @@ MNEMONICS_PATH_ENV = "JSTUDY_MNEMONICS_PATH"
 MAX_PDF_BYTES_ENV = "JSTUDY_MAX_PDF_BYTES"
 JOB_RETENTION_HOURS_ENV = "JSTUDY_JOB_RETENTION_HOURS"
 DEFAULT_MAX_PDF_BYTES = 50 * 1024 * 1024
+ProviderProbe = Callable[[str, str, str], dict[str, Any]]
 
 
 def env_path(name: str, default: Path | None) -> Path | None:
@@ -71,7 +76,11 @@ class RuntimeSettings:
             job_retention_hours=env_nonnegative_int(JOB_RETENTION_HOURS_ENV, 0),
         )
 
-    def readiness(self) -> dict[str, Any]:
+    def readiness(
+        self,
+        probe_provider: bool = False,
+        provider_probe: ProviderProbe | None = None,
+    ) -> dict[str, Any]:
         checks = [
             self._jobs_root_check(),
             self._file_check("soul_path", self.soul_path),
@@ -80,6 +89,8 @@ class RuntimeSettings:
             self._max_pdf_bytes_check(),
             self._job_retention_check(),
         ]
+        if probe_provider:
+            checks.append(self._provider_connectivity_check(provider_probe or probe_siliconflow_provider))
         status = "ready" if all(check["status"] == "ok" for check in checks) else "degraded"
         return {"status": status, "checks": checks}
 
@@ -128,6 +139,17 @@ class RuntimeSettings:
             }
         detail = "disabled" if self.job_retention_hours == 0 else f"{self.job_retention_hours} hours"
         return {"name": "job_retention_hours", "status": "ok", "detail": detail}
+
+    def _provider_connectivity_check(self, provider_probe: ProviderProbe) -> dict[str, Any]:
+        try:
+            api_key = read_api_key(self.api_key_path)
+        except RuntimeError as exc:
+            return {"name": "provider_connectivity", "status": "error", "detail": str(exc)}
+
+        try:
+            return provider_probe(api_key, self.chat_model, self.embed_model)
+        except Exception as exc:
+            return {"name": "provider_connectivity", "status": "error", "detail": str(exc)[:200]}
 
 
 def read_api_key(path: Path | None, env_var: str = DEFAULT_API_KEY_ENV) -> str:

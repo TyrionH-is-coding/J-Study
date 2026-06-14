@@ -93,6 +93,42 @@ class SettingsTest(unittest.TestCase):
         self.assertEqual(readiness["status"], "ready")
         self.assertTrue(all(check["status"] == "ok" for check in readiness["checks"]))
 
+    def test_readiness_can_include_provider_probe_when_requested(self):
+        calls = []
+
+        def probe(api_key: str, chat_model: str, embed_model: str):
+            calls.append((api_key, chat_model, embed_model))
+            return {
+                "name": "provider_connectivity",
+                "status": "ok",
+                "detail": "chat and embedding reachable",
+            }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            soul = root / "soul.md"
+            mnemonics = root / "mnemonics.md"
+            api_key = root / "api-key.txt"
+            soul.write_text("soul", encoding="utf-8")
+            mnemonics.write_text("mnemonics", encoding="utf-8")
+            api_key.write_text("key", encoding="utf-8")
+            settings = RuntimeSettings(
+                project_root=root,
+                jobs_root=root / "jobs",
+                soul_path=soul,
+                mnemonics_path=mnemonics,
+                api_key_path=api_key,
+                chat_model="chat-model",
+                embed_model="embed-model",
+            )
+
+            readiness = settings.readiness(probe_provider=True, provider_probe=probe)
+
+        checks = {check["name"]: check for check in readiness["checks"]}
+        self.assertEqual(readiness["status"], "ready")
+        self.assertEqual(calls, [("key", "chat-model", "embed-model")])
+        self.assertEqual(checks["provider_connectivity"]["status"], "ok")
+
 
 if __name__ == "__main__":
     unittest.main()

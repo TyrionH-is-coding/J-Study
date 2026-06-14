@@ -153,3 +153,59 @@ def generate_markdown(
         return response["choices"][0]["message"]["content"].strip()
     except (KeyError, IndexError, TypeError) as exc:
         raise RuntimeError(f"Unexpected chat response shape: {response}") from exc
+
+
+def probe_siliconflow_provider(
+    api_key: str,
+    chat_model: str = DEFAULT_CHAT_MODEL,
+    embed_model: str = DEFAULT_EMBED_MODEL,
+    timeout: int = 15,
+) -> dict[str, Any]:
+    started = time.monotonic()
+    checks: list[dict[str, str]] = []
+
+    try:
+        embedding_response = siliconflow_post(
+            "embeddings",
+            {"model": embed_model, "input": ["ping"]},
+            api_key,
+            timeout=timeout,
+            retries=0,
+        )
+        rows = embedding_response.get("data", [])
+        if not rows or not isinstance(rows[0].get("embedding"), list):
+            raise RuntimeError("Unexpected embedding response shape")
+        checks.append({"name": "embedding", "status": "ok", "detail": embed_model})
+    except Exception as exc:
+        checks.append({"name": "embedding", "status": "error", "detail": str(exc)[:200]})
+
+    try:
+        chat_response = siliconflow_post(
+            "chat/completions",
+            {
+                "model": chat_model,
+                "messages": [{"role": "user", "content": "ping"}],
+                "temperature": 0,
+                "max_tokens": 1,
+            },
+            api_key,
+            timeout=timeout,
+            retries=0,
+        )
+        choices = chat_response.get("choices", [])
+        if not choices:
+            raise RuntimeError("Unexpected chat response shape")
+        checks.append({"name": "chat", "status": "ok", "detail": chat_model})
+    except Exception as exc:
+        checks.append({"name": "chat", "status": "error", "detail": str(exc)[:200]})
+
+    status = "ok" if all(check["status"] == "ok" for check in checks) else "error"
+    elapsed_ms = int((time.monotonic() - started) * 1000)
+    detail = "chat and embedding reachable" if status == "ok" else "provider probe failed"
+    return {
+        "name": "provider_connectivity",
+        "status": status,
+        "detail": detail,
+        "elapsed_ms": elapsed_ms,
+        "checks": checks,
+    }

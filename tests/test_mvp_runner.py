@@ -33,6 +33,7 @@ from packages.core.jstudy_core.pipeline import (  # noqa: E402
     select_evidence_chunks,
     siliconflow_post,
 )
+from packages.core.jstudy_core.providers import probe_siliconflow_provider  # noqa: E402
 
 
 class FakeHttpResponse:
@@ -204,6 +205,32 @@ content: 一嗅二视三动眼。
 
         self.assertEqual(result, {"ok": True})
         self.assertEqual(urlopen.call_count, 2)
+
+    @patch("packages.core.jstudy_core.providers.siliconflow_post")
+    def test_probe_siliconflow_provider_checks_chat_and_embedding(self, post):
+        calls = []
+
+        def fake_post(endpoint, payload, api_key, timeout, retries):
+            calls.append((endpoint, payload, api_key, timeout, retries))
+            if endpoint == "embeddings":
+                return {"data": [{"embedding": [0.1, 0.2]}]}
+            return {"choices": [{"message": {"content": "ok"}}]}
+
+        post.side_effect = fake_post
+
+        check = probe_siliconflow_provider(
+            api_key="key",
+            chat_model="chat-model",
+            embed_model="embed-model",
+            timeout=3,
+        )
+
+        self.assertEqual(check["status"], "ok")
+        self.assertEqual([call[0] for call in calls], ["embeddings", "chat/completions"])
+        self.assertEqual(calls[0][1], {"model": "embed-model", "input": ["ping"]})
+        self.assertEqual(calls[1][1]["model"], "chat-model")
+        self.assertEqual(calls[1][1]["max_tokens"], 1)
+        self.assertTrue(all(call[2] == "key" and call[3] == 3 and call[4] == 0 for call in calls))
 
     @patch("packages.core.jstudy_core.pipeline.extract_pdf_pages")
     @patch("packages.core.jstudy_core.providers.embed_texts")

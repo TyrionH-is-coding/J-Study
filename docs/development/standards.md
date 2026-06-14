@@ -136,6 +136,7 @@ Deployment should be portable across servers:
 - domain routes frontend at `/` and backend at `/api/...`
 - reverse proxy health checks should call `/api/health`
 - deployment verification should call `/api/readiness` after secrets and mounted files are configured
+- deployment verification can call `/api/readiness?probe_provider=true` to check live SiliconFlow chat and embedding connectivity
 
 Initial deployment can be single-server. Add Redis, Postgres, object storage, or workers when needed by real usage.
 

@@ -23,6 +23,11 @@ curl http://127.0.0.1:8765/api/readiness
 ```
 
 The readiness response should be `ready` before users submit PDFs.
+To verify the configured SiliconFlow chat and embedding models during deployment, run:
+
+```powershell
+curl "http://127.0.0.1:8765/api/readiness?probe_provider=true"
+```
 
 Persistent runtime files are written under `data/jobs` on the host and mounted to `/app/data/jobs` in the container.
 Job lifecycle state is persisted at `data/jobs/jobs.json`.
