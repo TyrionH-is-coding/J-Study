@@ -114,6 +114,10 @@ def create_app(
         pdf: UploadFile = File(...),
         outline: UploadFile | None = File(None),
     ) -> dict[str, Any]:
+        readiness = runtime.readiness()
+        if readiness["status"] != "ready":
+            raise HTTPException(status_code=503, detail=readiness)
+
         job_id = uuid4().hex[:12]
         job_dir = jobs_root / job_id
         input_dir = job_dir / "input"

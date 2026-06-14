@@ -23,6 +23,26 @@ class WebMvpTest(unittest.TestCase):
             page.insert_text((40, 80), f"Page {page_no}")
         return doc.tobytes()
 
+    def ready_settings(self, root: Path, max_pdf_bytes: int = 50 * 1024 * 1024) -> RuntimeSettings:
+        soul_path = root / "config" / "soul.md"
+        mnemonics_path = root / "config" / "mnemonics.md"
+        api_key_path = root / "secrets" / "api-key.txt"
+        soul_path.parent.mkdir(parents=True, exist_ok=True)
+        api_key_path.parent.mkdir(parents=True, exist_ok=True)
+        soul_path.write_text("soul", encoding="utf-8")
+        mnemonics_path.write_text("mnemonics", encoding="utf-8")
+        api_key_path.write_text("key", encoding="utf-8")
+        return RuntimeSettings(
+            project_root=root,
+            jobs_root=root / "jobs",
+            soul_path=soul_path,
+            mnemonics_path=mnemonics_path,
+            api_key_path=api_key_path,
+            chat_model="chat-model",
+            embed_model="embed-model",
+            max_pdf_bytes=max_pdf_bytes,
+        )
+
     def test_index_html_contains_pdf_citation_panel(self):
         self.assertIn('id="evidenceList"', INDEX_HTML)
         self.assertIn('id="pdfPages"', INDEX_HTML)
@@ -81,6 +101,33 @@ class WebMvpTest(unittest.TestCase):
         self.assertEqual(checks["soul_path"]["status"], "error")
         self.assertEqual(checks["mnemonics_path"]["status"], "error")
         self.assertEqual(checks["api_key"]["status"], "error")
+
+    def test_generate_rejects_unready_runtime_config(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            job_store = JobStore()
+            settings = RuntimeSettings(
+                project_root=root,
+                jobs_root=root / "jobs",
+                soul_path=root / "missing-soul.md",
+                mnemonics_path=root / "missing-mnemonics.md",
+                api_key_path=root / "missing-api-key.txt",
+                chat_model="chat-model",
+                embed_model="embed-model",
+            )
+            client = TestClient(create_app(runner=lambda **kwargs: {}, job_store=job_store, settings=settings))
+
+            response = client.post(
+                "/api/generate",
+                files={"pdf": ("lecture.pdf", self.make_pdf_bytes(), "application/pdf")},
+            )
+
+        self.assertEqual(response.status_code, 503)
+        body = response.json()
+        self.assertNotIn("job_id", body)
+        self.assertEqual(body["detail"]["status"], "degraded")
+        checks = {check["name"]: check for check in body["detail"]["checks"]}
+        self.assertEqual(checks["soul_path"]["status"], "error")
 
     def test_generate_job_exposes_output_and_evidence_contracts(self):
         captured = {}
@@ -150,15 +197,7 @@ class WebMvpTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             job_store = JobStore()
-            settings = RuntimeSettings(
-                project_root=root,
-                jobs_root=root / "jobs",
-                soul_path=root / "config" / "soul.md",
-                mnemonics_path=root / "config" / "mnemonics.md",
-                api_key_path=root / "secrets" / "api-key.txt",
-                chat_model="chat-model",
-                embed_model="embed-model",
-            )
+            settings = self.ready_settings(root)
             client = TestClient(create_app(runner=fake_runner, job_store=job_store, settings=settings))
             response = client.post(
                 "/api/generate",
@@ -219,16 +258,7 @@ class WebMvpTest(unittest.TestCase):
     def test_generate_rejects_non_pdf_upload(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            settings = RuntimeSettings(
-                project_root=root,
-                jobs_root=root / "jobs",
-                soul_path=root / "soul.md",
-                mnemonics_path=root / "mnemonics.md",
-                api_key_path=root / "api-key.txt",
-                chat_model="chat-model",
-                embed_model="embed-model",
-                max_pdf_bytes=1024,
-            )
+            settings = self.ready_settings(root, max_pdf_bytes=1024)
             client = TestClient(create_app(runner=lambda **kwargs: {}, settings=settings))
 
             response = client.post(
@@ -242,16 +272,7 @@ class WebMvpTest(unittest.TestCase):
     def test_generate_rejects_pdf_above_configured_limit(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            settings = RuntimeSettings(
-                project_root=root,
-                jobs_root=root / "jobs",
-                soul_path=root / "soul.md",
-                mnemonics_path=root / "mnemonics.md",
-                api_key_path=root / "api-key.txt",
-                chat_model="chat-model",
-                embed_model="embed-model",
-                max_pdf_bytes=5,
-            )
+            settings = self.ready_settings(root, max_pdf_bytes=5)
             client = TestClient(create_app(runner=lambda **kwargs: {}, settings=settings))
 
             response = client.post(

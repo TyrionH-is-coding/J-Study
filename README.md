@@ -101,6 +101,7 @@ GET /api/readiness
 ```
 
 `/api/health` only confirms the API process is alive. `/api/readiness` checks the jobs directory, domain prompt files, API key source, and PDF upload limit.
+`POST /api/generate` returns `503` with the readiness payload when required runtime configuration is missing.
 
 Run the current MVP service with the compatibility entrypoint:
 
