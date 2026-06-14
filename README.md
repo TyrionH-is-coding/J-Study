@@ -111,6 +111,13 @@ Then open:
 http://127.0.0.1:8765/
 ```
 
+Backend Docker Compose scaffold:
+
+```powershell
+docker compose -f deploy/docker-compose/api.compose.yml config
+docker compose -f deploy/docker-compose/api.compose.yml up -d --build
+```
+
 ## Key Documents
 
 - [Product Vision](docs/product/vision.md)

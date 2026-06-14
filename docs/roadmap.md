@@ -69,8 +69,9 @@ Goal: deploy the MVP to the prepared domain and server.
 
 Deliverables:
 
-- Dockerfiles
-- Docker Compose
+- backend Dockerfile - done
+- backend Docker Compose scaffold - done
+- frontend Dockerfile after `apps/web` exists
 - reverse proxy config
 - `.env.example`
 - mounted `data/` directory

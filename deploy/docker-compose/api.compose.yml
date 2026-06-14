@@ -1,0 +1,32 @@
+services:
+  jstudy-api:
+    build:
+      context: ../..
+      dockerfile: apps/api/Dockerfile
+    container_name: jstudy-api
+    restart: unless-stopped
+    environment:
+      SILICONFLOW_API_KEY: ${SILICONFLOW_API_KEY:-}
+      SILICONFLOW_API_KEY_FILE: ${SILICONFLOW_API_KEY_FILE:-}
+      SILICONFLOW_CHAT_MODEL: ${SILICONFLOW_CHAT_MODEL:-deepseek-ai/DeepSeek-V4-Pro}
+      SILICONFLOW_EMBED_MODEL: ${SILICONFLOW_EMBED_MODEL:-BAAI/bge-m3}
+      JSTUDY_JOBS_DIR: /app/data/jobs
+      JSTUDY_SOUL_PATH: /app/soul.md
+      JSTUDY_MNEMONICS_PATH: /app/mnemonics.md
+      JSTUDY_MAX_PDF_BYTES: ${JSTUDY_MAX_PDF_BYTES:-52428800}
+    ports:
+      - "${JSTUDY_API_PORT:-8765}:8765"
+    volumes:
+      - ../../data/jobs:/app/data/jobs
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/api/health', timeout=5).close()",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s

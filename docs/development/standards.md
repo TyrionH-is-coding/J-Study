@@ -34,7 +34,7 @@ feature/backend-frontend-mvp
 Current backend baseline:
 
 ```powershell
-python -m py_compile web_mvp.py mvp_runner.py apps/api/jstudy_api/app.py packages/core/jstudy_core/pipeline.py
+python -m py_compile web_mvp.py mvp_runner.py apps/api/jstudy_api/app.py packages/core/jstudy_core/pipeline.py packages/core/jstudy_core/citations.py packages/core/jstudy_core/jobs.py packages/core/jstudy_core/providers.py packages/core/jstudy_core/settings.py packages/core/jstudy_core/storage.py
 python -m unittest discover -s tests -v
 ```
 
@@ -45,7 +45,7 @@ Future expected checks:
 ```text
 apps/api: backend tests and type/lint checks
 apps/web: frontend tests, typecheck, lint, build
-deploy: docker compose config validation
+deploy: docker compose -f deploy/docker-compose/api.compose.yml config
 ```
 
 ## Project Boundaries
