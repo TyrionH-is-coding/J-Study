@@ -1,0 +1,33 @@
+{
+  "query": {
+    "id": "sample",
+    "title": "Sample",
+    "query": "alpha overview"
+  },
+  "chunks": [
+    {
+      "id": "C001",
+      "page": 1,
+      "text": "alpha overview: beta detail with enough lecture content"
+    },
+    {
+      "id": "C002",
+      "page": 2,
+      "text": "unrelated material: gamma detail with enough lecture content"
+    },
+    {
+      "id": "C003",
+      "page": 3,
+      "text": "alpha overview: more detail with enough lecture content"
+    }
+  ],
+  "chunk_embeddings": [
+    [1.0, 0.0],
+    [0.0, 1.0],
+    [0.9, 0.1]
+  ],
+  "query_embeddings": [
+    [1.0, 0.0]
+  ],
+  "expected_selected_chunk_ids": ["C001", "C003"]
+}

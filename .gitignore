@@ -1,0 +1,61 @@
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+*api key*.txt
+siliconflow api key.txt
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+
+# Frontend and build output
+node_modules/
+.next/
+dist/
+build/
+coverage/
+*.tsbuildinfo
+.env.local
+.env.*.local
+
+# MVP runtime output
+web_jobs/
+*.log
+*.err.log
+web_mvp_home.png
+evidence.json
+output.md
+mvp-chunks.json
+mvp-evidence.json
+mvp-output.md
+mvp-retrieval_trace.json
+mvp-v*-chunks.json
+mvp-v*-evidence.json
+mvp-v*-output.md
+mvp-v*-quality-audit.md
+mvp-v*-retrieval_trace.json
+范例-*.md
+
+# Local course/input files
+*.pdf
+
+# Local backups
+*.backup-*
+
+# Local imported tooling
+ima/
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

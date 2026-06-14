@@ -1,0 +1,7 @@
+{
+  "chunk_max_chars": 512,
+  "chunk_overlap": 50,
+  "top_k_candidates": 14,
+  "per_query_limit": 2,
+  "mnemonic_limit": 6
+}
