@@ -97,7 +97,7 @@ Deliverables:
 - better failed-job errors - done with exception type in job status
 - upload limits - done for courseware PDF type and size
 - cache controls - done for dynamic API status responses and private generated artifacts
-- optional cleanup policy
+- optional cleanup policy - done with disabled-by-default finished-job retention
 
 Acceptance:
 
@@ -105,6 +105,7 @@ Acceptance:
 - generated output cites valid evidence IDs
 - quality reports show citation coverage by markdown section
 - frontend polling is not served stale job state from browser caches
+- single-server deployments can opt into finished-job cleanup without deleting queued or running jobs
 - low-quality output is flagged before user trust is damaged
 
 ## Phase 5: Multi-Discipline Domain Packs

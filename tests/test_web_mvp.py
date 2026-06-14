@@ -2,6 +2,7 @@ import json
 import sys
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import fitz
@@ -23,7 +24,12 @@ class WebMvpTest(unittest.TestCase):
             page.insert_text((40, 80), f"Page {page_no}")
         return doc.tobytes()
 
-    def ready_settings(self, root: Path, max_pdf_bytes: int = 50 * 1024 * 1024) -> RuntimeSettings:
+    def ready_settings(
+        self,
+        root: Path,
+        max_pdf_bytes: int = 50 * 1024 * 1024,
+        job_retention_hours: int = 0,
+    ) -> RuntimeSettings:
         soul_path = root / "config" / "soul.md"
         mnemonics_path = root / "config" / "mnemonics.md"
         api_key_path = root / "secrets" / "api-key.txt"
@@ -41,6 +47,7 @@ class WebMvpTest(unittest.TestCase):
             chat_model="chat-model",
             embed_model="embed-model",
             max_pdf_bytes=max_pdf_bytes,
+            job_retention_hours=job_retention_hours,
         )
 
     def test_index_html_contains_pdf_citation_panel(self):
@@ -323,6 +330,33 @@ class WebMvpTest(unittest.TestCase):
 
         self.assertEqual(status["status"], "failed")
         self.assertEqual(status["error"], "TimeoutError: provider timeout")
+
+    def test_create_app_prunes_expired_finished_jobs_when_retention_enabled(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            settings = self.ready_settings(root, job_retention_hours=1)
+            job_store = JobStore(store_path=settings.jobs_root / "jobs.json")
+            old_dir = settings.jobs_root / "old-job"
+            old_dir.joinpath("input").mkdir(parents=True)
+            old_dir.joinpath("output").mkdir()
+            old_dir.joinpath("output", "result.md").write_text("old", encoding="utf-8")
+            job_store.create(
+                job_id="old-job",
+                pdf_path=old_dir / "input" / "lecture.pdf",
+                output_dir=old_dir / "output",
+            )
+            job_store.mark_completed("old-job", outputs={}, quality={"status": "pass"})
+            job_store.require("old-job").updated_at = (
+                datetime.now(timezone.utc) - timedelta(hours=2)
+            ).isoformat()
+
+            create_app(runner=lambda **kwargs: {}, job_store=job_store, settings=settings)
+
+            restored = JobStore(store_path=settings.jobs_root / "jobs.json")
+
+            self.assertIsNone(job_store.get("old-job"))
+            self.assertIsNone(restored.get("old-job"))
+            self.assertFalse(old_dir.exists())
 
     def test_queued_job_result_endpoints_return_not_ready(self):
         with tempfile.TemporaryDirectory() as tmp:

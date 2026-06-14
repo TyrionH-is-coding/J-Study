@@ -14,6 +14,7 @@ services:
       JSTUDY_SOUL_PATH: /app/soul.md
       JSTUDY_MNEMONICS_PATH: /app/mnemonics.md
       JSTUDY_MAX_PDF_BYTES: ${JSTUDY_MAX_PDF_BYTES:-52428800}
+      JSTUDY_JOB_RETENTION_HOURS: ${JSTUDY_JOB_RETENTION_HOURS:-0}
     ports:
       - "${JSTUDY_API_PORT:-8765}:8765"
     volumes:

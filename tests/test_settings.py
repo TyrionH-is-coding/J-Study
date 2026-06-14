@@ -19,6 +19,7 @@ class SettingsTest(unittest.TestCase):
                 "SILICONFLOW_CHAT_MODEL": "chat-model",
                 "SILICONFLOW_EMBED_MODEL": "embed-model",
                 "JSTUDY_MAX_PDF_BYTES": "12345",
+                "JSTUDY_JOB_RETENTION_HOURS": "12",
             }
 
             with patch.dict(os.environ, env, clear=False):
@@ -31,6 +32,7 @@ class SettingsTest(unittest.TestCase):
         self.assertEqual(settings.chat_model, "chat-model")
         self.assertEqual(settings.embed_model, "embed-model")
         self.assertEqual(settings.max_pdf_bytes, 12345)
+        self.assertEqual(settings.job_retention_hours, 12)
 
     def test_runtime_settings_keep_mvp_defaults(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -43,6 +45,7 @@ class SettingsTest(unittest.TestCase):
         self.assertEqual(settings.mnemonics_path, root / "mnemonics.md")
         self.assertEqual(settings.api_key_path, root / "siliconflow api key.txt")
         self.assertEqual(settings.max_pdf_bytes, 50 * 1024 * 1024)
+        self.assertEqual(settings.job_retention_hours, 0)
 
     def test_readiness_reports_missing_required_runtime_files_and_api_key(self):
         with tempfile.TemporaryDirectory() as tmp:

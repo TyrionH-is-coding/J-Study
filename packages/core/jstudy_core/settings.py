@@ -14,6 +14,7 @@ JOBS_DIR_ENV = "JSTUDY_JOBS_DIR"
 SOUL_PATH_ENV = "JSTUDY_SOUL_PATH"
 MNEMONICS_PATH_ENV = "JSTUDY_MNEMONICS_PATH"
 MAX_PDF_BYTES_ENV = "JSTUDY_MAX_PDF_BYTES"
+JOB_RETENTION_HOURS_ENV = "JSTUDY_JOB_RETENTION_HOURS"
 DEFAULT_MAX_PDF_BYTES = 50 * 1024 * 1024
 
 
@@ -34,6 +35,16 @@ def env_int(name: str, default: int) -> int:
     return parsed
 
 
+def env_nonnegative_int(name: str, default: int) -> int:
+    value = os.getenv(name, "").strip()
+    if not value:
+        return default
+    parsed = int(value)
+    if parsed < 0:
+        raise RuntimeError(f"{name} must be greater than or equal to 0")
+    return parsed
+
+
 @dataclass(frozen=True)
 class RuntimeSettings:
     project_root: Path
@@ -44,6 +55,7 @@ class RuntimeSettings:
     chat_model: str
     embed_model: str
     max_pdf_bytes: int = DEFAULT_MAX_PDF_BYTES
+    job_retention_hours: int = 0
 
     @classmethod
     def from_env(cls, project_root: Path, jobs_root: Path | None = None) -> "RuntimeSettings":
@@ -56,6 +68,7 @@ class RuntimeSettings:
             chat_model=os.getenv("SILICONFLOW_CHAT_MODEL", DEFAULT_CHAT_MODEL).strip() or DEFAULT_CHAT_MODEL,
             embed_model=os.getenv("SILICONFLOW_EMBED_MODEL", DEFAULT_EMBED_MODEL).strip() or DEFAULT_EMBED_MODEL,
             max_pdf_bytes=env_int(MAX_PDF_BYTES_ENV, DEFAULT_MAX_PDF_BYTES),
+            job_retention_hours=env_nonnegative_int(JOB_RETENTION_HOURS_ENV, 0),
         )
 
     def readiness(self) -> dict[str, Any]:
@@ -65,6 +78,7 @@ class RuntimeSettings:
             self._file_check("mnemonics_path", self.mnemonics_path),
             self._api_key_check(),
             self._max_pdf_bytes_check(),
+            self._job_retention_check(),
         ]
         status = "ready" if all(check["status"] == "ok" for check in checks) else "degraded"
         return {"status": status, "checks": checks}
@@ -104,6 +118,16 @@ class RuntimeSettings:
                 "detail": f"{MAX_PDF_BYTES_ENV} must be greater than 0",
             }
         return {"name": "max_pdf_bytes", "status": "ok", "detail": str(self.max_pdf_bytes)}
+
+    def _job_retention_check(self) -> dict[str, str]:
+        if self.job_retention_hours < 0:
+            return {
+                "name": "job_retention_hours",
+                "status": "error",
+                "detail": f"{JOB_RETENTION_HOURS_ENV} must be greater than or equal to 0",
+            }
+        detail = "disabled" if self.job_retention_hours == 0 else f"{self.job_retention_hours} hours"
+        return {"name": "job_retention_hours", "status": "ok", "detail": detail}
 
 
 def read_api_key(path: Path | None, env_var: str = DEFAULT_API_KEY_ENV) -> str:

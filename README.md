@@ -87,6 +87,7 @@ $env:SILICONFLOW_API_KEY="your-key"
 For deployment, start from [.env.example](.env.example) and keep real secrets out of Git.
 `JSTUDY_JOBS_DIR`, `JSTUDY_SOUL_PATH`, and `JSTUDY_MNEMONICS_PATH` can be used to move runtime data and domain templates outside the repository in Docker or on a server.
 `JSTUDY_MAX_PDF_BYTES` controls the upload limit for courseware PDFs; the default is 50 MB.
+`JSTUDY_JOB_RETENTION_HOURS` is optional and defaults to `0`, which disables cleanup of completed or failed jobs.
 
 Health check:
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import re
 from typing import Any, Callable
@@ -82,6 +83,14 @@ def create_app(
     jobs_root.mkdir(parents=True, exist_ok=True)
     jobs = job_store or JobStore(store_path=jobs_root / "jobs.json")
 
+    def cleanup_expired_jobs() -> None:
+        if runtime.job_retention_hours <= 0:
+            return
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=runtime.job_retention_hours)
+        jobs.cleanup_finished_older_than(cutoff, delete_files=True)
+
+    cleanup_expired_jobs()
+
     def job_or_404(job_id: str) -> JobRecord:
         try:
             return jobs.require(job_id)
@@ -142,6 +151,8 @@ def create_app(
         readiness = runtime.readiness()
         if readiness["status"] != "ready":
             raise HTTPException(status_code=503, detail=readiness)
+
+        cleanup_expired_jobs()
 
         job_id = uuid4().hex[:12]
         job_dir = jobs_root / job_id

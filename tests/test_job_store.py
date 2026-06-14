@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from packages.core.jstudy_core.jobs import JobStore
@@ -92,6 +93,52 @@ class JobStoreTest(unittest.TestCase):
 
         self.assertEqual(restored.status, "failed")
         self.assertIn("interrupted by server restart", restored.error)
+
+    def test_job_store_prunes_finished_jobs_older_than_cutoff_and_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store = JobStore(store_path=root / "jobs.json")
+            now = datetime.now(timezone.utc)
+
+            old_dir = root / "old-job"
+            old_dir.joinpath("input").mkdir(parents=True)
+            old_dir.joinpath("output").mkdir()
+            old_dir.joinpath("output", "result.md").write_text("old", encoding="utf-8")
+            store.create(
+                job_id="old-job",
+                pdf_path=old_dir / "input" / "lecture.pdf",
+                output_dir=old_dir / "output",
+            )
+            store.mark_completed("old-job", outputs={}, quality={"status": "pass"})
+            store.require("old-job").updated_at = (now - timedelta(hours=2)).isoformat()
+
+            fresh_dir = root / "fresh-job"
+            fresh_dir.joinpath("output").mkdir(parents=True)
+            store.create(
+                job_id="fresh-job",
+                pdf_path=fresh_dir / "input" / "lecture.pdf",
+                output_dir=fresh_dir / "output",
+            )
+            store.mark_completed("fresh-job", outputs={}, quality={"status": "pass"})
+
+            running_dir = root / "running-job"
+            running_dir.joinpath("output").mkdir(parents=True)
+            store.create(
+                job_id="running-job",
+                pdf_path=running_dir / "input" / "lecture.pdf",
+                output_dir=running_dir / "output",
+            )
+            store.mark_running("running-job")
+            store.require("running-job").updated_at = (now - timedelta(hours=2)).isoformat()
+
+            pruned = store.cleanup_finished_older_than(now - timedelta(hours=1), delete_files=True)
+            restored = JobStore(store_path=root / "jobs.json")
+
+            self.assertEqual(pruned, ["old-job"])
+            self.assertFalse(old_dir.exists())
+            self.assertIsNone(restored.get("old-job"))
+            self.assertIsNotNone(restored.get("fresh-job"))
+            self.assertIsNotNone(restored.get("running-job"))
 
 
 if __name__ == "__main__":

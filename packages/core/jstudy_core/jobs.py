@@ -1,9 +1,28 @@
 from __future__ import annotations
 
 import json
+import shutil
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+
+def utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def normalized_datetime(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def parse_datetime(value: str) -> datetime | None:
+    try:
+        return normalized_datetime(datetime.fromisoformat(value))
+    except (TypeError, ValueError):
+        return None
 
 
 @dataclass
@@ -16,6 +35,8 @@ class JobRecord:
     outputs: dict[str, Path] = field(default_factory=dict)
     quality: dict[str, Any] = field(default_factory=dict)
     error: str = ""
+    created_at: str = field(default_factory=utc_now_iso)
+    updated_at: str = field(default_factory=utc_now_iso)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -27,11 +48,15 @@ class JobRecord:
             "outputs": {key: str(path) for key, path in self.outputs.items()},
             "quality": self.quality,
             "error": self.error,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
         }
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "JobRecord":
         outline_path = payload.get("outline_path")
+        now = utc_now_iso()
+        created_at = str(payload.get("created_at") or now)
         return cls(
             job_id=payload["job_id"],
             status=payload["status"],
@@ -41,6 +66,8 @@ class JobRecord:
             outputs={key: Path(path) for key, path in payload.get("outputs", {}).items()},
             quality=payload.get("quality", {}),
             error=payload.get("error", ""),
+            created_at=created_at,
+            updated_at=str(payload.get("updated_at") or created_at),
         )
 
 
@@ -78,7 +105,9 @@ class JobStore:
         return record
 
     def mark_running(self, job_id: str) -> None:
-        self.require(job_id).status = "running"
+        record = self.require(job_id)
+        record.status = "running"
+        record.updated_at = utc_now_iso()
         self._save()
 
     def mark_completed(
@@ -92,13 +121,44 @@ class JobStore:
         record.outputs = outputs
         record.quality = quality
         record.error = ""
+        record.updated_at = utc_now_iso()
         self._save()
 
     def mark_failed(self, job_id: str, error: str) -> None:
         record = self.require(job_id)
         record.status = "failed"
         record.error = error
+        record.updated_at = utc_now_iso()
         self._save()
+
+    def cleanup_finished_older_than(self, cutoff: datetime, delete_files: bool = False) -> list[str]:
+        normalized_cutoff = normalized_datetime(cutoff)
+        pruned: list[str] = []
+
+        for job_id, record in list(self._jobs.items()):
+            if record.status not in {"completed", "failed"}:
+                continue
+            updated_at = parse_datetime(record.updated_at) or parse_datetime(record.created_at)
+            if updated_at is None or updated_at >= normalized_cutoff:
+                continue
+            if delete_files:
+                self._delete_job_files(record)
+            self._jobs.pop(job_id, None)
+            pruned.append(job_id)
+
+        if pruned:
+            self._save()
+        return pruned
+
+    def _delete_job_files(self, record: JobRecord) -> None:
+        if self._store_path is None:
+            return
+
+        jobs_root = self._store_path.parent.resolve()
+        job_dir = record.output_dir.parent.resolve()
+        if job_dir.parent != jobs_root or job_dir.name != record.job_id:
+            return
+        shutil.rmtree(job_dir, ignore_errors=True)
 
     def _load(self) -> None:
         if self._store_path is None or not self._store_path.exists():
@@ -111,6 +171,7 @@ class JobStore:
             if record.status in {"queued", "running"}:
                 record.status = "failed"
                 record.error = "Job interrupted by server restart"
+                record.updated_at = utc_now_iso()
                 changed = True
             self._jobs[record.job_id] = record
         if changed:

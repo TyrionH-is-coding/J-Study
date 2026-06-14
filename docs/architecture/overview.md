@@ -155,13 +155,15 @@ Expected deployment components:
 
 Future components can include Redis, Postgres, object storage, and a separate worker.
 
-Runtime settings are centralized in `packages/core/jstudy_core/settings.py`. `SILICONFLOW_API_KEY` is the primary API key source; `SILICONFLOW_API_KEY_FILE` is the file fallback. `JSTUDY_JOBS_DIR`, `JSTUDY_SOUL_PATH`, `JSTUDY_MNEMONICS_PATH`, `JSTUDY_MAX_PDF_BYTES`, `SILICONFLOW_CHAT_MODEL`, and `SILICONFLOW_EMBED_MODEL` control deploy-time paths, upload limits, and model choices.
+Runtime settings are centralized in `packages/core/jstudy_core/settings.py`. `SILICONFLOW_API_KEY` is the primary API key source; `SILICONFLOW_API_KEY_FILE` is the file fallback. `JSTUDY_JOBS_DIR`, `JSTUDY_SOUL_PATH`, `JSTUDY_MNEMONICS_PATH`, `JSTUDY_MAX_PDF_BYTES`, `JSTUDY_JOB_RETENTION_HOURS`, `SILICONFLOW_CHAT_MODEL`, and `SILICONFLOW_EMBED_MODEL` control deploy-time paths, upload limits, optional cleanup, and model choices.
 
 The backend exposes `GET /api/health` for reverse proxy and container liveness checks. `GET /api/readiness` reports whether runtime paths, prompt files, API key configuration, and PDF upload limits are ready for job execution. `POST /api/generate` accepts PDF uploads only, rejects files above `JSTUDY_MAX_PDF_BYTES`, and returns `503` with readiness details when required runtime configuration is missing.
 
 Dynamic API responses that drive polling and runtime state use `Cache-Control: no-store`. Uploaded/generated job artifacts such as markdown output, evidence JSON, retrieval trace, PDF metadata, original PDF, and rendered PDF page PNGs use `Cache-Control: private, max-age=0, must-revalidate` so browsers can revalidate private previews without serving stale job state.
 
 Job status persists to `JSTUDY_JOBS_DIR/jobs.json` so completed and failed jobs remain visible after a process restart. Queued or running jobs are marked failed on restart because the current MVP does not yet have a separate resumable worker queue.
+
+`JSTUDY_JOB_RETENTION_HOURS` defaults to `0`, which disables cleanup. When set to a positive number, the API prunes completed or failed jobs older than that TTL during app startup and before accepting a new generation job. Cleanup removes the persisted job record and the job directory only when the directory is safely shaped as `JSTUDY_JOBS_DIR/{job_id}`. Queued and running jobs are never pruned by this policy.
 
 Completed jobs expose the retrieval trace through `GET /api/jobs/{job_id}/trace`. This returns the selected chunks, query traces, RAG settings, and mnemonic hits already written by the pipeline so backend quality issues can be reviewed without shell access to the server.
 
