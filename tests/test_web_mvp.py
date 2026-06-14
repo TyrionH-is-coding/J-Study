@@ -233,6 +233,52 @@ class WebMvpTest(unittest.TestCase):
         self.assertEqual(page_png.headers["content-type"], "image/png")
         self.assertTrue(page_png.content.startswith(b"\x89PNG"))
 
+    def test_default_job_store_persists_completed_job_status_between_app_instances(self):
+        def fake_runner(
+            pdf_path,
+            soul_path,
+            mnemonics_path,
+            api_key_path,
+            output_dir,
+            chat_model,
+            embed_model,
+            output_prefix,
+            rag_config,
+            embedding_cache_path,
+            outline_path,
+        ):
+            output_dir.mkdir(parents=True, exist_ok=True)
+            markdown = output_dir / f"{output_prefix}-output.md"
+            evidence = output_dir / f"{output_prefix}-evidence.json"
+            evidence_links = output_dir / f"{output_prefix}-evidence_links.json"
+            quality = output_dir / f"{output_prefix}-quality.json"
+            markdown.write_text("Fact\n", encoding="utf-8")
+            evidence.write_text("[]", encoding="utf-8")
+            evidence_links.write_text("[]", encoding="utf-8")
+            quality.write_text(json.dumps({"status": "pass"}), encoding="utf-8")
+            return {
+                "markdown": markdown,
+                "evidence": evidence,
+                "evidence_links": evidence_links,
+                "quality": quality,
+            }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            settings = self.ready_settings(root)
+            first_client = TestClient(create_app(runner=fake_runner, settings=settings))
+            response = first_client.post(
+                "/api/generate",
+                files={"pdf": ("lecture.pdf", self.make_pdf_bytes(), "application/pdf")},
+            )
+            job_id = response.json()["job_id"]
+
+            second_client = TestClient(create_app(runner=fake_runner, settings=settings))
+            restored = second_client.get(f"/api/jobs/{job_id}").json()
+
+        self.assertEqual(restored["status"], "completed")
+        self.assertEqual(restored["quality"]["status"], "pass")
+
     def test_queued_job_result_endpoints_return_not_ready(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

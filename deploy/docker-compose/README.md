@@ -25,3 +25,4 @@ curl http://127.0.0.1:8765/api/readiness
 The readiness response should be `ready` before users submit PDFs.
 
 Persistent runtime files are written under `data/jobs` on the host and mounted to `/app/data/jobs` in the container.
+Job lifecycle state is persisted at `data/jobs/jobs.json`.

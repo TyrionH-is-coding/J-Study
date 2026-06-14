@@ -59,7 +59,7 @@ def create_app(
     runtime = settings or RuntimeSettings.from_env(ROOT, jobs_root=base_dir)
     jobs_root = base_dir or runtime.jobs_root
     jobs_root.mkdir(parents=True, exist_ok=True)
-    jobs = job_store or JobStore()
+    jobs = job_store or JobStore(store_path=jobs_root / "jobs.json")
 
     def job_or_404(job_id: str) -> JobRecord:
         try:

@@ -35,6 +35,7 @@ Deliverables:
 - split provider calls - done
 - split storage/output contracts - done
 - split legacy CLI entrypoint from pipeline orchestration - done
+- add lightweight JSON job persistence for single-server deployment - done
 
 Acceptance:
 

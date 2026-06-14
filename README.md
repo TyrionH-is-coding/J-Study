@@ -28,7 +28,7 @@ apps/api/jstudy_api/    FastAPI MVP service and temporary UI module
 packages/core/          Pipeline orchestration, job lifecycle, output storage, runtime settings, CLI
 packages/core/jstudy_core/citations.py Evidence item and citation-link contracts
 packages/core/jstudy_core/cli.py Legacy CLI entrypoint implementation
-packages/core/jstudy_core/jobs.py In-memory MVP job lifecycle store
+packages/core/jstudy_core/jobs.py MVP job lifecycle store with JSON persistence
 packages/core/jstudy_core/providers.py SiliconFlow chat and embedding client helpers
 packages/core/jstudy_core/settings.py Runtime configuration helpers
 packages/core/jstudy_core/storage.py Output path contracts and JSON helpers
@@ -102,6 +102,7 @@ GET /api/readiness
 
 `/api/health` only confirms the API process is alive. `/api/readiness` checks the jobs directory, domain prompt files, API key source, and PDF upload limit.
 `POST /api/generate` returns `503` with the readiness payload when required runtime configuration is missing.
+Job status is persisted in `JSTUDY_JOBS_DIR/jobs.json`; jobs that were queued or running during a server restart are marked failed because the MVP has no separate worker queue yet.
 
 Run the current MVP service with the compatibility entrypoint:
 

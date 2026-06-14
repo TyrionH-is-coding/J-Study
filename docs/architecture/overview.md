@@ -2,7 +2,7 @@
 
 ## Summary
 
-J-Study is a single-server MVP that should evolve into a formally structured product. The current backend now has canonical package paths: `apps/api/jstudy_api/app.py` serves the FastAPI MVP, `apps/api/jstudy_api/ui.py` owns the temporary built-in UI, `packages/core/jstudy_core/pipeline.py` orchestrates the generation pipeline, `packages/core/jstudy_core/cli.py` owns the legacy CLI entrypoint implementation, `packages/core/jstudy_core/citations.py` owns evidence and citation-link contracts, `packages/core/jstudy_core/jobs.py` owns the in-memory MVP job lifecycle, `packages/core/jstudy_core/providers.py` owns SiliconFlow chat and embedding calls, `packages/core/jstudy_core/settings.py` owns runtime secret lookup, `packages/core/jstudy_core/storage.py` owns local output file contracts, `packages/parsers` owns document parsing, `packages/retrieval` owns chunking and hybrid retrieval, and `packages/domains/medicine.py` owns the first subject pack. Root-level `web_mvp.py` and `mvp_runner.py` remain compatibility shims for old commands.
+J-Study is a single-server MVP that should evolve into a formally structured product. The current backend now has canonical package paths: `apps/api/jstudy_api/app.py` serves the FastAPI MVP, `apps/api/jstudy_api/ui.py` owns the temporary built-in UI, `packages/core/jstudy_core/pipeline.py` orchestrates the generation pipeline, `packages/core/jstudy_core/cli.py` owns the legacy CLI entrypoint implementation, `packages/core/jstudy_core/citations.py` owns evidence and citation-link contracts, `packages/core/jstudy_core/jobs.py` owns the MVP job lifecycle and JSON persistence, `packages/core/jstudy_core/providers.py` owns SiliconFlow chat and embedding calls, `packages/core/jstudy_core/settings.py` owns runtime secret lookup, `packages/core/jstudy_core/storage.py` owns local output file contracts, `packages/parsers` owns document parsing, `packages/retrieval` owns chunking and hybrid retrieval, and `packages/domains/medicine.py` owns the first subject pack. Root-level `web_mvp.py` and `mvp_runner.py` remain compatibility shims for old commands.
 
 ## Target Repository Structure
 
@@ -159,12 +159,13 @@ Runtime settings are centralized in `packages/core/jstudy_core/settings.py`. `SI
 
 The backend exposes `GET /api/health` for reverse proxy and container liveness checks. `GET /api/readiness` reports whether runtime paths, prompt files, API key configuration, and PDF upload limits are ready for job execution. `POST /api/generate` accepts PDF uploads only, rejects files above `JSTUDY_MAX_PDF_BYTES`, and returns `503` with readiness details when required runtime configuration is missing.
 
+Job status persists to `JSTUDY_JOBS_DIR/jobs.json` so completed and failed jobs remain visible after a process restart. Queued or running jobs are marked failed on restart because the current MVP does not yet have a separate resumable worker queue.
+
 ## Current Technical Debt
 
 The MVP intentionally has several temporary choices:
 
 - root-level `web_mvp.py` and `mvp_runner.py` are compatibility shims
-- job lifecycle is extracted, but job persistence is still in memory
 - outputs are local files
 - readiness checks do not yet perform live provider connectivity probes
 
