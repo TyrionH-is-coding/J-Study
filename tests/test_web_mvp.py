@@ -289,6 +289,25 @@ class WebMvpTest(unittest.TestCase):
         self.assertEqual(restored["status"], "completed")
         self.assertEqual(restored["quality"]["status"], "pass")
 
+    def test_failed_job_status_includes_exception_type_and_message(self):
+        def failing_runner(**kwargs):
+            raise TimeoutError("provider timeout")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            settings = self.ready_settings(root)
+            client = TestClient(create_app(runner=failing_runner, settings=settings))
+            response = client.post(
+                "/api/generate",
+                files={"pdf": ("lecture.pdf", self.make_pdf_bytes(), "application/pdf")},
+            )
+            job_id = response.json()["job_id"]
+
+            status = client.get(f"/api/jobs/{job_id}").json()
+
+        self.assertEqual(status["status"], "failed")
+        self.assertEqual(status["error"], "TimeoutError: provider timeout")
+
     def test_queued_job_result_endpoints_return_not_ready(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

@@ -94,7 +94,7 @@ Deliverables:
 
 - stronger quality report
 - parser/retrieval trace review tools - done for retrieval trace API
-- better failed-job errors
+- better failed-job errors - done with exception type in job status
 - upload limits - done for courseware PDF type and size
 - cache controls
 - optional cleanup policy

@@ -49,6 +49,13 @@ async def save_pdf_upload(upload: UploadFile, target: Path, max_bytes: int) -> N
     target.write_bytes(data)
 
 
+def format_job_error(exc: Exception) -> str:
+    message = str(exc).strip()
+    if message:
+        return f"{type(exc).__name__}: {message}"
+    return type(exc).__name__
+
+
 def create_app(
     base_dir: Path | None = None,
     runner: Runner = run_mvp,
@@ -94,7 +101,7 @@ def create_app(
             quality = read_json(quality_path) if quality_path and quality_path.exists() else {}
             jobs.mark_completed(job_id, outputs=outputs, quality=quality)
         except Exception as exc:  # pragma: no cover - exercised manually with real APIs
-            jobs.mark_failed(job_id, str(exc))
+            jobs.mark_failed(job_id, format_job_error(exc))
 
     @app.get("/", response_class=HTMLResponse)
     def index() -> str:
