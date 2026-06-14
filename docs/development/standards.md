@@ -77,7 +77,7 @@ Current backend module ownership:
 
 ```text
 apps/api/jstudy_api       FastAPI app and HTTP contract
-packages/core/jstudy_core Pipeline orchestration, provider calls, citations
+packages/core/jstudy_core Pipeline orchestration, job lifecycle, provider calls, citations, runtime settings
 packages/parsers          Document parsing implementations
 packages/retrieval        Chunking and retrieval logic
 packages/domains          Subject-specific behavior

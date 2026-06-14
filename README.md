@@ -25,7 +25,8 @@ Current important files:
 
 ```text
 apps/api/jstudy_api/    FastAPI MVP service and temporary built-in test UI
-packages/core/          Pipeline orchestration, LLM calls, citations, CLI
+packages/core/          Pipeline orchestration, job lifecycle, runtime settings, CLI
+packages/core/jstudy_core/jobs.py In-memory MVP job lifecycle store
 packages/core/jstudy_core/settings.py Runtime configuration helpers
 packages/parsers/       PyMuPDF parser implementation
 packages/retrieval/     Chunking, BM25/RRF, retrieval adapter
@@ -63,7 +64,7 @@ docs/
 Run from the repository root:
 
 ```powershell
-python -m py_compile web_mvp.py mvp_runner.py apps/api/jstudy_api/app.py packages/core/jstudy_core/pipeline.py
+python -m py_compile web_mvp.py mvp_runner.py apps/api/jstudy_api/app.py packages/core/jstudy_core/pipeline.py packages/core/jstudy_core/jobs.py packages/core/jstudy_core/settings.py
 python -m unittest discover -s tests -v
 ```
 

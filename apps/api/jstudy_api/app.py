@@ -9,6 +9,7 @@ import fitz
 from fastapi import BackgroundTasks, FastAPI, File, HTTPException, Response, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse
 
+from packages.core.jstudy_core.jobs import JobRecord, JobStore
 from packages.core.jstudy_core.pipeline import (
     DEFAULT_CHAT_MODEL,
     DEFAULT_EMBED_MODEL,
@@ -32,42 +33,50 @@ async def save_upload(upload: UploadFile, target: Path) -> None:
     target.write_bytes(await upload.read())
 
 
-def create_app(base_dir: Path | None = None, runner: Runner = run_mvp) -> FastAPI:
+def create_app(
+    base_dir: Path | None = None,
+    runner: Runner = run_mvp,
+    job_store: JobStore | None = None,
+) -> FastAPI:
     app = FastAPI(title="J Study MVP")
     jobs_root = base_dir or ROOT / "web_jobs"
     jobs_root.mkdir(parents=True, exist_ok=True)
-    jobs: dict[str, dict[str, Any]] = {}
+    jobs = job_store or JobStore()
 
-    def job_or_404(job_id: str) -> dict[str, Any]:
-        job = jobs.get(job_id)
-        if job is None:
+    def job_or_404(job_id: str) -> JobRecord:
+        try:
+            return jobs.require(job_id)
+        except KeyError:
             raise HTTPException(status_code=404, detail="Job not found")
-        return job
+
+    def ready_output_path(job: JobRecord, key: str, detail: str) -> Path:
+        path = job.outputs.get(key)
+        if path is None or not path.is_file():
+            raise HTTPException(status_code=404, detail=detail)
+        return path
 
     def run_job(job_id: str) -> None:
-        job = jobs[job_id]
-        job["status"] = "running"
+        job = jobs.require(job_id)
+        jobs.mark_running(job_id)
         try:
             outputs = runner(
-                pdf_path=Path(job["pdf_path"]),
+                pdf_path=job.pdf_path,
                 soul_path=ROOT / "soul.md",
                 mnemonics_path=ROOT / "mnemonics.md",
                 api_key_path=ROOT / "siliconflow api key.txt",
-                output_dir=Path(job["output_dir"]),
+                output_dir=job.output_dir,
                 chat_model=DEFAULT_CHAT_MODEL,
                 embed_model=DEFAULT_EMBED_MODEL,
                 output_prefix="result",
                 rag_config=RagConfig(),
                 embedding_cache_path=jobs_root / ".cache" / "embeddings.json",
-                outline_path=Path(job["outline_path"]) if job.get("outline_path") else None,
+                outline_path=job.outline_path,
             )
-            job["status"] = "completed"
-            job["outputs"] = {name: str(path) for name, path in outputs.items()}
             quality_path = outputs.get("quality")
-            job["quality"] = read_json(quality_path) if quality_path and quality_path.exists() else {}
+            quality = read_json(quality_path) if quality_path and quality_path.exists() else {}
+            jobs.mark_completed(job_id, outputs=outputs, quality=quality)
         except Exception as exc:  # pragma: no cover - exercised manually with real APIs
-            job["status"] = "failed"
-            job["error"] = str(exc)
+            jobs.mark_failed(job_id, str(exc))
 
     @app.get("/", response_class=HTMLResponse)
     def index() -> str:
@@ -92,15 +101,12 @@ def create_app(base_dir: Path | None = None, runner: Runner = run_mvp) -> FastAP
             outline_path = input_dir / outline_name
             await save_upload(outline, outline_path)
 
-        jobs[job_id] = {
-            "job_id": job_id,
-            "status": "queued",
-            "pdf_path": str(pdf_path),
-            "outline_path": str(outline_path) if outline_path else "",
-            "output_dir": str(job_dir / "output"),
-            "outputs": {},
-            "quality": {},
-        }
+        jobs.create(
+            job_id=job_id,
+            pdf_path=pdf_path,
+            outline_path=outline_path,
+            output_dir=job_dir / "output",
+        )
         background_tasks.add_task(run_job, job_id)
         return {
             "job_id": job_id,
@@ -113,9 +119,9 @@ def create_app(base_dir: Path | None = None, runner: Runner = run_mvp) -> FastAP
         job = job_or_404(job_id)
         return {
             "job_id": job_id,
-            "status": job["status"],
-            "error": job.get("error", ""),
-            "quality": job.get("quality", {}),
+            "status": job.status,
+            "error": job.error,
+            "quality": job.quality,
             "output_url": f"/api/jobs/{job_id}/output",
             "evidence_url": f"/api/jobs/{job_id}/evidence",
             "evidence_links_url": f"/api/jobs/{job_id}/evidence-links",
@@ -127,19 +133,14 @@ def create_app(base_dir: Path | None = None, runner: Runner = run_mvp) -> FastAP
     @app.get("/api/jobs/{job_id}/output")
     def job_output(job_id: str) -> dict[str, str]:
         job = job_or_404(job_id)
-        path = Path(job.get("outputs", {}).get("markdown", ""))
-        if not path.exists():
-            raise HTTPException(status_code=404, detail="Output is not ready")
+        path = ready_output_path(job, "markdown", "Output is not ready")
         return {"markdown": path.read_text(encoding="utf-8")}
 
     @app.get("/api/jobs/{job_id}/evidence")
     def job_evidence(job_id: str) -> dict[str, Any]:
         job = job_or_404(job_id)
-        outputs = job.get("outputs", {})
-        evidence_path = Path(outputs.get("evidence", ""))
-        links_path = Path(outputs.get("evidence_links", ""))
-        if not evidence_path.exists() or not links_path.exists():
-            raise HTTPException(status_code=404, detail="Evidence is not ready")
+        evidence_path = ready_output_path(job, "evidence", "Evidence is not ready")
+        links_path = ready_output_path(job, "evidence_links", "Evidence is not ready")
         return {
             "evidence": read_json(evidence_path),
             "evidence_links": read_json(links_path),
@@ -148,15 +149,13 @@ def create_app(base_dir: Path | None = None, runner: Runner = run_mvp) -> FastAP
     @app.get("/api/jobs/{job_id}/evidence-links")
     def job_evidence_links(job_id: str) -> Any:
         job = job_or_404(job_id)
-        path = Path(job.get("outputs", {}).get("evidence_links", ""))
-        if not path.exists():
-            raise HTTPException(status_code=404, detail="Evidence links are not ready")
+        path = ready_output_path(job, "evidence_links", "Evidence links are not ready")
         return read_json(path)
 
     @app.get("/api/jobs/{job_id}/pdf")
     def job_pdf(job_id: str) -> FileResponse:
         job = job_or_404(job_id)
-        path = Path(job["pdf_path"])
+        path = job.pdf_path
         if not path.exists():
             raise HTTPException(status_code=404, detail="PDF not found")
         return FileResponse(path, media_type="application/pdf", filename=path.name)
@@ -164,7 +163,7 @@ def create_app(base_dir: Path | None = None, runner: Runner = run_mvp) -> FastAP
     @app.get("/api/jobs/{job_id}/pdf-info")
     def job_pdf_info(job_id: str) -> dict[str, Any]:
         job = job_or_404(job_id)
-        path = Path(job["pdf_path"])
+        path = job.pdf_path
         if not path.exists():
             raise HTTPException(status_code=404, detail="PDF not found")
         with fitz.open(str(path)) as doc:
@@ -181,7 +180,7 @@ def create_app(base_dir: Path | None = None, runner: Runner = run_mvp) -> FastAP
     @app.get("/api/jobs/{job_id}/pdf-page/{page_no}.png")
     def job_pdf_page_png(job_id: str, page_no: int) -> Response:
         job = job_or_404(job_id)
-        path = Path(job["pdf_path"])
+        path = job.pdf_path
         if not path.exists():
             raise HTTPException(status_code=404, detail="PDF not found")
         with fitz.open(str(path)) as doc:

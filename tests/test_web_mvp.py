@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from apps.api.jstudy_api.app import INDEX_HTML, create_app  # noqa: E402
+from packages.core.jstudy_core.jobs import JobStore  # noqa: E402
 
 
 class WebMvpTest(unittest.TestCase):
@@ -102,7 +103,8 @@ class WebMvpTest(unittest.TestCase):
             }
 
         with tempfile.TemporaryDirectory() as tmp:
-            client = TestClient(create_app(base_dir=Path(tmp), runner=fake_runner))
+            job_store = JobStore()
+            client = TestClient(create_app(base_dir=Path(tmp), runner=fake_runner, job_store=job_store))
             response = client.post(
                 "/api/generate",
                 files={
@@ -118,8 +120,11 @@ class WebMvpTest(unittest.TestCase):
             evidence = client.get(f"/api/jobs/{job_id}/evidence").json()
             pdf_info = client.get(f"/api/jobs/{job_id}/pdf-info").json()
             page_png = client.get(f"/api/jobs/{job_id}/pdf-page/2.png")
+            record = job_store.require(job_id)
 
         self.assertEqual(status["status"], "completed")
+        self.assertEqual(record.status, "completed")
+        self.assertEqual(record.pdf_path.name, "lecture.pdf")
         self.assertEqual(status["quality"]["status"], "pass")
         self.assertIn("evidence_links_url", status)
         self.assertIn("Fact", output["markdown"])
@@ -128,6 +133,28 @@ class WebMvpTest(unittest.TestCase):
         self.assertEqual(pdf_info["page_count"], 2)
         self.assertEqual(page_png.headers["content-type"], "image/png")
         self.assertTrue(page_png.content.startswith(b"\x89PNG"))
+
+    def test_queued_job_result_endpoints_return_not_ready(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            job_store = JobStore()
+            job_store.create(
+                job_id="queued-job",
+                pdf_path=root / "input" / "lecture.pdf",
+                output_dir=root / "output",
+            )
+            client = TestClient(
+                create_app(base_dir=root, runner=lambda **kwargs: {}, job_store=job_store),
+                raise_server_exceptions=False,
+            )
+
+            output = client.get("/api/jobs/queued-job/output")
+            evidence = client.get("/api/jobs/queued-job/evidence")
+            evidence_links = client.get("/api/jobs/queued-job/evidence-links")
+
+        self.assertEqual(output.status_code, 404)
+        self.assertEqual(evidence.status_code, 404)
+        self.assertEqual(evidence_links.status_code, 404)
 
 
 if __name__ == "__main__":
