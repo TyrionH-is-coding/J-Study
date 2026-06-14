@@ -92,7 +92,7 @@ Deliverables:
 - stronger quality report
 - parser/retrieval trace review tools
 - better failed-job errors
-- upload limits
+- upload limits - done for courseware PDF type and size
 - cache controls
 - optional cleanup policy
 

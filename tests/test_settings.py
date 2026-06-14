@@ -18,6 +18,7 @@ class SettingsTest(unittest.TestCase):
                 "SILICONFLOW_API_KEY_FILE": str(root / "secrets" / "api-key.txt"),
                 "SILICONFLOW_CHAT_MODEL": "chat-model",
                 "SILICONFLOW_EMBED_MODEL": "embed-model",
+                "JSTUDY_MAX_PDF_BYTES": "12345",
             }
 
             with patch.dict(os.environ, env, clear=False):
@@ -29,6 +30,7 @@ class SettingsTest(unittest.TestCase):
         self.assertEqual(settings.api_key_path, Path(env["SILICONFLOW_API_KEY_FILE"]))
         self.assertEqual(settings.chat_model, "chat-model")
         self.assertEqual(settings.embed_model, "embed-model")
+        self.assertEqual(settings.max_pdf_bytes, 12345)
 
     def test_runtime_settings_keep_mvp_defaults(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -40,6 +42,7 @@ class SettingsTest(unittest.TestCase):
         self.assertEqual(settings.soul_path, root / "soul.md")
         self.assertEqual(settings.mnemonics_path, root / "mnemonics.md")
         self.assertEqual(settings.api_key_path, root / "siliconflow api key.txt")
+        self.assertEqual(settings.max_pdf_bytes, 50 * 1024 * 1024)
 
 
 if __name__ == "__main__":

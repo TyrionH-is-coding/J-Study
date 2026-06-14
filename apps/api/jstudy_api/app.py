@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 from typing import Any, Callable
+import unicodedata
 from uuid import uuid4
 
 import fitz
@@ -23,6 +25,26 @@ ROOT = PROJECT_ROOT
 async def save_upload(upload: UploadFile, target: Path) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_bytes(await upload.read())
+
+
+def safe_upload_name(filename: str, default: str) -> str:
+    normalized = unicodedata.normalize("NFC", filename or default)
+    name = normalized.replace("\\", "/").rsplit("/", 1)[-1]
+    name = re.sub(r"[\x00-\x1f\x7f]", "", name)
+    name = re.sub(r'[<>:"/\\|?*]', "_", name)
+    if not name or name in (".", "..") or name.strip("_") == "":
+        return default
+    return name
+
+
+async def save_pdf_upload(upload: UploadFile, target: Path, max_bytes: int) -> None:
+    data = await upload.read()
+    if len(data) > max_bytes:
+        raise HTTPException(status_code=413, detail=f"PDF upload too large: {len(data)} bytes")
+    if not data.startswith(b"%PDF-"):
+        raise HTTPException(status_code=400, detail="Uploaded file must be a PDF")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(data)
 
 
 def create_app(
@@ -76,6 +98,10 @@ def create_app(
     def index() -> str:
         return INDEX_HTML
 
+    @app.get("/api/health")
+    def health() -> dict[str, str]:
+        return {"status": "ok", "service": "jstudy-api"}
+
     @app.post("/api/generate")
     async def generate(
         background_tasks: BackgroundTasks,
@@ -85,13 +111,15 @@ def create_app(
         job_id = uuid4().hex[:12]
         job_dir = jobs_root / job_id
         input_dir = job_dir / "input"
-        pdf_name = Path(pdf.filename or "courseware.pdf").name
+        pdf_name = safe_upload_name(pdf.filename or "", "courseware.pdf")
+        if Path(pdf_name).suffix.lower() != ".pdf":
+            raise HTTPException(status_code=400, detail="Uploaded file must be a PDF")
         pdf_path = input_dir / pdf_name
-        await save_upload(pdf, pdf_path)
+        await save_pdf_upload(pdf, pdf_path, runtime.max_pdf_bytes)
 
         outline_path = None
         if outline is not None and outline.filename:
-            outline_name = Path(outline.filename).name
+            outline_name = safe_upload_name(outline.filename, "outline.md")
             outline_path = input_dir / outline_name
             await save_upload(outline, outline_path)
 

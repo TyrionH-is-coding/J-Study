@@ -155,7 +155,9 @@ Expected deployment components:
 
 Future components can include Redis, Postgres, object storage, and a separate worker.
 
-Runtime settings are centralized in `packages/core/jstudy_core/settings.py`. `SILICONFLOW_API_KEY` is the primary API key source; `SILICONFLOW_API_KEY_FILE` is the file fallback. `JSTUDY_JOBS_DIR`, `JSTUDY_SOUL_PATH`, `JSTUDY_MNEMONICS_PATH`, `SILICONFLOW_CHAT_MODEL`, and `SILICONFLOW_EMBED_MODEL` control deploy-time paths and model choices.
+Runtime settings are centralized in `packages/core/jstudy_core/settings.py`. `SILICONFLOW_API_KEY` is the primary API key source; `SILICONFLOW_API_KEY_FILE` is the file fallback. `JSTUDY_JOBS_DIR`, `JSTUDY_SOUL_PATH`, `JSTUDY_MNEMONICS_PATH`, `JSTUDY_MAX_PDF_BYTES`, `SILICONFLOW_CHAT_MODEL`, and `SILICONFLOW_EMBED_MODEL` control deploy-time paths, upload limits, and model choices.
+
+The backend exposes `GET /api/health` for reverse proxy and container health checks. `POST /api/generate` accepts PDF uploads only and rejects files above `JSTUDY_MAX_PDF_BYTES`.
 
 ## Current Technical Debt
 

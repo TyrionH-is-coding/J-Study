@@ -12,6 +12,8 @@ DEFAULT_API_KEY_FILE_ENV = "SILICONFLOW_API_KEY_FILE"
 JOBS_DIR_ENV = "JSTUDY_JOBS_DIR"
 SOUL_PATH_ENV = "JSTUDY_SOUL_PATH"
 MNEMONICS_PATH_ENV = "JSTUDY_MNEMONICS_PATH"
+MAX_PDF_BYTES_ENV = "JSTUDY_MAX_PDF_BYTES"
+DEFAULT_MAX_PDF_BYTES = 50 * 1024 * 1024
 
 
 def env_path(name: str, default: Path | None) -> Path | None:
@@ -19,6 +21,16 @@ def env_path(name: str, default: Path | None) -> Path | None:
     if value:
         return Path(value)
     return default
+
+
+def env_int(name: str, default: int) -> int:
+    value = os.getenv(name, "").strip()
+    if not value:
+        return default
+    parsed = int(value)
+    if parsed <= 0:
+        raise RuntimeError(f"{name} must be greater than 0")
+    return parsed
 
 
 @dataclass(frozen=True)
@@ -30,6 +42,7 @@ class RuntimeSettings:
     api_key_path: Path | None
     chat_model: str
     embed_model: str
+    max_pdf_bytes: int = DEFAULT_MAX_PDF_BYTES
 
     @classmethod
     def from_env(cls, project_root: Path, jobs_root: Path | None = None) -> "RuntimeSettings":
@@ -41,6 +54,7 @@ class RuntimeSettings:
             api_key_path=env_path(DEFAULT_API_KEY_FILE_ENV, project_root / "siliconflow api key.txt"),
             chat_model=os.getenv("SILICONFLOW_CHAT_MODEL", DEFAULT_CHAT_MODEL).strip() or DEFAULT_CHAT_MODEL,
             embed_model=os.getenv("SILICONFLOW_EMBED_MODEL", DEFAULT_EMBED_MODEL).strip() or DEFAULT_EMBED_MODEL,
+            max_pdf_bytes=env_int(MAX_PDF_BYTES_ENV, DEFAULT_MAX_PDF_BYTES),
         )
 
 

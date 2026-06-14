@@ -131,8 +131,10 @@ Deployment should be portable across servers:
 - secrets in `.env`, never in Git
 - `SILICONFLOW_API_KEY` is the deployment API key source
 - `JSTUDY_JOBS_DIR`, `JSTUDY_SOUL_PATH`, and `JSTUDY_MNEMONICS_PATH` should point at mounted deployment paths when containerized
+- `JSTUDY_MAX_PDF_BYTES` should be set explicitly for server deployment
 - persistent files mounted under a data volume
 - domain routes frontend at `/` and backend at `/api/...`
+- reverse proxy health checks should call `/api/health`
 
 Initial deployment can be single-server. Add Redis, Postgres, object storage, or workers when needed by real usage.
 

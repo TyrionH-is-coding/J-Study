@@ -49,6 +49,14 @@ class WebMvpTest(unittest.TestCase):
         self.assertIn("showEvidenceLink(link, { scrollCitationList: true })", INDEX_HTML)
         self.assertNotIn("<iframe", INDEX_HTML)
 
+    def test_health_endpoint_reports_api_status(self):
+        client = TestClient(create_app())
+
+        response = client.get("/api/health")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"status": "ok", "service": "jstudy-api"})
+
     def test_generate_job_exposes_output_and_evidence_contracts(self):
         captured = {}
 
@@ -182,6 +190,52 @@ class WebMvpTest(unittest.TestCase):
         self.assertEqual(output.status_code, 404)
         self.assertEqual(evidence.status_code, 404)
         self.assertEqual(evidence_links.status_code, 404)
+
+    def test_generate_rejects_non_pdf_upload(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            settings = RuntimeSettings(
+                project_root=root,
+                jobs_root=root / "jobs",
+                soul_path=root / "soul.md",
+                mnemonics_path=root / "mnemonics.md",
+                api_key_path=root / "api-key.txt",
+                chat_model="chat-model",
+                embed_model="embed-model",
+                max_pdf_bytes=1024,
+            )
+            client = TestClient(create_app(runner=lambda **kwargs: {}, settings=settings))
+
+            response = client.post(
+                "/api/generate",
+                files={"pdf": ("notes.txt", b"not a pdf", "text/plain")},
+            )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("PDF", response.json()["detail"])
+
+    def test_generate_rejects_pdf_above_configured_limit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            settings = RuntimeSettings(
+                project_root=root,
+                jobs_root=root / "jobs",
+                soul_path=root / "soul.md",
+                mnemonics_path=root / "mnemonics.md",
+                api_key_path=root / "api-key.txt",
+                chat_model="chat-model",
+                embed_model="embed-model",
+                max_pdf_bytes=5,
+            )
+            client = TestClient(create_app(runner=lambda **kwargs: {}, settings=settings))
+
+            response = client.post(
+                "/api/generate",
+                files={"pdf": ("lecture.pdf", b"%PDF- too large", "application/pdf")},
+            )
+
+        self.assertEqual(response.status_code, 413)
+        self.assertIn("too large", response.json()["detail"].lower())
 
 
 if __name__ == "__main__":
