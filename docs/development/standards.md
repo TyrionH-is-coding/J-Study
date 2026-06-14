@@ -126,6 +126,7 @@ Deployment should be portable across servers:
 
 - no manually installed app dependencies outside containers
 - secrets in `.env`, never in Git
+- `SILICONFLOW_API_KEY` is the deployment API key source
 - persistent files mounted under a data volume
 - domain routes frontend at `/` and backend at `/api/...`
 

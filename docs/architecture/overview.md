@@ -2,7 +2,7 @@
 
 ## Summary
 
-J-Study is a single-server MVP that should evolve into a formally structured product. The current backend now has canonical package paths: `apps/api/jstudy_api/app.py` serves the FastAPI MVP, `packages/core/jstudy_core/pipeline.py` orchestrates the generation pipeline, `packages/parsers` owns document parsing, `packages/retrieval` owns chunking and hybrid retrieval, and `packages/domains/medicine.py` owns the first subject pack. Root-level `web_mvp.py` and `mvp_runner.py` remain compatibility shims for old commands.
+J-Study is a single-server MVP that should evolve into a formally structured product. The current backend now has canonical package paths: `apps/api/jstudy_api/app.py` serves the FastAPI MVP, `packages/core/jstudy_core/pipeline.py` orchestrates the generation pipeline, `packages/core/jstudy_core/settings.py` owns runtime secret lookup, `packages/parsers` owns document parsing, `packages/retrieval` owns chunking and hybrid retrieval, and `packages/domains/medicine.py` owns the first subject pack. Root-level `web_mvp.py` and `mvp_runner.py` remain compatibility shims for old commands.
 
 ## Target Repository Structure
 
@@ -155,6 +155,8 @@ Expected deployment components:
 
 Future components can include Redis, Postgres, object storage, and a separate worker.
 
+Runtime secrets should come from environment variables. `SILICONFLOW_API_KEY` is the primary API key source; the legacy local key file remains only as an MVP fallback.
+
 ## Current Technical Debt
 
 The MVP intentionally has several temporary choices:
@@ -164,6 +166,6 @@ The MVP intentionally has several temporary choices:
 - root-level `web_mvp.py` and `mvp_runner.py` are compatibility shims
 - job state is in memory
 - outputs are local files
-- API key currently comes from a local file in the old workflow
+- API key has environment-variable support, but full runtime settings are not yet centralized
 
 These should be addressed in roadmap order, not all at once.

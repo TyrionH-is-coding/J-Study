@@ -26,6 +26,7 @@ Current important files:
 ```text
 apps/api/jstudy_api/    FastAPI MVP service and temporary built-in test UI
 packages/core/          Pipeline orchestration, LLM calls, citations, CLI
+packages/core/jstudy_core/settings.py Runtime configuration helpers
 packages/parsers/       PyMuPDF parser implementation
 packages/retrieval/     Chunking, BM25/RRF, retrieval adapter
 packages/domains/       Medicine domain pack and future subject packs
@@ -71,6 +72,14 @@ Install backend dependencies:
 ```powershell
 python -m pip install -r requirements.txt
 ```
+
+Configure the API key with an environment variable:
+
+```powershell
+$env:SILICONFLOW_API_KEY="your-key"
+```
+
+For deployment, start from [.env.example](.env.example) and keep real secrets out of Git.
 
 Run the current MVP service with the compatibility entrypoint:
 

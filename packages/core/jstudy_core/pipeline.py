@@ -35,6 +35,7 @@ from packages.retrieval.hybrid import (
     reciprocal_rank_fusion,
     select_evidence_chunks,
 )
+from packages.core.jstudy_core.settings import read_api_key
 
 
 DEFAULT_CHAT_MODEL = "deepseek-ai/DeepSeek-V4-Pro"
@@ -62,13 +63,6 @@ def build_evidence_items(chunks: list[Chunk], source_file: str) -> list[dict[str
             item["retrieval_method"] = chunk.retrieval_method
         evidence.append(item)
     return evidence
-
-
-def read_api_key(path: Path) -> str:
-    key = path.read_text(encoding="utf-8").strip()
-    if not key:
-        raise RuntimeError(f"API key file is empty: {path}")
-    return key
 
 
 def siliconflow_post(

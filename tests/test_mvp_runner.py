@@ -1,4 +1,5 @@
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -26,6 +27,7 @@ from packages.core.jstudy_core.pipeline import (  # noqa: E402
     reciprocal_rank_fusion,
     is_low_value_chunk,
     parse_mnemonics,
+    read_api_key,
     retrieve_mnemonics,
     run_mvp,
     select_evidence_chunks,
@@ -296,6 +298,12 @@ content: 一嗅二视三动眼。
         self.assertEqual(config.mnemonic_limit, 2)
         self.assertEqual(config.chunk_max_chars, 128)
         self.assertEqual(config.chunk_overlap, RagConfig().chunk_overlap)
+
+    def test_read_api_key_prefers_environment_for_deployment(self):
+        with patch.dict(os.environ, {"SILICONFLOW_API_KEY": " env-key \n"}, clear=False):
+            key = read_api_key(Path("missing-api-key.txt"))
+
+        self.assertEqual(key, "env-key")
 
     def test_audit_output_quality_flags_unknown_evidence_refs(self):
         markdown = "## Section\n\nFact. <!-- evidence: E001 E999 -->\n\nMVP debug text"
