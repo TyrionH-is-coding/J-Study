@@ -26,7 +26,8 @@ Goal: keep the current backend behavior while moving it into a product structure
 Deliverables:
 
 - move FastAPI code to `apps/api`
-- move generation pipeline to `packages/core`, `packages/parsers`, `packages/retrieval`, and `packages/domains/medicine`
+- move generation pipeline behind `packages/core`
+- split parser, retrieval, and medicine domain logic into dedicated modules
 - keep PyMuPDF as default parser
 - keep existing tests passing
 - add explicit dependency file
@@ -35,7 +36,7 @@ Acceptance:
 
 - existing API contract still works
 - `python -m unittest discover -s tests -v` passes
-- old root-level scripts are either moved or documented as compatibility shims
+- old root-level scripts are documented as compatibility shims
 
 ## Phase 2: Frontend MVP
 

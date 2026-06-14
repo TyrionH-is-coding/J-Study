@@ -20,7 +20,7 @@
 - 后端代码改动提交前运行：
 
 ```powershell
-python -m py_compile web_mvp.py
+python -m py_compile web_mvp.py mvp_runner.py apps/api/jstudy_api/app.py packages/core/jstudy_core/pipeline.py
 python -m unittest discover -s tests -v
 ```
 

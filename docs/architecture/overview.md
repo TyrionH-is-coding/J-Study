@@ -2,7 +2,7 @@
 
 ## Summary
 
-J-Study is a single-server MVP that should evolve into a formally structured product. The current code is intentionally small: `web_mvp.py` serves the FastAPI MVP and `mvp_runner.py` runs the generation pipeline. The target architecture separates app entrypoints, platform packages, parsing, retrieval, and domain-specific logic.
+J-Study is a single-server MVP that should evolve into a formally structured product. The current backend now has canonical package paths: `apps/api/jstudy_api/app.py` serves the FastAPI MVP and `packages/core/jstudy_core/pipeline.py` runs the generation pipeline. Root-level `web_mvp.py` and `mvp_runner.py` remain compatibility shims for old commands.
 
 ## Target Repository Structure
 
@@ -29,7 +29,7 @@ deploy/
 docs/
 ```
 
-The current MVP files remain in the repository root until the reorganization is implemented and verified.
+The first backend reorganization step is implemented. Further steps should split the current pipeline into parser, retrieval, and domain modules without changing API behavior.
 
 ## Runtime Flow
 
@@ -159,8 +159,9 @@ Future components can include Redis, Postgres, object storage, and a separate wo
 
 The MVP intentionally has several temporary choices:
 
-- `web_mvp.py` combines API and temporary UI
-- `mvp_runner.py` combines parsing, retrieval, prompt building, generation, audit, and CLI
+- `apps/api/jstudy_api/app.py` still combines API and temporary UI
+- `packages/core/jstudy_core/pipeline.py` still combines parsing, retrieval, prompt building, generation, audit, and CLI
+- root-level `web_mvp.py` and `mvp_runner.py` are compatibility shims
 - job state is in memory
 - outputs are local files
 - API key currently comes from a local file in the old workflow

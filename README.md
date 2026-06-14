@@ -24,8 +24,10 @@ The repository is moving from MVP files to a formal product structure.
 Current important files:
 
 ```text
-web_mvp.py              FastAPI MVP service and temporary built-in test UI
-mvp_runner.py           PDF -> retrieval -> prompt -> Markdown pipeline
+apps/api/jstudy_api/    FastAPI MVP service and temporary built-in test UI
+packages/core/          PDF -> retrieval -> prompt -> Markdown pipeline
+web_mvp.py              Compatibility shim for the old Uvicorn entrypoint
+mvp_runner.py           Compatibility shim for the old CLI entrypoint
 soul.md                 Medicine output style and study-material template
 mnemonics.md            Medicine mnemonic seed library
 rag-config.example.json Example RAG settings
@@ -57,14 +59,26 @@ docs/
 Run from the repository root:
 
 ```powershell
-python -m py_compile web_mvp.py
+python -m py_compile web_mvp.py mvp_runner.py apps/api/jstudy_api/app.py packages/core/jstudy_core/pipeline.py
 python -m unittest discover -s tests -v
 ```
 
-Run the current MVP service:
+Install backend dependencies:
+
+```powershell
+python -m pip install -r requirements.txt
+```
+
+Run the current MVP service with the compatibility entrypoint:
 
 ```powershell
 python -m uvicorn web_mvp:app --host 127.0.0.1 --port 8765
+```
+
+Or with the canonical backend entrypoint:
+
+```powershell
+python -m uvicorn apps.api.jstudy_api.app:app --host 127.0.0.1 --port 8765
 ```
 
 Then open:
