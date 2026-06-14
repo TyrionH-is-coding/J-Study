@@ -34,6 +34,7 @@ Deliverables:
 - split runtime settings and job lifecycle - done
 - split provider calls - done
 - split storage/output contracts - done
+- split legacy CLI entrypoint from pipeline orchestration - done
 
 Acceptance:
 

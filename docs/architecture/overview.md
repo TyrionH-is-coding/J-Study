@@ -2,7 +2,7 @@
 
 ## Summary
 
-J-Study is a single-server MVP that should evolve into a formally structured product. The current backend now has canonical package paths: `apps/api/jstudy_api/app.py` serves the FastAPI MVP, `apps/api/jstudy_api/ui.py` owns the temporary built-in UI, `packages/core/jstudy_core/pipeline.py` orchestrates the generation pipeline, `packages/core/jstudy_core/citations.py` owns evidence and citation-link contracts, `packages/core/jstudy_core/jobs.py` owns the in-memory MVP job lifecycle, `packages/core/jstudy_core/providers.py` owns SiliconFlow chat and embedding calls, `packages/core/jstudy_core/settings.py` owns runtime secret lookup, `packages/core/jstudy_core/storage.py` owns local output file contracts, `packages/parsers` owns document parsing, `packages/retrieval` owns chunking and hybrid retrieval, and `packages/domains/medicine.py` owns the first subject pack. Root-level `web_mvp.py` and `mvp_runner.py` remain compatibility shims for old commands.
+J-Study is a single-server MVP that should evolve into a formally structured product. The current backend now has canonical package paths: `apps/api/jstudy_api/app.py` serves the FastAPI MVP, `apps/api/jstudy_api/ui.py` owns the temporary built-in UI, `packages/core/jstudy_core/pipeline.py` orchestrates the generation pipeline, `packages/core/jstudy_core/cli.py` owns the legacy CLI entrypoint implementation, `packages/core/jstudy_core/citations.py` owns evidence and citation-link contracts, `packages/core/jstudy_core/jobs.py` owns the in-memory MVP job lifecycle, `packages/core/jstudy_core/providers.py` owns SiliconFlow chat and embedding calls, `packages/core/jstudy_core/settings.py` owns runtime secret lookup, `packages/core/jstudy_core/storage.py` owns local output file contracts, `packages/parsers` owns document parsing, `packages/retrieval` owns chunking and hybrid retrieval, and `packages/domains/medicine.py` owns the first subject pack. Root-level `web_mvp.py` and `mvp_runner.py` remain compatibility shims for old commands.
 
 ## Target Repository Structure
 
@@ -163,7 +163,6 @@ The backend exposes `GET /api/health` for reverse proxy and container liveness c
 
 The MVP intentionally has several temporary choices:
 
-- `packages/core/jstudy_core/pipeline.py` still combines orchestration and CLI
 - root-level `web_mvp.py` and `mvp_runner.py` are compatibility shims
 - job lifecycle is extracted, but job persistence is still in memory
 - outputs are local files

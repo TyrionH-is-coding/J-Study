@@ -27,6 +27,19 @@ class ProjectStructureTest(unittest.TestCase):
         self.assertIn("from apps.api.jstudy_api.ui import INDEX_HTML", source)
         self.assertNotIn('INDEX_HTML = r"""', source)
 
+    def test_pipeline_does_not_own_cli_entrypoint(self):
+        from mvp_runner import main as legacy_main
+        from packages.core.jstudy_core.cli import parse_args
+        from packages.core.jstudy_core.cli import main
+
+        source = (ROOT / "packages" / "core" / "jstudy_core" / "pipeline.py").read_text(encoding="utf-8")
+
+        self.assertIs(legacy_main, main)
+        self.assertEqual(parse_args([]).pdf.name, "courseware.pdf")
+        self.assertNotIn("import argparse", source)
+        self.assertNotIn("def main(", source)
+        self.assertNotIn("if __name__ ==", source)
+
 
 if __name__ == "__main__":
     unittest.main()
