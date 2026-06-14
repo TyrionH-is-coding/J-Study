@@ -26,6 +26,7 @@ Current important files:
 ```text
 apps/api/jstudy_api/    FastAPI MVP service and temporary built-in test UI
 packages/core/          Pipeline orchestration, job lifecycle, output storage, runtime settings, CLI
+packages/core/jstudy_core/citations.py Evidence item and citation-link contracts
 packages/core/jstudy_core/jobs.py In-memory MVP job lifecycle store
 packages/core/jstudy_core/providers.py SiliconFlow chat and embedding client helpers
 packages/core/jstudy_core/settings.py Runtime configuration helpers
@@ -66,7 +67,7 @@ docs/
 Run from the repository root:
 
 ```powershell
-python -m py_compile web_mvp.py mvp_runner.py apps/api/jstudy_api/app.py packages/core/jstudy_core/pipeline.py packages/core/jstudy_core/jobs.py packages/core/jstudy_core/providers.py packages/core/jstudy_core/settings.py packages/core/jstudy_core/storage.py
+python -m py_compile web_mvp.py mvp_runner.py apps/api/jstudy_api/app.py packages/core/jstudy_core/pipeline.py packages/core/jstudy_core/citations.py packages/core/jstudy_core/jobs.py packages/core/jstudy_core/providers.py packages/core/jstudy_core/settings.py packages/core/jstudy_core/storage.py
 python -m unittest discover -s tests -v
 ```
 

@@ -36,6 +36,12 @@ class BackendBoundariesTest(unittest.TestCase):
         self.assertIs(pipeline.embed_texts_cached, providers.embed_texts_cached)
         self.assertIs(pipeline.generate_markdown, providers.generate_markdown)
 
+    def test_citation_module_owns_evidence_contracts(self):
+        from packages.core.jstudy_core import citations, pipeline
+
+        self.assertIs(pipeline.build_evidence_items, citations.build_evidence_items)
+        self.assertIs(pipeline.build_evidence_links, citations.build_evidence_links)
+
 
 if __name__ == "__main__":
     unittest.main()

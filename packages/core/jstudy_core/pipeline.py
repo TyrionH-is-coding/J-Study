@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 import argparse
-import re
 import sys
 from dataclasses import asdict, replace
 from pathlib import Path
-from typing import Any
 
+from packages.core.jstudy_core import citations
 from packages.core.jstudy_core import providers
 from packages.core.jstudy_core.settings import RuntimeSettings, read_api_key
 from packages.core.jstudy_core.storage import build_output_paths, write_json
@@ -43,27 +42,8 @@ embed_texts = providers.embed_texts
 embedding_cache_key = providers.embedding_cache_key
 embed_texts_cached = providers.embed_texts_cached
 generate_markdown = providers.generate_markdown
-
-
-def build_evidence_items(chunks: list[Chunk], source_file: str) -> list[dict[str, Any]]:
-    evidence = []
-    for idx, chunk in enumerate(chunks, start=1):
-        item = {
-            "id": f"E{idx:03d}",
-            "source_file": source_file,
-            "page": chunk.page,
-            "chunk_id": chunk.id,
-            "score": round(chunk.score, 4),
-            "excerpt": chunk.text[:500],
-        }
-        if chunk.query_id:
-            item["query_id"] = chunk.query_id
-        if chunk.query_title:
-            item["query_title"] = chunk.query_title
-        if chunk.retrieval_method:
-            item["retrieval_method"] = chunk.retrieval_method
-        evidence.append(item)
-    return evidence
+build_evidence_items = citations.build_evidence_items
+build_evidence_links = citations.build_evidence_links
 
 
 def retrieve_chunks(
@@ -84,37 +64,6 @@ def retrieve_chunks(
         for index, (chunk, embedding) in enumerate(zip(chunks, chunk_embeddings))
     ]
     return sorted(scored, key=lambda chunk: chunk.score, reverse=True)[:top_k]
-
-
-def build_evidence_links(markdown: str, evidence: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    evidence_by_id = {str(item.get("id")): item for item in evidence if item.get("id")}
-    occurrence_counts: dict[str, int] = {}
-    links: list[dict[str, Any]] = []
-
-    for comment_index, match in enumerate(
-        re.finditer(r"<!--\s*evidence:\s*([^>]+?)\s*-->", markdown, re.IGNORECASE),
-        start=1,
-    ):
-        for ref_id in re.findall(r"\bE\d{3}\b", match.group(1)):
-            item = evidence_by_id.get(ref_id)
-            if item is None:
-                continue
-            occurrence_counts[ref_id] = occurrence_counts.get(ref_id, 0) + 1
-            links.append(
-                {
-                    "ref_id": ref_id,
-                    "occurrence": occurrence_counts[ref_id],
-                    "comment_index": comment_index,
-                    "target": {
-                        "source_file": item.get("source_file", ""),
-                        "page": item.get("page", ""),
-                        "chunk_id": item.get("chunk_id", ""),
-                        "quote": item.get("excerpt", ""),
-                    },
-                }
-            )
-
-    return links
 
 
 def run_mvp(
@@ -165,7 +114,7 @@ def run_mvp(
         rag_config,
     )
 
-    evidence = build_evidence_items(selected_chunks, pdf_path.name)
+    evidence = citations.build_evidence_items(selected_chunks, pdf_path.name)
     mnemonics = parse_mnemonics(mnemonics_path.read_text(encoding="utf-8"))
     retrieval_query = "\n".join(study_query.query for study_query in study_queries)
     mnemonic_hits = retrieve_mnemonics(
@@ -213,7 +162,7 @@ def run_mvp(
     )
     markdown = providers.generate_markdown(messages, api_key=api_key, model=chat_model)
     output_paths.markdown.write_text(markdown + "\n", encoding="utf-8")
-    write_json(output_paths.evidence_links, build_evidence_links(markdown, evidence))
+    write_json(output_paths.evidence_links, citations.build_evidence_links(markdown, evidence))
     write_json(output_paths.quality, audit_output_quality(markdown, evidence))
 
     return output_paths.as_dict()
