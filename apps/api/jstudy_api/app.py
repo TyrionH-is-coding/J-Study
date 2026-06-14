@@ -102,6 +102,10 @@ def create_app(
     def health() -> dict[str, str]:
         return {"status": "ok", "service": "jstudy-api"}
 
+    @app.get("/api/readiness")
+    def readiness() -> dict[str, Any]:
+        return {"service": "jstudy-api", **runtime.readiness()}
+
     @app.post("/api/generate")
     async def generate(
         background_tasks: BackgroundTasks,

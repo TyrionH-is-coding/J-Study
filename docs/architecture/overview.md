@@ -157,7 +157,7 @@ Future components can include Redis, Postgres, object storage, and a separate wo
 
 Runtime settings are centralized in `packages/core/jstudy_core/settings.py`. `SILICONFLOW_API_KEY` is the primary API key source; `SILICONFLOW_API_KEY_FILE` is the file fallback. `JSTUDY_JOBS_DIR`, `JSTUDY_SOUL_PATH`, `JSTUDY_MNEMONICS_PATH`, `JSTUDY_MAX_PDF_BYTES`, `SILICONFLOW_CHAT_MODEL`, and `SILICONFLOW_EMBED_MODEL` control deploy-time paths, upload limits, and model choices.
 
-The backend exposes `GET /api/health` for reverse proxy and container health checks. `POST /api/generate` accepts PDF uploads only and rejects files above `JSTUDY_MAX_PDF_BYTES`.
+The backend exposes `GET /api/health` for reverse proxy and container liveness checks. `GET /api/readiness` reports whether runtime paths, prompt files, API key configuration, and PDF upload limits are ready for job execution. `POST /api/generate` accepts PDF uploads only and rejects files above `JSTUDY_MAX_PDF_BYTES`.
 
 ## Current Technical Debt
 
@@ -168,6 +168,6 @@ The MVP intentionally has several temporary choices:
 - root-level `web_mvp.py` and `mvp_runner.py` are compatibility shims
 - job lifecycle is extracted, but job persistence is still in memory
 - outputs are local files
-- production-grade config validation is not yet implemented
+- readiness checks do not yet perform live provider connectivity probes
 
 These should be addressed in roadmap order, not all at once.

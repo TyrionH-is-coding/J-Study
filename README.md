@@ -93,6 +93,14 @@ Health check:
 GET /api/health
 ```
 
+Readiness check for deploy-time configuration:
+
+```text
+GET /api/readiness
+```
+
+`/api/health` only confirms the API process is alive. `/api/readiness` checks the jobs directory, domain prompt files, API key source, and PDF upload limit.
+
 Run the current MVP service with the compatibility entrypoint:
 
 ```powershell

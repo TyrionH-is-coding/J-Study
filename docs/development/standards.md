@@ -135,6 +135,7 @@ Deployment should be portable across servers:
 - persistent files mounted under a data volume
 - domain routes frontend at `/` and backend at `/api/...`
 - reverse proxy health checks should call `/api/health`
+- deployment verification should call `/api/readiness` after secrets and mounted files are configured
 
 Initial deployment can be single-server. Add Redis, Postgres, object storage, or workers when needed by real usage.
 

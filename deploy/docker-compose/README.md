@@ -16,4 +16,10 @@ Health check:
 curl http://127.0.0.1:8765/api/health
 ```
 
+Readiness check after `.env` and mounted files are configured:
+
+```powershell
+curl http://127.0.0.1:8765/api/readiness
+```
+
 Persistent runtime files are written under `data/jobs` on the host and mounted to `/app/data/jobs` in the container.

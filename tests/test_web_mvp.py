@@ -57,6 +57,31 @@ class WebMvpTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {"status": "ok", "service": "jstudy-api"})
 
+    def test_readiness_endpoint_reports_degraded_runtime_config(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            settings = RuntimeSettings(
+                project_root=root,
+                jobs_root=root / "jobs",
+                soul_path=root / "missing-soul.md",
+                mnemonics_path=root / "missing-mnemonics.md",
+                api_key_path=root / "missing-api-key.txt",
+                chat_model="chat-model",
+                embed_model="embed-model",
+            )
+            client = TestClient(create_app(settings=settings))
+
+            response = client.get("/api/readiness")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["service"], "jstudy-api")
+        self.assertEqual(body["status"], "degraded")
+        checks = {check["name"]: check for check in body["checks"]}
+        self.assertEqual(checks["soul_path"]["status"], "error")
+        self.assertEqual(checks["mnemonics_path"]["status"], "error")
+        self.assertEqual(checks["api_key"]["status"], "error")
+
     def test_generate_job_exposes_output_and_evidence_contracts(self):
         captured = {}
 

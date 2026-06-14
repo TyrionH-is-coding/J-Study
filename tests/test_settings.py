@@ -44,6 +44,52 @@ class SettingsTest(unittest.TestCase):
         self.assertEqual(settings.api_key_path, root / "siliconflow api key.txt")
         self.assertEqual(settings.max_pdf_bytes, 50 * 1024 * 1024)
 
+    def test_readiness_reports_missing_required_runtime_files_and_api_key(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            settings = RuntimeSettings(
+                project_root=root,
+                jobs_root=root / "jobs",
+                soul_path=root / "missing-soul.md",
+                mnemonics_path=root / "missing-mnemonics.md",
+                api_key_path=root / "missing-api-key.txt",
+                chat_model="chat-model",
+                embed_model="embed-model",
+            )
+
+            with patch.dict(os.environ, {}, clear=True):
+                readiness = settings.readiness()
+
+        self.assertEqual(readiness["status"], "degraded")
+        checks = {check["name"]: check for check in readiness["checks"]}
+        self.assertEqual(checks["jobs_root"]["status"], "ok")
+        self.assertEqual(checks["soul_path"]["status"], "error")
+        self.assertEqual(checks["mnemonics_path"]["status"], "error")
+        self.assertEqual(checks["api_key"]["status"], "error")
+
+    def test_readiness_accepts_existing_files_and_environment_api_key(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            soul = root / "soul.md"
+            mnemonics = root / "mnemonics.md"
+            soul.write_text("soul", encoding="utf-8")
+            mnemonics.write_text("mnemonics", encoding="utf-8")
+            settings = RuntimeSettings(
+                project_root=root,
+                jobs_root=root / "jobs",
+                soul_path=soul,
+                mnemonics_path=mnemonics,
+                api_key_path=root / "missing-api-key.txt",
+                chat_model="chat-model",
+                embed_model="embed-model",
+            )
+
+            with patch.dict(os.environ, {"SILICONFLOW_API_KEY": "key"}, clear=True):
+                readiness = settings.readiness()
+
+        self.assertEqual(readiness["status"], "ready")
+        self.assertTrue(all(check["status"] == "ok" for check in readiness["checks"]))
+
 
 if __name__ == "__main__":
     unittest.main()
