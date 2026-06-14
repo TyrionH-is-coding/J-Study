@@ -1,0 +1,155 @@
+from __future__ import annotations
+
+import hashlib
+import json
+import time
+import urllib.error
+import urllib.request
+from pathlib import Path
+from typing import Any
+
+
+DEFAULT_CHAT_MODEL = "deepseek-ai/DeepSeek-V4-Pro"
+DEFAULT_EMBED_MODEL = "BAAI/bge-m3"
+SILICONFLOW_BASE_URL = "https://api.siliconflow.cn/v1"
+
+
+def siliconflow_post(
+    endpoint: str,
+    payload: dict[str, Any],
+    api_key: str,
+    timeout: int = 120,
+    retries: int = 2,
+) -> dict[str, Any]:
+    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    url = f"{SILICONFLOW_BASE_URL}/{endpoint.lstrip('/')}"
+
+    for attempt in range(retries + 1):
+        request = urllib.request.Request(
+            url,
+            data=body,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")
+            if exc.code >= 500 and attempt < retries:
+                time.sleep(2**attempt)
+                continue
+            raise RuntimeError(f"SiliconFlow HTTP {exc.code}: {detail}") from exc
+        except urllib.error.URLError as exc:
+            if attempt < retries:
+                time.sleep(2**attempt)
+                continue
+            raise RuntimeError(f"SiliconFlow request failed: {exc}") from exc
+        except TimeoutError as exc:
+            if attempt < retries:
+                time.sleep(2**attempt)
+                continue
+            raise RuntimeError(f"SiliconFlow request timed out: {exc}") from exc
+
+    raise RuntimeError("SiliconFlow request failed after retries")
+
+
+def embed_texts(
+    texts: list[str],
+    api_key: str,
+    model: str = DEFAULT_EMBED_MODEL,
+    batch_size: int = 24,
+) -> list[list[float]]:
+    embeddings: list[list[float]] = []
+    for start in range(0, len(texts), batch_size):
+        batch = texts[start : start + batch_size]
+        response = siliconflow_post(
+            "embeddings",
+            {"model": model, "input": batch},
+            api_key,
+        )
+        rows = response.get("data", [])
+        if len(rows) != len(batch):
+            raise RuntimeError("Embedding response length does not match request length")
+        embeddings.extend(row["embedding"] for row in rows)
+    return embeddings
+
+
+def embedding_cache_key(model: str, text: str) -> str:
+    payload = json.dumps(
+        {"model": model, "text": text},
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def embed_texts_cached(
+    texts: list[str],
+    api_key: str,
+    model: str = DEFAULT_EMBED_MODEL,
+    cache_path: Path | None = None,
+) -> list[list[float]]:
+    if cache_path is None:
+        return embed_texts(texts, api_key=api_key, model=model)
+
+    cache: dict[str, Any] = {}
+    if cache_path.exists():
+        cache = json.loads(cache_path.read_text(encoding="utf-8"))
+
+    embeddings: list[list[float] | None] = [None] * len(texts)
+    missing_texts: list[str] = []
+    missing_indexes: list[int] = []
+    missing_keys: list[str] = []
+
+    for index, text in enumerate(texts):
+        key = embedding_cache_key(model, text)
+        cached = cache.get(key)
+        if isinstance(cached, dict) and isinstance(cached.get("embedding"), list):
+            embeddings[index] = cached["embedding"]
+            continue
+        missing_texts.append(text)
+        missing_indexes.append(index)
+        missing_keys.append(key)
+
+    if missing_texts:
+        fetched = embed_texts(missing_texts, api_key=api_key, model=model)
+        for index, key, embedding in zip(missing_indexes, missing_keys, fetched):
+            embeddings[index] = embedding
+            cache[key] = {
+                "model": model,
+                "dimensions": len(embedding),
+                "embedding": embedding,
+            }
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        cache_path.write_text(json.dumps(cache, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    if any(embedding is None for embedding in embeddings):
+        raise RuntimeError("Embedding cache failed to fill all requested texts")
+    return [embedding for embedding in embeddings if embedding is not None]
+
+
+def generate_markdown(
+    messages: list[dict[str, str]],
+    api_key: str,
+    model: str = DEFAULT_CHAT_MODEL,
+) -> str:
+    response = siliconflow_post(
+        "chat/completions",
+        {
+            "model": model,
+            "messages": messages,
+            "temperature": 0.15,
+            "max_tokens": 6000,
+        },
+        api_key,
+        timeout=240,
+        retries=1,
+    )
+    try:
+        return response["choices"][0]["message"]["content"].strip()
+    except (KeyError, IndexError, TypeError) as exc:
+        raise RuntimeError(f"Unexpected chat response shape: {response}") from exc

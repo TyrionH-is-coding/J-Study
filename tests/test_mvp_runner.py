@@ -196,7 +196,7 @@ content: 一嗅二视三动眼。
         self.assertEqual(ranked[0].id, "C001")
         self.assertGreater(ranked[0].score, ranked[1].score)
 
-    @patch("packages.core.jstudy_core.pipeline.urllib.request.urlopen")
+    @patch("packages.core.jstudy_core.providers.urllib.request.urlopen")
     def test_siliconflow_post_retries_timeout(self, urlopen):
         urlopen.side_effect = [TimeoutError("read timed out"), FakeHttpResponse()]
 
@@ -206,7 +206,7 @@ content: 一嗅二视三动眼。
         self.assertEqual(urlopen.call_count, 2)
 
     @patch("packages.core.jstudy_core.pipeline.extract_pdf_pages")
-    @patch("packages.core.jstudy_core.pipeline.embed_texts")
+    @patch("packages.core.jstudy_core.providers.embed_texts")
     def test_run_mvp_writes_links_quality_cache_and_uses_outline(self, embed_texts, extract_pdf_pages):
         extract_pdf_pages.return_value = [
             {
@@ -234,7 +234,7 @@ content: 一嗅二视三动眼。
             with patch(
                 "packages.core.jstudy_core.pipeline.build_study_queries",
                 return_value=[StudyQuery("sample", "Sample", "alpha overview")],
-            ), patch("packages.core.jstudy_core.pipeline.generate_markdown") as generate_markdown:
+            ), patch("packages.core.jstudy_core.providers.generate_markdown") as generate_markdown:
                 generate_markdown.side_effect = lambda messages, api_key, model: (
                     self.assertIn("第一章 细菌总论", messages[1]["content"])
                     or "Fact <!-- evidence: E001 -->"
@@ -263,7 +263,7 @@ content: 一嗅二视三动眼。
             self.assertEqual(quality["status"], "pass")
             self.assertEqual(evidence_links[0]["target"]["page"], 1)
 
-    @patch("packages.core.jstudy_core.pipeline.embed_texts")
+    @patch("packages.core.jstudy_core.providers.embed_texts")
     def test_embed_texts_cached_reuses_existing_vectors(self, embed_texts):
         embed_texts.return_value = [[0.1, 0.2]]
 

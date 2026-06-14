@@ -32,7 +32,8 @@ Deliverables:
 - keep existing tests passing - done
 - add explicit dependency file - done
 - split runtime settings and job lifecycle - done
-- split storage and provider calls - next
+- split provider calls - done
+- split storage/output contracts - next
 
 Acceptance:
 

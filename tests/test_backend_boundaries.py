@@ -28,6 +28,14 @@ class BackendBoundariesTest(unittest.TestCase):
         self.assertIs(pipeline.build_study_queries, medicine.build_study_queries)
         self.assertIs(pipeline.extract_evidence_refs, medicine.extract_evidence_refs)
 
+    def test_provider_module_owns_external_model_calls(self):
+        from packages.core.jstudy_core import pipeline, providers
+
+        self.assertIs(pipeline.siliconflow_post, providers.siliconflow_post)
+        self.assertIs(pipeline.embed_texts, providers.embed_texts)
+        self.assertIs(pipeline.embed_texts_cached, providers.embed_texts_cached)
+        self.assertIs(pipeline.generate_markdown, providers.generate_markdown)
+
 
 if __name__ == "__main__":
     unittest.main()
