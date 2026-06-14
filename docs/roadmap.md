@@ -96,7 +96,7 @@ Deliverables:
 - parser/retrieval trace review tools - done for retrieval trace API
 - better failed-job errors - done with exception type in job status
 - upload limits - done for courseware PDF type and size
-- cache controls
+- cache controls - done for dynamic API status responses and private generated artifacts
 - optional cleanup policy
 
 Acceptance:
@@ -104,6 +104,7 @@ Acceptance:
 - failed jobs explain what failed
 - generated output cites valid evidence IDs
 - quality reports show citation coverage by markdown section
+- frontend polling is not served stale job state from browser caches
 - low-quality output is flagged before user trust is damaged
 
 ## Phase 5: Multi-Discipline Domain Packs

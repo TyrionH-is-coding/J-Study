@@ -22,6 +22,20 @@ Runner = Callable[..., dict[str, Path]]
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 ROOT = PROJECT_ROOT
+NO_STORE_CACHE_CONTROL = "no-store"
+PRIVATE_CACHE_CONTROL = "private, max-age=0, must-revalidate"
+
+
+def private_cache_headers() -> dict[str, str]:
+    return {"Cache-Control": PRIVATE_CACHE_CONTROL}
+
+
+def set_no_store(response: Response) -> None:
+    response.headers["Cache-Control"] = NO_STORE_CACHE_CONTROL
+
+
+def set_private_cache(response: Response) -> None:
+    response.headers["Cache-Control"] = PRIVATE_CACHE_CONTROL
 
 
 async def save_upload(upload: UploadFile, target: Path) -> None:
@@ -108,19 +122,23 @@ def create_app(
         return INDEX_HTML
 
     @app.get("/api/health")
-    def health() -> dict[str, str]:
+    def health(response: Response) -> dict[str, str]:
+        set_no_store(response)
         return {"status": "ok", "service": "jstudy-api"}
 
     @app.get("/api/readiness")
-    def readiness() -> dict[str, Any]:
+    def readiness(response: Response) -> dict[str, Any]:
+        set_no_store(response)
         return {"service": "jstudy-api", **runtime.readiness()}
 
     @app.post("/api/generate")
     async def generate(
         background_tasks: BackgroundTasks,
+        response: Response,
         pdf: UploadFile = File(...),
         outline: UploadFile | None = File(None),
     ) -> dict[str, Any]:
+        set_no_store(response)
         readiness = runtime.readiness()
         if readiness["status"] != "ready":
             raise HTTPException(status_code=503, detail=readiness)
@@ -154,7 +172,8 @@ def create_app(
         }
 
     @app.get("/api/jobs/{job_id}")
-    def job_status(job_id: str) -> dict[str, Any]:
+    def job_status(job_id: str, response: Response) -> dict[str, Any]:
+        set_no_store(response)
         job = job_or_404(job_id)
         return {
             "job_id": job_id,
@@ -171,13 +190,15 @@ def create_app(
         }
 
     @app.get("/api/jobs/{job_id}/output")
-    def job_output(job_id: str) -> dict[str, str]:
+    def job_output(job_id: str, response: Response) -> dict[str, str]:
+        set_private_cache(response)
         job = job_or_404(job_id)
         path = ready_output_path(job, "markdown", "Output is not ready")
         return {"markdown": path.read_text(encoding="utf-8")}
 
     @app.get("/api/jobs/{job_id}/evidence")
-    def job_evidence(job_id: str) -> dict[str, Any]:
+    def job_evidence(job_id: str, response: Response) -> dict[str, Any]:
+        set_private_cache(response)
         job = job_or_404(job_id)
         evidence_path = ready_output_path(job, "evidence", "Evidence is not ready")
         links_path = ready_output_path(job, "evidence_links", "Evidence is not ready")
@@ -187,13 +208,15 @@ def create_app(
         }
 
     @app.get("/api/jobs/{job_id}/evidence-links")
-    def job_evidence_links(job_id: str) -> Any:
+    def job_evidence_links(job_id: str, response: Response) -> Any:
+        set_private_cache(response)
         job = job_or_404(job_id)
         path = ready_output_path(job, "evidence_links", "Evidence links are not ready")
         return read_json(path)
 
     @app.get("/api/jobs/{job_id}/trace")
-    def job_trace(job_id: str) -> Any:
+    def job_trace(job_id: str, response: Response) -> Any:
+        set_private_cache(response)
         job = job_or_404(job_id)
         path = ready_output_path(job, "trace", "Retrieval trace is not ready")
         return read_json(path)
@@ -204,10 +227,16 @@ def create_app(
         path = job.pdf_path
         if not path.exists():
             raise HTTPException(status_code=404, detail="PDF not found")
-        return FileResponse(path, media_type="application/pdf", filename=path.name)
+        return FileResponse(
+            path,
+            media_type="application/pdf",
+            filename=path.name,
+            headers=private_cache_headers(),
+        )
 
     @app.get("/api/jobs/{job_id}/pdf-info")
-    def job_pdf_info(job_id: str) -> dict[str, Any]:
+    def job_pdf_info(job_id: str, response: Response) -> dict[str, Any]:
+        set_private_cache(response)
         job = job_or_404(job_id)
         path = job.pdf_path
         if not path.exists():
@@ -234,7 +263,11 @@ def create_app(
                 raise HTTPException(status_code=404, detail="PDF page not found")
             page = doc.load_page(page_no - 1)
             pixmap = page.get_pixmap(matrix=fitz.Matrix(1.6, 1.6), alpha=False)
-            return Response(content=pixmap.tobytes("png"), media_type="image/png")
+            return Response(
+                content=pixmap.tobytes("png"),
+                media_type="image/png",
+                headers=private_cache_headers(),
+            )
 
     return app
 

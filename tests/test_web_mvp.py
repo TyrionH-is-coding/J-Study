@@ -75,6 +75,7 @@ class WebMvpTest(unittest.TestCase):
         response = client.get("/api/health")
 
         self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["cache-control"], "no-store")
         self.assertEqual(response.json(), {"status": "ok", "service": "jstudy-api"})
 
     def test_readiness_endpoint_reports_degraded_runtime_config(self):
@@ -94,6 +95,7 @@ class WebMvpTest(unittest.TestCase):
             response = client.get("/api/readiness")
 
         self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["cache-control"], "no-store")
         body = response.json()
         self.assertEqual(body["service"], "jstudy-api")
         self.assertEqual(body["status"], "degraded")
@@ -215,14 +217,28 @@ class WebMvpTest(unittest.TestCase):
 
             self.assertEqual(response.status_code, 200)
             job_id = response.json()["job_id"]
-            status = client.get(f"/api/jobs/{job_id}").json()
-            output = client.get(f"/api/jobs/{job_id}/output").json()
-            evidence = client.get(f"/api/jobs/{job_id}/evidence").json()
-            trace = client.get(f"/api/jobs/{job_id}/trace").json()
-            pdf_info = client.get(f"/api/jobs/{job_id}/pdf-info").json()
+            status_response = client.get(f"/api/jobs/{job_id}")
+            status = status_response.json()
+            output_response = client.get(f"/api/jobs/{job_id}/output")
+            output = output_response.json()
+            evidence_response = client.get(f"/api/jobs/{job_id}/evidence")
+            evidence = evidence_response.json()
+            trace_response = client.get(f"/api/jobs/{job_id}/trace")
+            trace = trace_response.json()
+            pdf_response = client.get(f"/api/jobs/{job_id}/pdf")
+            pdf_info_response = client.get(f"/api/jobs/{job_id}/pdf-info")
+            pdf_info = pdf_info_response.json()
             page_png = client.get(f"/api/jobs/{job_id}/pdf-page/2.png")
             record = job_store.require(job_id)
 
+        self.assertEqual(response.headers["cache-control"], "no-store")
+        self.assertEqual(status_response.headers["cache-control"], "no-store")
+        self.assertEqual(output_response.headers["cache-control"], "private, max-age=0, must-revalidate")
+        self.assertEqual(evidence_response.headers["cache-control"], "private, max-age=0, must-revalidate")
+        self.assertEqual(trace_response.headers["cache-control"], "private, max-age=0, must-revalidate")
+        self.assertEqual(pdf_response.headers["cache-control"], "private, max-age=0, must-revalidate")
+        self.assertEqual(pdf_info_response.headers["cache-control"], "private, max-age=0, must-revalidate")
+        self.assertEqual(page_png.headers["cache-control"], "private, max-age=0, must-revalidate")
         self.assertEqual(status["status"], "completed")
         self.assertEqual(record.status, "completed")
         self.assertEqual(record.pdf_path.name, "lecture.pdf")
