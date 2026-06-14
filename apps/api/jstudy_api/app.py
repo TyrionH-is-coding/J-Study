@@ -157,6 +157,7 @@ def create_app(
             "output_url": f"/api/jobs/{job_id}/output",
             "evidence_url": f"/api/jobs/{job_id}/evidence",
             "evidence_links_url": f"/api/jobs/{job_id}/evidence-links",
+            "trace_url": f"/api/jobs/{job_id}/trace",
             "pdf_url": f"/api/jobs/{job_id}/pdf",
             "pdf_info_url": f"/api/jobs/{job_id}/pdf-info",
             "pdf_page_url_template": f"/api/jobs/{job_id}/pdf-page/{{page}}.png",
@@ -182,6 +183,12 @@ def create_app(
     def job_evidence_links(job_id: str) -> Any:
         job = job_or_404(job_id)
         path = ready_output_path(job, "evidence_links", "Evidence links are not ready")
+        return read_json(path)
+
+    @app.get("/api/jobs/{job_id}/trace")
+    def job_trace(job_id: str) -> Any:
+        job = job_or_404(job_id)
+        path = ready_output_path(job, "trace", "Retrieval trace is not ready")
         return read_json(path)
 
     @app.get("/api/jobs/{job_id}/pdf")

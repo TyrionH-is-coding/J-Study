@@ -161,6 +161,8 @@ The backend exposes `GET /api/health` for reverse proxy and container liveness c
 
 Job status persists to `JSTUDY_JOBS_DIR/jobs.json` so completed and failed jobs remain visible after a process restart. Queued or running jobs are marked failed on restart because the current MVP does not yet have a separate resumable worker queue.
 
+Completed jobs expose the retrieval trace through `GET /api/jobs/{job_id}/trace`. This returns the selected chunks, query traces, RAG settings, and mnemonic hits already written by the pipeline so backend quality issues can be reviewed without shell access to the server.
+
 ## Current Technical Debt
 
 The MVP intentionally has several temporary choices:

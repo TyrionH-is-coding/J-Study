@@ -159,6 +159,7 @@ class WebMvpTest(unittest.TestCase):
             evidence = output_dir / f"{output_prefix}-evidence.json"
             evidence_links = output_dir / f"{output_prefix}-evidence_links.json"
             quality = output_dir / f"{output_prefix}-quality.json"
+            trace = output_dir / f"{output_prefix}-retrieval_trace.json"
             markdown.write_text("Fact <!-- evidence: E001 -->\n", encoding="utf-8")
             evidence.write_text(
                 json.dumps(
@@ -187,11 +188,16 @@ class WebMvpTest(unittest.TestCase):
                 encoding="utf-8",
             )
             quality.write_text(json.dumps({"status": "pass"}), encoding="utf-8")
+            trace.write_text(
+                json.dumps({"selected_chunks": [{"id": "C001"}], "query_traces": [{"query": {"id": "sample"}}]}),
+                encoding="utf-8",
+            )
             return {
                 "markdown": markdown,
                 "evidence": evidence,
                 "evidence_links": evidence_links,
                 "quality": quality,
+                "trace": trace,
             }
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -212,6 +218,7 @@ class WebMvpTest(unittest.TestCase):
             status = client.get(f"/api/jobs/{job_id}").json()
             output = client.get(f"/api/jobs/{job_id}/output").json()
             evidence = client.get(f"/api/jobs/{job_id}/evidence").json()
+            trace = client.get(f"/api/jobs/{job_id}/trace").json()
             pdf_info = client.get(f"/api/jobs/{job_id}/pdf-info").json()
             page_png = client.get(f"/api/jobs/{job_id}/pdf-page/2.png")
             record = job_store.require(job_id)
@@ -226,9 +233,12 @@ class WebMvpTest(unittest.TestCase):
         self.assertEqual(captured["embed_model"], "embed-model")
         self.assertEqual(status["quality"]["status"], "pass")
         self.assertIn("evidence_links_url", status)
+        self.assertIn("trace_url", status)
         self.assertIn("Fact", output["markdown"])
         self.assertEqual(evidence["evidence"][0]["id"], "E001")
         self.assertEqual(evidence["evidence_links"][0]["target"]["page"], 2)
+        self.assertEqual(trace["selected_chunks"][0]["id"], "C001")
+        self.assertEqual(trace["query_traces"][0]["query"]["id"], "sample")
         self.assertEqual(pdf_info["page_count"], 2)
         self.assertEqual(page_png.headers["content-type"], "image/png")
         self.assertTrue(page_png.content.startswith(b"\x89PNG"))

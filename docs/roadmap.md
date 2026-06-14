@@ -93,7 +93,7 @@ Goal: make generated output more stable and auditable.
 Deliverables:
 
 - stronger quality report
-- parser/retrieval trace review tools
+- parser/retrieval trace review tools - done for retrieval trace API
 - better failed-job errors
 - upload limits - done for courseware PDF type and size
 - cache controls
