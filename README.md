@@ -24,7 +24,7 @@ The repository is moving from MVP files to a formal product structure.
 Current important files:
 
 ```text
-apps/api/jstudy_api/    FastAPI MVP service and temporary built-in test UI
+apps/api/jstudy_api/    FastAPI MVP service and temporary UI module
 packages/core/          Pipeline orchestration, job lifecycle, output storage, runtime settings, CLI
 packages/core/jstudy_core/citations.py Evidence item and citation-link contracts
 packages/core/jstudy_core/jobs.py In-memory MVP job lifecycle store
@@ -67,7 +67,7 @@ docs/
 Run from the repository root:
 
 ```powershell
-python -m py_compile web_mvp.py mvp_runner.py apps/api/jstudy_api/app.py packages/core/jstudy_core/pipeline.py packages/core/jstudy_core/citations.py packages/core/jstudy_core/jobs.py packages/core/jstudy_core/providers.py packages/core/jstudy_core/settings.py packages/core/jstudy_core/storage.py
+python -m py_compile web_mvp.py mvp_runner.py apps/api/jstudy_api/app.py apps/api/jstudy_api/ui.py packages/core/jstudy_core/pipeline.py packages/core/jstudy_core/citations.py packages/core/jstudy_core/jobs.py packages/core/jstudy_core/providers.py packages/core/jstudy_core/settings.py packages/core/jstudy_core/storage.py
 python -m unittest discover -s tests -v
 ```
 
