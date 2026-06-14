@@ -155,7 +155,7 @@ Expected deployment components:
 
 Future components can include Redis, Postgres, object storage, and a separate worker.
 
-Runtime secrets should come from environment variables. `SILICONFLOW_API_KEY` is the primary API key source; the legacy local key file remains only as an MVP fallback.
+Runtime settings are centralized in `packages/core/jstudy_core/settings.py`. `SILICONFLOW_API_KEY` is the primary API key source; `SILICONFLOW_API_KEY_FILE` is the file fallback. `JSTUDY_JOBS_DIR`, `JSTUDY_SOUL_PATH`, `JSTUDY_MNEMONICS_PATH`, `SILICONFLOW_CHAT_MODEL`, and `SILICONFLOW_EMBED_MODEL` control deploy-time paths and model choices.
 
 ## Current Technical Debt
 
@@ -166,6 +166,6 @@ The MVP intentionally has several temporary choices:
 - root-level `web_mvp.py` and `mvp_runner.py` are compatibility shims
 - job lifecycle is extracted, but job persistence is still in memory
 - outputs are local files
-- API key has environment-variable support, but full runtime settings are not yet centralized
+- production-grade config validation is not yet implemented
 
 These should be addressed in roadmap order, not all at once.

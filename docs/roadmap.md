@@ -40,7 +40,7 @@ Acceptance:
 - existing API contract still works
 - `python -m unittest discover -s tests -v` passes
 - old root-level scripts are documented as compatibility shims
-- runtime secrets can come from environment variables before server deployment - done for `SILICONFLOW_API_KEY`
+- runtime settings can come from environment variables before server deployment - done for API key, model names, jobs directory, and template paths
 
 ## Phase 2: Frontend MVP
 

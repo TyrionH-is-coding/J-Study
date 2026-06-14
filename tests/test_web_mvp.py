@@ -12,6 +12,7 @@ sys.path.insert(0, str(ROOT))
 
 from apps.api.jstudy_api.app import INDEX_HTML, create_app  # noqa: E402
 from packages.core.jstudy_core.jobs import JobStore  # noqa: E402
+from packages.core.jstudy_core.settings import RuntimeSettings  # noqa: E402
 
 
 class WebMvpTest(unittest.TestCase):
@@ -49,6 +50,8 @@ class WebMvpTest(unittest.TestCase):
         self.assertNotIn("<iframe", INDEX_HTML)
 
     def test_generate_job_exposes_output_and_evidence_contracts(self):
+        captured = {}
+
         def fake_runner(
             pdf_path,
             soul_path,
@@ -62,6 +65,15 @@ class WebMvpTest(unittest.TestCase):
             embedding_cache_path,
             outline_path,
         ):
+            captured.update(
+                {
+                    "soul_path": soul_path,
+                    "mnemonics_path": mnemonics_path,
+                    "api_key_path": api_key_path,
+                    "chat_model": chat_model,
+                    "embed_model": embed_model,
+                }
+            )
             output_dir.mkdir(parents=True, exist_ok=True)
             markdown = output_dir / f"{output_prefix}-output.md"
             evidence = output_dir / f"{output_prefix}-evidence.json"
@@ -103,8 +115,18 @@ class WebMvpTest(unittest.TestCase):
             }
 
         with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
             job_store = JobStore()
-            client = TestClient(create_app(base_dir=Path(tmp), runner=fake_runner, job_store=job_store))
+            settings = RuntimeSettings(
+                project_root=root,
+                jobs_root=root / "jobs",
+                soul_path=root / "config" / "soul.md",
+                mnemonics_path=root / "config" / "mnemonics.md",
+                api_key_path=root / "secrets" / "api-key.txt",
+                chat_model="chat-model",
+                embed_model="embed-model",
+            )
+            client = TestClient(create_app(runner=fake_runner, job_store=job_store, settings=settings))
             response = client.post(
                 "/api/generate",
                 files={
@@ -125,6 +147,11 @@ class WebMvpTest(unittest.TestCase):
         self.assertEqual(status["status"], "completed")
         self.assertEqual(record.status, "completed")
         self.assertEqual(record.pdf_path.name, "lecture.pdf")
+        self.assertEqual(captured["soul_path"], settings.soul_path)
+        self.assertEqual(captured["mnemonics_path"], settings.mnemonics_path)
+        self.assertEqual(captured["api_key_path"], settings.api_key_path)
+        self.assertEqual(captured["chat_model"], "chat-model")
+        self.assertEqual(captured["embed_model"], "embed-model")
         self.assertEqual(status["quality"]["status"], "pass")
         self.assertIn("evidence_links_url", status)
         self.assertIn("Fact", output["markdown"])

@@ -9,12 +9,8 @@ from fastapi import BackgroundTasks, FastAPI, File, HTTPException, Response, Upl
 from fastapi.responses import FileResponse, HTMLResponse
 
 from packages.core.jstudy_core.jobs import JobRecord, JobStore
-from packages.core.jstudy_core.pipeline import (
-    DEFAULT_CHAT_MODEL,
-    DEFAULT_EMBED_MODEL,
-    RagConfig,
-    run_mvp,
-)
+from packages.core.jstudy_core.pipeline import RagConfig, run_mvp
+from packages.core.jstudy_core.settings import RuntimeSettings
 from packages.core.jstudy_core.storage import read_json
 
 Runner = Callable[..., dict[str, Path]]
@@ -33,9 +29,11 @@ def create_app(
     base_dir: Path | None = None,
     runner: Runner = run_mvp,
     job_store: JobStore | None = None,
+    settings: RuntimeSettings | None = None,
 ) -> FastAPI:
     app = FastAPI(title="J Study MVP")
-    jobs_root = base_dir or ROOT / "web_jobs"
+    runtime = settings or RuntimeSettings.from_env(ROOT, jobs_root=base_dir)
+    jobs_root = base_dir or runtime.jobs_root
     jobs_root.mkdir(parents=True, exist_ok=True)
     jobs = job_store or JobStore()
 
@@ -57,12 +55,12 @@ def create_app(
         try:
             outputs = runner(
                 pdf_path=job.pdf_path,
-                soul_path=ROOT / "soul.md",
-                mnemonics_path=ROOT / "mnemonics.md",
-                api_key_path=ROOT / "siliconflow api key.txt",
+                soul_path=runtime.soul_path,
+                mnemonics_path=runtime.mnemonics_path,
+                api_key_path=runtime.api_key_path,
                 output_dir=job.output_dir,
-                chat_model=DEFAULT_CHAT_MODEL,
-                embed_model=DEFAULT_EMBED_MODEL,
+                chat_model=runtime.chat_model,
+                embed_model=runtime.embed_model,
                 output_prefix="result",
                 rag_config=RagConfig(),
                 embedding_cache_path=jobs_root / ".cache" / "embeddings.json",
