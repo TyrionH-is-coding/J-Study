@@ -10,7 +10,7 @@ import unicodedata
 from uuid import uuid4
 
 import fitz
-from fastapi import BackgroundTasks, FastAPI, File, HTTPException, Request, Response, UploadFile
+from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse
 
 from apps.api.jstudy_api.admin_ui import ADMIN_SETTINGS_HTML
@@ -18,7 +18,14 @@ from apps.api.jstudy_api.ui import INDEX_HTML
 
 from packages.core.jstudy_core.admin_settings import AdminSettingsService
 from packages.core.jstudy_core.jobs import JobRecord, JobStore
+from packages.core.jstudy_core.parser_profile_router import (
+    ParserProfileRoutingError,
+    ParserProfileUnavailable,
+    public_parser_profiles,
+    resolve_parser_profile,
+)
 from packages.core.jstudy_core.pipeline import run_mvp
+from packages.core.jstudy_core.scenario_router import ScenarioRoutingError, resolve_scenario
 from packages.core.jstudy_core.settings import RuntimeSettings
 from packages.core.jstudy_core.storage import read_json
 
@@ -90,11 +97,18 @@ def require_admin(request: Request) -> None:
     expected = os.getenv(ADMIN_TOKEN_ENV, "").strip()
     if not expected:
         return
+    if not is_admin_request(request):
+        raise HTTPException(status_code=401, detail="Admin token required")
+
+
+def is_admin_request(request: Request) -> bool:
+    expected = os.getenv(ADMIN_TOKEN_ENV, "").strip()
+    if not expected:
+        return False
     auth = request.headers.get("authorization", "").strip()
     bearer = auth[7:].strip() if auth.lower().startswith("bearer ") else ""
     query = request.query_params.get("admin_token", "").strip()
-    if expected not in {bearer, query}:
-        raise HTTPException(status_code=401, detail="Admin token required")
+    return expected in {bearer, query}
 
 
 def create_app(
@@ -124,6 +138,12 @@ def create_app(
         jobs.cleanup_finished_older_than(cutoff, delete_files=True)
 
     cleanup_expired_jobs()
+
+    def routing_content_config() -> dict[str, Any]:
+        return runtime.content_pack_config or admin_settings.load_content_pack()
+
+    def routing_parser_profiles_config() -> dict[str, Any]:
+        return runtime.parser_profiles_config or admin_settings.load_runtime().get("parser_profiles", {})
 
     def job_or_404(job_id: str) -> JobRecord:
         try:
@@ -156,6 +176,9 @@ def create_app(
                 "api_key": runtime.api_key or None,
                 "chat_base_url": runtime.chat_base_url,
                 "embed_base_url": runtime.embed_base_url,
+                "parser_backend": job.metadata.get("parser_profile", {}).get("backend", "pymupdf"),
+                "routing_metadata": job.metadata,
+                "parser_config": runtime.parser_config,
             }
             outputs = runner(
                 **filter_runner_kwargs(runner, runner_kwargs)
@@ -244,13 +267,31 @@ def create_app(
     async def generate(
         background_tasks: BackgroundTasks,
         response: Response,
+        request: Request,
         pdf: UploadFile = File(...),
         outline: UploadFile | None = File(None),
+        scenario_id: str = Form(""),
+        parser_profile_id: str = Form(""),
     ) -> dict[str, Any]:
         set_no_store(response)
         readiness = runtime.readiness()
         if readiness["status"] != "ready":
             raise HTTPException(status_code=503, detail=readiness)
+
+        try:
+            scenario = resolve_scenario(routing_content_config(), scenario_id)
+            parser_profile = resolve_parser_profile(
+                routing_parser_profiles_config(),
+                parser_profile_id,
+                is_admin=is_admin_request(request),
+                parser_config=runtime.parser_config,
+            )
+        except ScenarioRoutingError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        except ParserProfileRoutingError as exc:
+            raise HTTPException(status_code=403, detail=str(exc))
+        except ParserProfileUnavailable as exc:
+            raise HTTPException(status_code=503, detail=str(exc))
 
         cleanup_expired_jobs()
 
@@ -274,6 +315,10 @@ def create_app(
             pdf_path=pdf_path,
             outline_path=outline_path,
             output_dir=job_dir / "output",
+            metadata={
+                "scenario": scenario.trace_metadata(),
+                "parser_profile": parser_profile.trace_metadata(),
+            },
         )
         background_tasks.add_task(run_job, job_id)
         return {

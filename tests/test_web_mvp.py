@@ -432,6 +432,77 @@ class WebMvpTest(unittest.TestCase):
         self.assertEqual(captured["rag_config"].chunk_max_chars, 888)
         self.assertEqual(captured["rag_config"].per_query_limit, 4)
 
+    def test_generate_uses_default_scenario_and_fast_parser_profile(self):
+        captured = {}
+
+        def fake_runner(**kwargs):
+            captured.update(kwargs)
+            output_dir = kwargs["output_dir"]
+            output_prefix = kwargs["output_prefix"]
+            output_dir.mkdir(parents=True, exist_ok=True)
+            markdown = output_dir / f"{output_prefix}-output.md"
+            evidence = output_dir / f"{output_prefix}-evidence.json"
+            evidence_links = output_dir / f"{output_prefix}-evidence_links.json"
+            quality = output_dir / f"{output_prefix}-quality.json"
+            trace = output_dir / f"{output_prefix}-retrieval_trace.json"
+            chunks = output_dir / f"{output_prefix}-chunks.json"
+            markdown.write_text("Fact\n", encoding="utf-8")
+            evidence.write_text("[]", encoding="utf-8")
+            evidence_links.write_text("[]", encoding="utf-8")
+            quality.write_text(json.dumps({"status": "pass"}), encoding="utf-8")
+            trace.write_text("{}", encoding="utf-8")
+            chunks.write_text("[]", encoding="utf-8")
+            return {
+                "markdown": markdown,
+                "evidence": evidence,
+                "evidence_links": evidence_links,
+                "quality": quality,
+                "trace": trace,
+                "chunks": chunks,
+            }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            service = AdminSettingsService(root / "data" / "settings")
+            service.load_all()
+            settings = RuntimeSettings.from_env(root, jobs_root=root / "jobs")
+            settings.soul_path.write_text("soul", encoding="utf-8")
+            settings.mnemonics_path.write_text("mnemonics", encoding="utf-8")
+            settings.api_key_path.write_text("key", encoding="utf-8")
+            client = TestClient(create_app(runner=fake_runner, settings=settings))
+
+            response = client.post(
+                "/api/generate",
+                files={"pdf": ("lecture.pdf", self.make_pdf_bytes(), "application/pdf")},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(captured["parser_backend"], "pymupdf")
+        self.assertEqual(captured["routing_metadata"]["scenario"]["resolved_scenario_id"], "medicine-default")
+        self.assertEqual(captured["routing_metadata"]["parser_profile"]["resolved_parser_profile_id"], "fast")
+
+    def test_generate_rejects_hidden_quality_parser_for_public_user(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            service = AdminSettingsService(root / "data" / "settings")
+            payload = service.load_all()
+            quality = next(item for item in payload["runtime"]["parser_profiles"]["profiles"] if item["id"] == "quality")
+            quality["enabled"] = True
+            service.save_all(payload)
+            settings = RuntimeSettings.from_env(root, jobs_root=root / "jobs")
+            settings.soul_path.write_text("soul", encoding="utf-8")
+            settings.mnemonics_path.write_text("mnemonics", encoding="utf-8")
+            settings.api_key_path.write_text("key", encoding="utf-8")
+            client = TestClient(create_app(settings=settings))
+
+            response = client.post(
+                "/api/generate",
+                data={"parser_profile_id": "quality"},
+                files={"pdf": ("lecture.pdf", self.make_pdf_bytes(), "application/pdf")},
+            )
+
+        self.assertEqual(response.status_code, 403)
+
     def test_default_job_store_persists_completed_job_status_between_app_instances(self):
         def fake_runner(
             pdf_path,
