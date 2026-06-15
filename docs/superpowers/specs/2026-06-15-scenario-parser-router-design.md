@@ -1,16 +1,32 @@
-# Scenario and Parser Router Design
+# Scenario and Parser Profile Router Design
 
 ## Goal
 
-Add a routing layer that lets J-Study support multiple learning scenarios while choosing the document parser automatically. The first production-like behavior should stay lightweight: users can choose a scenario, admins control the default, and parser auto-routing starts with simple rules plus decision logging.
+Add a routing layer that lets J-Study support multiple learning scenarios and user-selectable parser profiles. The parser decision should no longer depend on automatic PDF difficulty scoring. Users eventually choose a clear product option, while admins control which options are visible.
+
+## Current Decision
+
+We will use the combined product model:
+
+- `scenario_id`: the learning scene, such as Medicine or General.
+- `parser_profile_id`: the parsing experience, such as Fast or Quality.
+
+Initial pilot behavior:
+
+- `fast` uses PyMuPDF.
+- `quality` uses MinerU.
+- `fast` is the public default.
+- `quality` is hidden from normal users at first and reserved for admin testing.
+- A future pricing layer can make `quality` paid-only without changing the parser interface.
 
 ## Assumptions
 
-- Users should see scenario choices such as Medicine or General, but should not need to understand parser internals.
-- Admin settings remain the source of truth for default scenario, enabled scenarios, parser policy, and retention settings.
+- Users should understand parser choice as a product option, not as an implementation detail.
+- Automatic PDF difficulty detection is too early for the MVP and may make behavior hard to explain.
+- Admin settings remain the source of truth for default scenario, enabled scenarios, parser profiles, parser visibility, and retention settings.
 - Medicine is the first scenario because it fits the pilot, but the system must not hard-code medicine-only assumptions into the pipeline.
 - PyMuPDF remains the default parser for lightweight deployment.
-- MinerU is optional and should be selected only when the PDF appears complex and MinerU is configured as available.
+- MinerU is optional and should not be required for the first server deployment.
 - Current uploads are local files under `JSTUDY_JOBS_DIR`. This is acceptable for the pilot only if retention is enabled before real usage grows.
 
 ## Recommended Approach
@@ -18,9 +34,9 @@ Add a routing layer that lets J-Study support multiple learning scenarios while 
 Use two separate routers:
 
 - `ScenarioRouter`: resolves the effective learning scenario from user input or the admin default.
-- `ParserRouter`: inspects the uploaded PDF and decides whether to use PyMuPDF or MinerU.
+- `ParserProfileRouter`: resolves the effective parser profile from user input or the admin default.
 
-These routers should remain independent. A medicine scenario does not always require MinerU, and a complex PDF is not always medicine.
+These routers should remain independent. A medicine scenario does not imply MinerU, and a high-quality parser profile does not imply a specific subject.
 
 ## Scenario Routing
 
@@ -44,34 +60,29 @@ The backend should reject disabled or unknown scenarios with a clear 400 respons
 
 The first version does not need automatic subject detection. Manual selection plus an admin default is enough for the pilot.
 
-## Parser Routing
+## Parser Profile Routing
 
-Parser routing should support these modes:
+The frontend generation form should send an optional `parser_profile_id`. If it is missing, the backend uses the admin-configured default parser profile.
 
-- `auto`: inspect the PDF and choose a parser.
-- `force_pymupdf`: always use PyMuPDF.
-- `force_mineru`: always use MinerU when available; otherwise fail or fallback based on policy.
+Each parser profile should define:
 
-The default should be `auto`.
+- `id`
+- `display_name`
+- `backend`: `pymupdf` or `mineru`
+- `enabled`
+- `visible_to_users`
+- `requires_admin`
+- `tier`: `free`, `paid`, or `internal`
+- `estimated_wait`: short user-facing wait description
 
-The first auto policy should score lightweight signals:
+The MVP should ship with:
 
-- page count
-- average extracted text length per page
-- empty or near-empty page ratio
-- image and drawing object density when available from PyMuPDF
-- table-like text hints
-- extraction quality after a small PyMuPDF sample
+- `fast`: PyMuPDF, enabled, visible, free.
+- `quality`: MinerU, hidden, admin-only, internal, disabled until MinerU is configured.
 
-The router returns a `ParserDecision`:
+The public UI should only show enabled profiles where `visible_to_users` is true and `requires_admin` is false. In the initial pilot this means ordinary users only see or implicitly use `fast`.
 
-- `selected_backend`
-- `complexity_score`
-- `reasons`
-- `fallback`
-- `mineru_available`
-
-If the PDF is complex and MinerU is available, choose MinerU. If the PDF is complex but MinerU is unavailable, fallback to PyMuPDF and record the risk in the decision.
+Admins can enable `quality` after MinerU is configured, keep it hidden while testing through admin-only workflows, and later make it visible behind an account tier when pricing is ready.
 
 ## Admin Settings
 
@@ -80,13 +91,10 @@ Extend `content_pack.json` with scenario definitions:
 - `default_scenario_id`
 - `scenarios`
 
-Extend `runtime.json` with parser routing policy:
+Extend `runtime.json` with parser profile definitions:
 
-- `parser_router.mode`
-- `parser_router.default_backend`
-- `parser_router.mineru_enabled`
-- `parser_router.fallback_to_pymupdf`
-- `parser_router.thresholds`
+- `parser_profiles.default_profile_id`
+- `parser_profiles.profiles`
 
 Keep existing parser settings for backend-specific configuration such as MinerU endpoint and token.
 
@@ -99,9 +107,12 @@ Every generation job should persist routing metadata in the job trace:
 - content pack id
 - prompt profile
 - RAG profile
-- parser decision
+- requested parser profile
+- resolved parser profile
+- parser backend
+- whether the parser profile was public, admin-only, or hidden
 
-This gives us enough data to review whether the routing policy is working before adding heavier automation.
+This gives us enough data to review product usage and parser quality before adding pricing or more advanced parser workflows.
 
 ## Upload Storage Policy
 
@@ -122,8 +133,11 @@ When J-Study needs persistent user history, course libraries, or formal multi-us
 
 - Unknown scenario: return 400 with the invalid `scenario_id`.
 - Disabled scenario: return 400 and ask the user to choose another scenario.
-- MinerU selected but unavailable: fallback to PyMuPDF only if `fallback_to_pymupdf` is enabled; otherwise fail fast with a clear runtime error.
-- PyMuPDF extracts no usable text: mark the parser decision as poor quality and, in `auto` mode, retry with MinerU if available.
+- Unknown parser profile: return 400 with the invalid `parser_profile_id`.
+- Disabled parser profile: return 400 and ask the user to choose another parser profile.
+- Hidden or admin-only parser profile requested by a normal user: return 403.
+- MinerU profile selected but MinerU is not configured: return 503 and tell the user to use fast parsing for now.
+- PyMuPDF extracts no usable text: fail the job with a clear parser error. Do not silently retry MinerU unless the user selected the MinerU-backed profile.
 - Cleanup failure should not block new jobs, but it should be logged.
 
 ## Testing
@@ -133,15 +147,18 @@ Add focused tests for:
 - default scenario resolution from admin settings
 - user-selected scenario overriding the admin default
 - disabled or unknown scenarios being rejected
-- simple PDF choosing PyMuPDF
-- sparse or complex PDF choosing MinerU when available
-- complex PDF falling back to PyMuPDF when MinerU is unavailable and fallback is enabled
-- generation job trace including scenario and parser decision metadata
+- default parser profile resolution to `fast`
+- user-selected public parser profile overriding the default
+- hidden or admin-only `quality` being rejected for normal users
+- admin context being allowed to resolve hidden `quality`
+- MinerU-backed profile failing clearly when MinerU is not configured
+- generation job trace including scenario and parser profile metadata
 - retention configuration preserving current local storage behavior while deleting expired finished jobs
 
 ## Non-Goals
 
+- Do not implement automatic PDF difficulty scoring in this step.
 - Do not implement automatic subject detection in this step.
 - Do not add a database only for routing.
+- Do not implement payments in this step.
 - Do not require MinerU for the lightweight server deployment.
-- Do not build learning-based router thresholds before collecting real routing decisions.
