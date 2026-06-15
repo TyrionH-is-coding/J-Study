@@ -186,6 +186,7 @@ docker compose -f deploy/docker-compose/api.compose.yml up -d --build
 - [Development Standards](docs/development/standards.md)
 - [Git Workflow](docs/development/git-workflow.md)
 - [User Auth and Invite Design](docs/superpowers/specs/2026-06-15-user-auth-invite-design.md)
+- [Backend Security Validation](docs/security/backend-security-validation.md)
 - [Server Deployment Runbook](docs/deployment/server-runbook.md)
 
 Historical MVP notes are kept under `docs/archive/`.
