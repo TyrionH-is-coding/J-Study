@@ -68,7 +68,7 @@ Domain code should provide subject behavior:
 - prompt templates
 - query planning
 - evidence filtering
-- mnemonics
+- knowledge snippets
 - terminology
 - quality checks
 - question-generation policy
@@ -84,7 +84,7 @@ Current backend module ownership:
 ```text
 apps/api/jstudy_api       FastAPI app and HTTP contract
 packages/core/jstudy_core Pipeline orchestration, job lifecycle and JSON persistence, provider calls, citations, runtime settings
-packages/core/jstudy_core/admin_settings.py JSON-backed operator settings, content-pack config, mnemonic JSON rendering
+packages/core/jstudy_core/admin_settings.py JSON-backed operator settings, content-pack config, knowledge-snippet JSON rendering
 packages/core/jstudy_core/citations.py Evidence item and citation-link contracts
 packages/core/jstudy_core/providers.py External model-provider HTTP calls
 packages/core/jstudy_core/storage.py Local output path contracts and JSON file helpers
@@ -141,6 +141,7 @@ Deployment should be portable across servers:
 - `JSTUDY_ADMIN_TOKEN` should be set before exposing `/admin/settings`
 - `JSTUDY_SETTINGS_DIR` should point at a mounted persistent settings directory in containerized deployment
 - `JSTUDY_JOBS_DIR`, `JSTUDY_SOUL_PATH`, and `JSTUDY_MNEMONICS_PATH` should point at mounted deployment paths when containerized
+- `JSTUDY_MNEMONICS_PATH` is a compatibility name for the prompt-rendered knowledge snippet file until the runtime contract is renamed
 - `JSTUDY_MAX_PDF_BYTES` should be set explicitly for server deployment
 - `JSTUDY_JOB_RETENTION_HOURS` should be nonzero for public testing; use `72` or `168` unless there is a specific reason to keep outputs longer
 - persistent files mounted under a data volume
@@ -151,6 +152,16 @@ Deployment should be portable across servers:
 
 Initial deployment can be single-server. Add Redis, Postgres, object storage, or workers when needed by real usage.
 Local upload storage is acceptable for the pilot because PDF previews and citation jumps need the source file. For formal user history or course libraries, move uploads and generated artifacts to Tencent COS or another object store instead of growing local disk indefinitely.
+
+## Knowledge Snippet Feedback Standards
+
+The user feedback loop should be conservative:
+
+- liked user selections are raw feedback, not approved product knowledge
+- semantic similarity is for deduplication and clustering, not automatic adoption
+- administrator review is required before a candidate becomes an approved snippet
+- approved snippets can guide expression, structure, and memory aids, but factual claims still require current-upload evidence
+- automatic replacement is out of scope until the evidence-matching rules are precise enough to prevent ambiguous reuse
 
 ## Documentation Standards
 

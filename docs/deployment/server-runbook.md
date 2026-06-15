@@ -103,6 +103,7 @@ Rules:
 - Do not reuse local/dev secrets on the server.
 - Keep `DATABASE_URL`, `POSTGRES_DB`, `POSTGRES_USER`, and `POSTGRES_PASSWORD` consistent.
 - URL-encode reserved characters in the password portion of `DATABASE_URL`.
+- Treat `JSTUDY_MNEMONICS_PATH` as the current compatibility name for the prompt-rendered knowledge snippet file.
 - Keep a copy of the production `.env` outside the repository and include it in backup procedures.
 
 ## Data Volumes

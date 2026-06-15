@@ -12,9 +12,9 @@
 
 ## Files
 
-- Create `packages/core/jstudy_core/admin_settings.py`: JSON defaults, normalization, redaction, token check helpers, mnemonic rendering.
+- Create `packages/core/jstudy_core/admin_settings.py`: JSON defaults, normalization, redaction, token check helpers, knowledge snippet rendering.
 - Modify `packages/core/jstudy_core/settings.py`: read JSON-backed defaults and expose parser/RAG/content fields.
-- Modify `packages/core/jstudy_core/pipeline.py`: accept `rag_config` generated from runtime settings and consume future mnemonic JSON rendering through the existing `mnemonics_path` contract.
+- Modify `packages/core/jstudy_core/pipeline.py`: accept `rag_config` generated from runtime settings and consume future knowledge snippet JSON rendering through the existing `mnemonics_path` compatibility contract.
 - Modify `apps/api/jstudy_api/app.py`: add admin settings API routes and pass runtime RAG settings to jobs.
 - Modify `apps/api/jstudy_api/ui.py`: keep user MVP page unchanged.
 - Create `apps/api/jstudy_api/admin_ui.py`: backend-served admin settings page.
@@ -25,9 +25,9 @@
 
 ### Task 1: JSON Settings Service
 
-- [ ] Write failing tests in `tests/test_admin_settings.py` for default creation, redacted public payloads, update persistence, and mnemonic JSON rendering.
+- [ ] Write failing tests in `tests/test_admin_settings.py` for default creation, redacted public payloads, update persistence, and knowledge snippet JSON rendering.
 - [ ] Run `python -m unittest tests.test_admin_settings -v` and confirm failures are caused by missing `admin_settings.py`.
-- [ ] Implement `AdminSettingsService` with defaults for model catalog, runtime settings, content pack, and mnemonics.
+- [ ] Implement `AdminSettingsService` with defaults for model catalog, runtime settings, content pack, and knowledge snippets.
 - [ ] Re-run `python -m unittest tests.test_admin_settings -v` and confirm it passes.
 
 ### Task 2: Runtime Resolution
@@ -59,4 +59,3 @@
 - [ ] Run `docker compose -f deploy\docker-compose\api.compose.yml config`.
 - [ ] Run `git diff --check`.
 - [ ] Commit and push only tracked project changes, leaving untracked `images/` untouched.
-

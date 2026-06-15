@@ -45,7 +45,7 @@ A domain pack owns subject-specific behavior:
 - prompt fragments
 - retrieval query planner
 - evidence filtering rules
-- mnemonic or terminology library
+- knowledge snippet and terminology library
 - quality checks
 - question-generation rules
 
@@ -67,3 +67,17 @@ Question generation is a future product pillar. The likely path is:
 5. provide answer explanations tied to courseware evidence
 
 This is one reason the architecture should reserve a heavier document parsing path such as MinerU, while keeping PyMuPDF as the lightweight MVP default.
+
+## Knowledge Snippet Feedback Loop
+
+J-Study should accumulate quality improvements from real usage without allowing ambiguous or unsupported fragments to spread across users.
+
+The intended path is:
+
+1. A user selects a high-quality fragment in generated material and likes it.
+2. The backend stores the fragment as raw feedback with job, user, scenario, subject, and evidence metadata.
+3. Embedding-based similarity groups near-duplicate feedback into administrator-visible candidate clusters.
+4. Only reviewed candidates become approved knowledge snippets.
+5. Approved snippets may be retrieved during future generation as memory aids, structure guidance, or polished expression patterns.
+
+Approved snippets must not become independent fact sources. If a snippet contains factual claims, the current uploaded material must still provide supporting evidence before that content can appear in the final output. The first implementation should leave only the feedback hook and candidate-pool data model; automatic replacement is explicitly out of scope.

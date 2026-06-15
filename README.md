@@ -17,7 +17,7 @@ The current backend can:
 - store user accounts, reusable invite codes, invite-code uses, and HTTP-only sessions in SQLModel-backed storage
 - attach generated jobs to the owner user and block cross-user job access
 - retrieve evidence chunks with embedding + BM25/RRF
-- retrieve related mnemonics from `mnemonics.md`
+- retrieve related knowledge snippets from the current legacy `mnemonics.md` prompt-rendered seed file
 - generate Markdown study material using `soul.md`
 - emit evidence links so the UI can jump from "依据 E001" to the original PDF page
 
@@ -32,7 +32,7 @@ Current important files:
 ```text
 apps/api/jstudy_api/    FastAPI MVP service and temporary UI module
 packages/core/          Pipeline orchestration, job lifecycle, output storage, runtime settings, CLI
-packages/core/jstudy_core/admin_settings.py JSON-backed admin settings and mnemonic rendering
+packages/core/jstudy_core/admin_settings.py JSON-backed admin settings and knowledge-snippet rendering
 packages/core/jstudy_core/auth_db.py SQLModel engine/session helpers for auth persistence
 packages/core/jstudy_core/auth_models.py User, invite, invite-use, and session tables
 packages/core/jstudy_core/auth_service.py Invite-gated auth and session service
@@ -48,8 +48,8 @@ packages/domains/       Medicine domain pack and future subject packs
 web_mvp.py              Compatibility shim for the old Uvicorn entrypoint
 mvp_runner.py           Compatibility shim for the old CLI entrypoint
 soul.md                 Medicine output style and study-material template
-mnemonics.md            Medicine mnemonic seed library rendered for prompts
-data/settings/          Runtime admin settings, model catalog, and structured mnemonics (created at runtime)
+mnemonics.md            Legacy prompt-rendered knowledge snippet seed file
+data/settings/          Runtime admin settings, model catalog, and structured knowledge snippets (created at runtime)
 rag-config.example.json Example RAG settings
 tests/                  Current backend and rendering contract tests
 docs/                   Product, architecture, roadmap, and development docs
@@ -98,7 +98,7 @@ $env:SILICONFLOW_API_KEY="your-key"
 For deployment, start from [.env.example](.env.example) and keep real secrets out of Git.
 Operators can use `/admin/settings` to edit JSON-backed runtime settings instead of editing files by hand. Set `JSTUDY_ADMIN_TOKEN` in deployment; then open `/admin/settings?admin_token=...` or send `Authorization: Bearer ...`.
 The admin settings directory defaults to `data/settings` and can be moved with `JSTUDY_SETTINGS_DIR`.
-`JSTUDY_JOBS_DIR`, `JSTUDY_SOUL_PATH`, and `JSTUDY_MNEMONICS_PATH` can be used to move runtime data and domain templates outside the repository in Docker or on a server.
+`JSTUDY_JOBS_DIR`, `JSTUDY_SOUL_PATH`, and `JSTUDY_MNEMONICS_PATH` can be used to move runtime data and domain templates outside the repository in Docker or on a server. `JSTUDY_MNEMONICS_PATH` is the current compatibility name for the prompt-rendered knowledge snippet file.
 `JSTUDY_MAX_PDF_BYTES` controls the upload limit for courseware PDFs; the default is 50 MB.
 `JSTUDY_JOB_RETENTION_HOURS` is optional. The application default is `0`, which disables cleanup, but public pilot deployments should set `72` or `168` so uploaded PDFs and generated artifacts do not accumulate indefinitely.
 `DATABASE_URL` controls auth persistence. It defaults to a local SQLite file in development; Docker Compose uses Postgres.
@@ -149,7 +149,9 @@ PATCH /api/admin/invite-codes/{invite_id}
 GET /api/admin/invite-codes/{invite_id}/uses
 ```
 
-The first admin settings version stores model catalog, RAG settings, web-search settings, parser settings, parser-profile visibility, content-pack scenarios and paths, and `mnemonics.json`. Structured mnemonic JSON is rendered back to Markdown for the existing prompt flow.
+The first admin settings version stores model catalog, RAG settings, web-search settings, parser settings, parser-profile visibility, content-pack scenarios and paths, and the current compatibility file `mnemonics.json`. Structured knowledge snippet JSON is rendered back to Markdown for the existing prompt flow.
+
+Knowledge snippets are the long-term replacement for the narrower memory-aid library. The safe product direction is a feedback loop: users can later select and like high-quality generated fragments, the backend stores those fragments as admin-visible candidates, semantic deduplication clusters similar fragments, and only reviewed snippets can enter the approved library. Approved snippets may improve structure, wording, and recall, but they must not become independent fact sources unless the current upload also provides supporting evidence.
 
 Uploaded PDFs are stored locally during the pilot because the source preview and citation jumps need the original file. When J-Study needs persistent user history, course libraries, or formal multi-user accounts, move uploaded PDFs and generated artifacts to object storage such as Tencent COS and keep metadata in a database.
 
@@ -186,6 +188,7 @@ docker compose -f deploy/docker-compose/api.compose.yml up -d --build
 - [Development Standards](docs/development/standards.md)
 - [Git Workflow](docs/development/git-workflow.md)
 - [User Auth and Invite Design](docs/superpowers/specs/2026-06-15-user-auth-invite-design.md)
+- [Snippet Feedback Loop Design](docs/superpowers/specs/2026-06-15-snippet-feedback-loop-design.md)
 - [Backend Security Validation](docs/security/backend-security-validation.md)
 - [Server Deployment Runbook](docs/deployment/server-runbook.md)
 - [Tencent Cloud Backend Trial Deployment](docs/deployment/tencent-cloud-trial-2026-06-15.md)

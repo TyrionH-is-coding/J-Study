@@ -40,6 +40,7 @@ Upload PDF + optional outline + optional scenario/parser profile
 -> retrieval query planner
 -> embedding + lexical retrieval
 -> evidence selection
+-> approved knowledge snippet retrieval
 -> domain prompt/template
 -> LLM generation
 -> Markdown + evidence + evidence links + quality report
@@ -61,7 +62,7 @@ The platform layer should own common product behavior:
 - API response shape
 - deployment and runtime configuration
 
-It should not own medicine-specific prompt wording, mnemonic rules, or subject quality standards.
+It should not own medicine-specific prompt wording, knowledge-snippet rules, or subject quality standards.
 
 ## Document Parser Boundary
 
@@ -121,7 +122,7 @@ Expected domain-pack responsibilities:
 - query planning
 - prompt template
 - output style rules
-- mnemonic and terminology sources
+- knowledge snippet and terminology sources
 - evidence filtering rules
 - quality audit rules
 - future question-generation policy
@@ -168,9 +169,21 @@ Expected deployment components:
 
 Future components can include Redis, Postgres, object storage, and a separate worker.
 
-Runtime settings are centralized in `packages/core/jstudy_core/settings.py`. `SILICONFLOW_API_KEY` is the primary API key source; `SILICONFLOW_API_KEY_FILE` is the file fallback. `JSTUDY_JOBS_DIR`, `JSTUDY_SOUL_PATH`, `JSTUDY_MNEMONICS_PATH`, `JSTUDY_MAX_PDF_BYTES`, `JSTUDY_JOB_RETENTION_HOURS`, `SILICONFLOW_CHAT_MODEL`, and `SILICONFLOW_EMBED_MODEL` control deploy-time paths, upload limits, optional cleanup, and model choices.
+Runtime settings are centralized in `packages/core/jstudy_core/settings.py`. `SILICONFLOW_API_KEY` is the primary API key source; `SILICONFLOW_API_KEY_FILE` is the file fallback. `JSTUDY_JOBS_DIR`, `JSTUDY_SOUL_PATH`, `JSTUDY_MNEMONICS_PATH`, `JSTUDY_MAX_PDF_BYTES`, `JSTUDY_JOB_RETENTION_HOURS`, `SILICONFLOW_CHAT_MODEL`, and `SILICONFLOW_EMBED_MODEL` control deploy-time paths, upload limits, optional cleanup, and model choices. `JSTUDY_MNEMONICS_PATH` is the current compatibility name for the prompt-rendered knowledge snippet file used by the MVP pipeline.
 
-Operator-editable settings are persisted under `JSTUDY_SETTINGS_DIR`, defaulting to `data/settings`. The current files are `model_catalog.json` for LLM, embedding, and web-search profiles; `runtime.json` for RAG, parser, parser profiles, upload, and cleanup settings; `content_pack.json` for subject-pack paths and scenarios; and `mnemonics.json` for structured mnemonic items. Environment variables remain deployment overrides and take precedence where they overlap with admin settings.
+Operator-editable settings are persisted under `JSTUDY_SETTINGS_DIR`, defaulting to `data/settings`. The current files are `model_catalog.json` for LLM, embedding, and web-search profiles; `runtime.json` for RAG, parser, parser profiles, upload, and cleanup settings; `content_pack.json` for subject-pack paths and scenarios; and `mnemonics.json` as the compatibility filename for structured knowledge snippet items. Environment variables remain deployment overrides and take precedence where they overlap with admin settings.
+
+## Knowledge Snippet Library
+
+The original memory-aid seed file should evolve into a broader knowledge snippet library. A snippet may be a memory aid, terminology explanation, comparison table, workflow summary, common pitfall, or high-quality wording pattern. The library is a second retrieval source after courseware RAG, not a replacement for courseware evidence.
+
+The safe feedback loop has three layers:
+
+- raw feedback: user-selected liked fragments, tied to job id, owner user id, output location, source evidence ids, scenario, subject, and timestamp
+- candidate snippets: semantically deduplicated clusters visible only to administrators
+- approved snippets: reviewed entries that can be retrieved during generation
+
+The MVP hook should collect raw feedback into an admin-visible candidate pool only. It should not automatically replace generated content. Future retrieval may use approved snippets as expression and structure guidance, but factual claims must still be supported by the current uploaded document's evidence.
 
 The admin surface is available at `GET /admin/settings`, backed by `GET/PUT /api/admin/settings` and `POST /api/admin/settings/test/{llm|embedding|search}`. Set `JSTUDY_ADMIN_TOKEN` in server deployments so only operators can read or write model keys and runtime settings.
 
@@ -184,7 +197,7 @@ Job status persists to `JSTUDY_JOBS_DIR/jobs.json` so completed and failed jobs 
 
 Uploaded PDFs stay on local disk during the pilot because citation preview needs the original source file. This is acceptable for a small trial only with nonzero retention. When J-Study needs persistent user history, course libraries, or formal multi-user accounts, uploaded PDFs and generated artifacts should move to Tencent COS or equivalent object storage, with metadata kept in a database and lifecycle rules enforced outside the app process.
 
-Completed jobs expose the retrieval trace through `GET /api/jobs/{job_id}/trace`. This returns the selected chunks, query traces, RAG settings, and mnemonic hits already written by the pipeline so backend quality issues can be reviewed without shell access to the server.
+Completed jobs expose the retrieval trace through `GET /api/jobs/{job_id}/trace`. This returns the selected chunks, query traces, RAG settings, and knowledge snippet hits already written by the pipeline so backend quality issues can be reviewed without shell access to the server.
 
 The generated quality report checks whether hidden evidence comments exist, whether cited evidence IDs are valid, whether retrieved evidence was left unused, whether implementation-facing wording leaked into the output, and whether each markdown section has citation coverage. Missing section citations are warnings so the MVP can surface review risk without blocking otherwise valid output.
 

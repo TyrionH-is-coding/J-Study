@@ -148,6 +148,27 @@ Acceptance:
 - adding a new subject does not require editing platform pipeline code
 - medicine-specific prompts and rules live under `packages/domains/medicine`
 
+## Phase 5.5: Knowledge Snippet Feedback Hook
+
+Goal: leave the product hook for user-driven quality improvement without making feedback affect generation too early.
+
+Deliverables:
+
+- frontend selection-and-like event shape
+- backend raw feedback API contract
+- feedback records tied to user, job, scenario, subject, selected text, and source evidence ids
+- embedding generation for feedback fragments
+- semantic deduplication into administrator-visible candidate clusters
+- review status model: `candidate`, `approved`, `rejected`, `deprecated`
+
+Acceptance:
+
+- liked fragments are saved as raw feedback only
+- candidate clusters are visible to administrators
+- no candidate can affect generation until it is approved
+- approved snippets are retrieved as auxiliary guidance, not as independent fact sources
+- automatic replacement remains disabled until current-upload evidence matching is reliable
+
 ## Phase 6: Question Generation
 
 Goal: generate new questions from past papers and courseware.

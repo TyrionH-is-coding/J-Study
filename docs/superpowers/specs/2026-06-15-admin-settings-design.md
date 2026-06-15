@@ -18,8 +18,8 @@ The backend gets a new JSON-backed settings layer:
 
 - `model_catalog.json`: model services and search profiles, grouped as `llm`, `embedding`, and `search`.
 - `runtime.json`: RAG, parser, job, and upload settings.
-- `content_pack.json`: pointers to prompt and mnemonic sources, plus future subject-pack metadata.
-- `mnemonics.json`: structured mnemonic items for management; Markdown remains a prompt-rendering format.
+- `content_pack.json`: pointers to prompt and knowledge snippet sources, plus future subject-pack metadata.
+- `mnemonics.json`: compatibility filename for structured knowledge snippet items; Markdown remains a prompt-rendering format.
 
 `RuntimeSettings.from_env()` continues to support deployment environment overrides, but defaults to the JSON settings when present. The API reads settings per request so applying a new configuration does not require editing source files.
 
@@ -40,7 +40,7 @@ One backend-served page with three sections:
 
 - Model, RAG, and Web Search: chat model, embedding model, endpoint/API key, RAG chunking/top-k, web-search provider/API key/max results.
 - Document Parsing: parser backend (`pymupdf` now, `mineru` reserved), OCR/table/formula options.
-- Content Pack: `soul.md`, mnemonic source, subject, and content-pack name.
+- Content Pack: `soul.md`, knowledge snippet source, subject, and content-pack name.
 
 The page should be utilitarian and dense, matching the MVP's backend UI rather than a marketing page.
 
@@ -52,5 +52,4 @@ Tests should cover:
 - Runtime settings resolve model/RAG/parser/content-pack values from JSON.
 - Admin endpoints require a token when configured.
 - The admin page and settings API expose expected fields with API keys redacted on GET.
-- Mnemonics JSON can be rendered to Markdown for existing prompt flow compatibility.
-
+- Knowledge snippet JSON can be rendered to Markdown for existing prompt flow compatibility.

@@ -149,7 +149,7 @@ Status: ready
 Checks:
 - jobs_root: ok
 - soul_path: ok
-- mnemonics_path: ok
+- mnemonics_path: ok, compatibility prompt-rendered knowledge snippet file
 - api_key: ok, SILICONFLOW_API_KEY
 - max_pdf_bytes: ok, 52428800
 - job_retention_hours: ok, 72 hours
