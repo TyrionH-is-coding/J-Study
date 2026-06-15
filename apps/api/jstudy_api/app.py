@@ -263,6 +263,26 @@ def create_app(
             **runtime.readiness(probe_provider=probe_provider, provider_probe=provider_probe),
         }
 
+    @app.get("/api/options")
+    def options(response: Response) -> dict[str, Any]:
+        set_no_store(response)
+        scenarios = [
+            {
+                "id": item.get("id", ""),
+                "display_name": item.get("display_name", ""),
+                "subject": item.get("subject", ""),
+            }
+            for item in routing_content_config().get("scenarios", [])
+            if item.get("enabled", True)
+        ]
+        parser_profiles = routing_parser_profiles_config()
+        return {
+            "default_scenario_id": runtime.default_scenario_id,
+            "scenarios": scenarios,
+            "default_parser_profile_id": parser_profiles.get("default_profile_id", "fast"),
+            "parser_profiles": public_parser_profiles(parser_profiles),
+        }
+
     @app.post("/api/generate")
     async def generate(
         background_tasks: BackgroundTasks,

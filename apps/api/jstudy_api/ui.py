@@ -57,7 +57,8 @@ INDEX_HTML = r"""<!doctype html>
       font-size: 13px;
       font-weight: 600;
     }
-    input[type="file"] {
+    input[type="file"],
+    select {
       width: 100%;
       margin-top: 6px;
       padding: 10px;
@@ -259,6 +260,10 @@ INDEX_HTML = r"""<!doctype html>
         <input name="pdf" type="file" accept="application/pdf" required />
         <label>课程大纲</label>
         <input name="outline" type="file" accept=".md,.txt,.pdf" />
+        <label>Scenario</label>
+        <select name="scenario_id" id="scenarioSelect"></select>
+        <label id="parserProfileLabel">Parser profile</label>
+        <select name="parser_profile_id" id="parserProfileSelect"></select>
         <button class="run" id="run" type="submit">生成学习资料</button>
       </form>
       <div class="status" id="status">等待上传</div>
@@ -283,12 +288,37 @@ INDEX_HTML = r"""<!doctype html>
     const pdfMeta = document.getElementById("pdfMeta");
     const evidenceList = document.getElementById("evidenceList");
     const pdfPages = document.getElementById("pdfPages");
+    const scenarioSelect = document.getElementById("scenarioSelect");
+    const parserProfileLabel = document.getElementById("parserProfileLabel");
+    const parserProfileSelect = document.getElementById("parserProfileSelect");
     let currentJob = "";
     let evidenceLinks = [];
 
     function escapeHtml(value) {
       return value.replace(/[&<>"']/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
     }
+
+    function renderOption(item) {
+      const id = String(item.id || "");
+      const label = String(item.display_name || item.id || "");
+      return `<option value="${escapeHtml(id)}">${escapeHtml(label)}</option>`;
+    }
+
+    async function loadOptions() {
+      const res = await fetch("/api/options");
+      const options = await res.json();
+      const scenarios = options.scenarios || [];
+      const parserProfiles = options.parser_profiles || [];
+      scenarioSelect.innerHTML = scenarios.map(renderOption).join("");
+      scenarioSelect.value = options.default_scenario_id || (scenarios[0] && scenarios[0].id) || "";
+      parserProfileSelect.innerHTML = parserProfiles.map(renderOption).join("");
+      parserProfileSelect.value = options.default_parser_profile_id || (parserProfiles[0] && parserProfiles[0].id) || "fast";
+      const showParser = parserProfiles.length > 1;
+      parserProfileLabel.hidden = !showParser;
+      parserProfileSelect.hidden = !showParser;
+    }
+
+    loadOptions().catch(() => {});
 
     function evidenceButtons(ids, seenRefs) {
       return ids.map(id => {

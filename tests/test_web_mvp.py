@@ -79,6 +79,11 @@ class WebMvpTest(unittest.TestCase):
         self.assertIn("showEvidenceLink(link, { scrollCitationList: true })", INDEX_HTML)
         self.assertNotIn("<iframe", INDEX_HTML)
 
+    def test_index_html_loads_scenario_and_parser_profile_options(self):
+        self.assertIn("/api/options", INDEX_HTML)
+        self.assertIn('name="scenario_id"', INDEX_HTML)
+        self.assertIn('name="parser_profile_id"', INDEX_HTML)
+
     def test_health_endpoint_reports_api_status(self):
         client = TestClient(create_app())
 
@@ -87,6 +92,22 @@ class WebMvpTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.headers["cache-control"], "no-store")
         self.assertEqual(response.json(), {"status": "ok", "service": "jstudy-api"})
+
+    def test_options_endpoint_returns_public_scenarios_and_parser_profiles(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            service = AdminSettingsService(root / "data" / "settings")
+            service.load_all()
+            settings = RuntimeSettings.from_env(root, jobs_root=root / "jobs")
+            client = TestClient(create_app(settings=settings))
+
+            response = client.get("/api/options")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["default_scenario_id"], "medicine-default")
+        self.assertIn("medicine-default", {item["id"] for item in payload["scenarios"]})
+        self.assertEqual([item["id"] for item in payload["parser_profiles"]], ["fast"])
 
     def test_admin_settings_page_is_served(self):
         with tempfile.TemporaryDirectory() as tmp:
