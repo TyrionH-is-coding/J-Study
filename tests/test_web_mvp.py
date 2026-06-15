@@ -53,6 +53,35 @@ class WebMvpTest(unittest.TestCase):
             job_retention_hours=job_retention_hours,
         )
 
+    def register_user(
+        self,
+        client: TestClient,
+        email: str = "student@example.com",
+        password: str = "password123",
+        invite_code: str = "MED-PILOT",
+    ) -> dict:
+        with patch.dict(os.environ, {"JSTUDY_ADMIN_TOKEN": "secret"}, clear=False):
+            client.post(
+                "/api/admin/invite-codes?admin_token=secret",
+                json={"code": invite_code, "label": "Test invite"},
+            )
+        response = client.post(
+            "/api/auth/register",
+            json={"email": email, "password": password, "invite_code": invite_code},
+        )
+        self.assertEqual(response.status_code, 200)
+        return response.json()
+
+    def login_user(
+        self,
+        client: TestClient,
+        email: str = "student@example.com",
+        password: str = "password123",
+    ) -> dict:
+        response = client.post("/api/auth/login", json={"email": email, "password": password})
+        self.assertEqual(response.status_code, 200)
+        return response.json()
+
     def test_index_html_contains_pdf_citation_panel(self):
         self.assertIn('id="evidenceList"', INDEX_HTML)
         self.assertIn('id="pdfPages"', INDEX_HTML)
@@ -333,6 +362,7 @@ class WebMvpTest(unittest.TestCase):
                 embed_model="embed-model",
             )
             client = TestClient(create_app(runner=lambda **kwargs: {}, job_store=job_store, settings=settings))
+            self.register_user(client)
 
             response = client.post(
                 "/api/generate",
@@ -345,6 +375,19 @@ class WebMvpTest(unittest.TestCase):
         self.assertEqual(body["detail"]["status"], "degraded")
         checks = {check["name"]: check for check in body["detail"]["checks"]}
         self.assertEqual(checks["soul_path"]["status"], "error")
+
+    def test_generate_requires_authenticated_user(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            settings = self.ready_settings(root)
+            client = TestClient(create_app(runner=lambda **kwargs: {}, settings=settings))
+
+            response = client.post(
+                "/api/generate",
+                files={"pdf": ("lecture.pdf", self.make_pdf_bytes(), "application/pdf")},
+            )
+
+        self.assertEqual(response.status_code, 401)
 
     def test_generate_job_exposes_output_and_evidence_contracts(self):
         captured = {}
@@ -422,6 +465,7 @@ class WebMvpTest(unittest.TestCase):
             job_store = JobStore()
             settings = self.ready_settings(root)
             client = TestClient(create_app(runner=fake_runner, job_store=job_store, settings=settings))
+            self.register_user(client)
             response = client.post(
                 "/api/generate",
                 files={
@@ -474,6 +518,47 @@ class WebMvpTest(unittest.TestCase):
         self.assertEqual(page_png.headers["content-type"], "image/png")
         self.assertTrue(page_png.content.startswith(b"\x89PNG"))
 
+    def test_generate_job_records_owner_and_blocks_other_users(self):
+        def fake_runner(**kwargs):
+            output_dir = kwargs["output_dir"]
+            output_prefix = kwargs["output_prefix"]
+            output_dir.mkdir(parents=True, exist_ok=True)
+            markdown = output_dir / f"{output_prefix}-output.md"
+            evidence = output_dir / f"{output_prefix}-evidence.json"
+            evidence_links = output_dir / f"{output_prefix}-evidence_links.json"
+            quality = output_dir / f"{output_prefix}-quality.json"
+            markdown.write_text("Fact\n", encoding="utf-8")
+            evidence.write_text("[]", encoding="utf-8")
+            evidence_links.write_text("[]", encoding="utf-8")
+            quality.write_text(json.dumps({"status": "pass"}), encoding="utf-8")
+            return {
+                "markdown": markdown,
+                "evidence": evidence,
+                "evidence_links": evidence_links,
+                "quality": quality,
+            }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            job_store = JobStore()
+            settings = self.ready_settings(root)
+            first_client = TestClient(create_app(runner=fake_runner, job_store=job_store, settings=settings))
+            first_user = self.register_user(first_client, email="one@example.com", invite_code="ONE")
+            response = first_client.post(
+                "/api/generate",
+                files={"pdf": ("lecture.pdf", self.make_pdf_bytes(), "application/pdf")},
+            )
+            job_id = response.json()["job_id"]
+            record = job_store.require(job_id)
+
+            second_client = TestClient(create_app(runner=fake_runner, job_store=job_store, settings=settings))
+            self.register_user(second_client, email="two@example.com", invite_code="TWO")
+            blocked = second_client.get(f"/api/jobs/{job_id}")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(record.metadata["owner_user_id"], first_user["id"])
+        self.assertEqual(blocked.status_code, 404)
+
     def test_generate_job_uses_admin_runtime_model_and_rag_settings(self):
         captured = {}
 
@@ -515,6 +600,7 @@ class WebMvpTest(unittest.TestCase):
             service.save_all(payload)
             settings = RuntimeSettings.from_env(root)
             client = TestClient(create_app(runner=fake_runner, settings=settings))
+            self.register_user(client)
 
             response = client.post(
                 "/api/generate",
@@ -568,6 +654,7 @@ class WebMvpTest(unittest.TestCase):
             settings.mnemonics_path.write_text("mnemonics", encoding="utf-8")
             settings.api_key_path.write_text("key", encoding="utf-8")
             client = TestClient(create_app(runner=fake_runner, settings=settings))
+            self.register_user(client)
 
             response = client.post(
                 "/api/generate",
@@ -592,6 +679,7 @@ class WebMvpTest(unittest.TestCase):
             settings.mnemonics_path.write_text("mnemonics", encoding="utf-8")
             settings.api_key_path.write_text("key", encoding="utf-8")
             client = TestClient(create_app(settings=settings))
+            self.register_user(client)
 
             response = client.post(
                 "/api/generate",
@@ -635,6 +723,7 @@ class WebMvpTest(unittest.TestCase):
             root = Path(tmp)
             settings = self.ready_settings(root)
             first_client = TestClient(create_app(runner=fake_runner, settings=settings))
+            self.register_user(first_client)
             response = first_client.post(
                 "/api/generate",
                 files={"pdf": ("lecture.pdf", self.make_pdf_bytes(), "application/pdf")},
@@ -642,6 +731,7 @@ class WebMvpTest(unittest.TestCase):
             job_id = response.json()["job_id"]
 
             second_client = TestClient(create_app(runner=fake_runner, settings=settings))
+            self.login_user(second_client)
             restored = second_client.get(f"/api/jobs/{job_id}").json()
 
         self.assertEqual(restored["status"], "completed")
@@ -655,6 +745,7 @@ class WebMvpTest(unittest.TestCase):
             root = Path(tmp)
             settings = self.ready_settings(root)
             client = TestClient(create_app(runner=failing_runner, settings=settings))
+            self.register_user(client)
             response = client.post(
                 "/api/generate",
                 files={"pdf": ("lecture.pdf", self.make_pdf_bytes(), "application/pdf")},
@@ -701,11 +792,14 @@ class WebMvpTest(unittest.TestCase):
                 job_id="queued-job",
                 pdf_path=root / "input" / "lecture.pdf",
                 output_dir=root / "output",
+                metadata={"owner_user_id": "user-1"},
             )
             client = TestClient(
                 create_app(base_dir=root, runner=lambda **kwargs: {}, job_store=job_store),
                 raise_server_exceptions=False,
             )
+            user = self.register_user(client)
+            job_store.require("queued-job").metadata["owner_user_id"] = user["id"]
 
             output = client.get("/api/jobs/queued-job/output")
             evidence = client.get("/api/jobs/queued-job/evidence")
@@ -720,6 +814,7 @@ class WebMvpTest(unittest.TestCase):
             root = Path(tmp)
             settings = self.ready_settings(root, max_pdf_bytes=1024)
             client = TestClient(create_app(runner=lambda **kwargs: {}, settings=settings))
+            self.register_user(client)
 
             response = client.post(
                 "/api/generate",
@@ -734,6 +829,7 @@ class WebMvpTest(unittest.TestCase):
             root = Path(tmp)
             settings = self.ready_settings(root, max_pdf_bytes=5)
             client = TestClient(create_app(runner=lambda **kwargs: {}, settings=settings))
+            self.register_user(client)
 
             response = client.post(
                 "/api/generate",

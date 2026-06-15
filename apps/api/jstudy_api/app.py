@@ -214,11 +214,22 @@ def create_app(
     def routing_parser_profiles_config() -> dict[str, Any]:
         return runtime.parser_profiles_config or admin_settings.load_runtime().get("parser_profiles", {})
 
-    def job_or_404(job_id: str) -> JobRecord:
+    def current_user_or_401(request: Request) -> User:
+        token = session_token_from_request(request, runtime)
+        user = auth_service.get_user_by_token(token) if token else None
+        if user is None:
+            raise HTTPException(status_code=401, detail="Not authenticated")
+        return user
+
+    def job_or_404(job_id: str, current_user: User) -> JobRecord:
         try:
-            return jobs.require(job_id)
+            job = jobs.require(job_id)
         except KeyError:
             raise HTTPException(status_code=404, detail="Job not found")
+        owner_user_id = str(job.metadata.get("owner_user_id") or "")
+        if not owner_user_id or owner_user_id != current_user.id:
+            raise HTTPException(status_code=404, detail="Job not found")
+        return job
 
     def ready_output_path(job: JobRecord, key: str, detail: str) -> Path:
         path = job.outputs.get(key)
@@ -415,11 +426,7 @@ def create_app(
     @app.get("/api/auth/me")
     def me(request: Request, response: Response) -> dict[str, Any]:
         set_no_store(response)
-        token = session_token_from_request(request, runtime)
-        user = auth_service.get_user_by_token(token) if token else None
-        if user is None:
-            raise HTTPException(status_code=401, detail="Not authenticated")
-        return user_payload(user)
+        return user_payload(current_user_or_401(request))
 
     @app.get("/api/health")
     def health(response: Response) -> dict[str, str]:
@@ -465,6 +472,7 @@ def create_app(
         parser_profile_id: str = Form(""),
     ) -> dict[str, Any]:
         set_no_store(response)
+        current_user = current_user_or_401(request)
         readiness = runtime.readiness()
         if readiness["status"] != "ready":
             raise HTTPException(status_code=503, detail=readiness)
@@ -507,6 +515,7 @@ def create_app(
             outline_path=outline_path,
             output_dir=job_dir / "output",
             metadata={
+                "owner_user_id": current_user.id,
                 "scenario": scenario.trace_metadata(),
                 "parser_profile": parser_profile.trace_metadata(),
             },
@@ -519,9 +528,9 @@ def create_app(
         }
 
     @app.get("/api/jobs/{job_id}")
-    def job_status(job_id: str, response: Response) -> dict[str, Any]:
+    def job_status(job_id: str, request: Request, response: Response) -> dict[str, Any]:
         set_no_store(response)
-        job = job_or_404(job_id)
+        job = job_or_404(job_id, current_user_or_401(request))
         return {
             "job_id": job_id,
             "status": job.status,
@@ -537,16 +546,16 @@ def create_app(
         }
 
     @app.get("/api/jobs/{job_id}/output")
-    def job_output(job_id: str, response: Response) -> dict[str, str]:
+    def job_output(job_id: str, request: Request, response: Response) -> dict[str, str]:
         set_private_cache(response)
-        job = job_or_404(job_id)
+        job = job_or_404(job_id, current_user_or_401(request))
         path = ready_output_path(job, "markdown", "Output is not ready")
         return {"markdown": path.read_text(encoding="utf-8")}
 
     @app.get("/api/jobs/{job_id}/evidence")
-    def job_evidence(job_id: str, response: Response) -> dict[str, Any]:
+    def job_evidence(job_id: str, request: Request, response: Response) -> dict[str, Any]:
         set_private_cache(response)
-        job = job_or_404(job_id)
+        job = job_or_404(job_id, current_user_or_401(request))
         evidence_path = ready_output_path(job, "evidence", "Evidence is not ready")
         links_path = ready_output_path(job, "evidence_links", "Evidence is not ready")
         return {
@@ -555,22 +564,22 @@ def create_app(
         }
 
     @app.get("/api/jobs/{job_id}/evidence-links")
-    def job_evidence_links(job_id: str, response: Response) -> Any:
+    def job_evidence_links(job_id: str, request: Request, response: Response) -> Any:
         set_private_cache(response)
-        job = job_or_404(job_id)
+        job = job_or_404(job_id, current_user_or_401(request))
         path = ready_output_path(job, "evidence_links", "Evidence links are not ready")
         return read_json(path)
 
     @app.get("/api/jobs/{job_id}/trace")
-    def job_trace(job_id: str, response: Response) -> Any:
+    def job_trace(job_id: str, request: Request, response: Response) -> Any:
         set_private_cache(response)
-        job = job_or_404(job_id)
+        job = job_or_404(job_id, current_user_or_401(request))
         path = ready_output_path(job, "trace", "Retrieval trace is not ready")
         return read_json(path)
 
     @app.get("/api/jobs/{job_id}/pdf")
-    def job_pdf(job_id: str) -> FileResponse:
-        job = job_or_404(job_id)
+    def job_pdf(job_id: str, request: Request) -> FileResponse:
+        job = job_or_404(job_id, current_user_or_401(request))
         path = job.pdf_path
         if not path.exists():
             raise HTTPException(status_code=404, detail="PDF not found")
@@ -582,9 +591,9 @@ def create_app(
         )
 
     @app.get("/api/jobs/{job_id}/pdf-info")
-    def job_pdf_info(job_id: str, response: Response) -> dict[str, Any]:
+    def job_pdf_info(job_id: str, request: Request, response: Response) -> dict[str, Any]:
         set_private_cache(response)
-        job = job_or_404(job_id)
+        job = job_or_404(job_id, current_user_or_401(request))
         path = job.pdf_path
         if not path.exists():
             raise HTTPException(status_code=404, detail="PDF not found")
@@ -600,8 +609,8 @@ def create_app(
         return {"page_count": len(pages), "pages": pages}
 
     @app.get("/api/jobs/{job_id}/pdf-page/{page_no}.png")
-    def job_pdf_page_png(job_id: str, page_no: int) -> Response:
-        job = job_or_404(job_id)
+    def job_pdf_page_png(job_id: str, page_no: int, request: Request) -> Response:
+        job = job_or_404(job_id, current_user_or_401(request))
         path = job.pdf_path
         if not path.exists():
             raise HTTPException(status_code=404, detail="PDF not found")
