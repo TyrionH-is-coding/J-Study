@@ -188,5 +188,6 @@ docker compose -f deploy/docker-compose/api.compose.yml up -d --build
 - [User Auth and Invite Design](docs/superpowers/specs/2026-06-15-user-auth-invite-design.md)
 - [Backend Security Validation](docs/security/backend-security-validation.md)
 - [Server Deployment Runbook](docs/deployment/server-runbook.md)
+- [Tencent Cloud Backend Trial Deployment](docs/deployment/tencent-cloud-trial-2026-06-15.md)
 
 Historical MVP notes are kept under `docs/archive/`.

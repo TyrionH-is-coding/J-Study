@@ -196,6 +196,9 @@ curl "http://127.0.0.1:8765/api/readiness?probe_provider=true"
 The readiness response must be `ready` before pilot users submit PDFs.
 After startup, create at least one reusable invite code from `/admin/settings?admin_token=...` before testing registration.
 
+The first Tencent Cloud backend-only trial record is tracked in
+[`tencent-cloud-trial-2026-06-15.md`](tencent-cloud-trial-2026-06-15.md).
+
 ## First Full Deployment After Frontend
 
 Planned sequence:
