@@ -191,6 +191,7 @@ ADMIN_SETTINGS_HTML = r"""<!doctype html>
       <section>
         <h2>Document Parsing</h2>
         <div class="grid">
+          <label>Default parser profile <select id="defaultParserProfileId"></select></label>
           <label>Parser backend
             <select id="parserBackend">
               <option value="pymupdf">PyMuPDF</option>
@@ -208,6 +209,8 @@ ADMIN_SETTINGS_HTML = r"""<!doctype html>
           <label><span><input id="parserOcr" type="checkbox"> OCR</span></label>
           <label><span><input id="parserTables" type="checkbox"> Tables</span></label>
           <label><span><input id="parserFormulas" type="checkbox"> Formulas</span></label>
+          <label><span><input id="qualityEnabled" type="checkbox"> Enable quality profile</span></label>
+          <label><span><input id="qualityVisibleToUsers" type="checkbox"> Show quality profile to users</span></label>
         </div>
       </section>
     </div>
@@ -215,6 +218,7 @@ ADMIN_SETTINGS_HTML = r"""<!doctype html>
       <section>
         <h2>Content Pack</h2>
         <div class="grid">
+          <label>Default scenario <select id="defaultScenarioId"></select></label>
           <label class="full">Pack name <input id="packName"></label>
           <label>Subject <input id="packSubject"></label>
           <label>Enabled <select id="packEnabled"><option value="true">Enabled</option><option value="false">Disabled</option></select></label>
@@ -236,9 +240,9 @@ ADMIN_SETTINGS_HTML = r"""<!doctype html>
       "embeddingBinding", "embeddingModel", "embeddingBaseUrl", "embeddingApiKey",
       "ragChunkMaxChars", "ragChunkOverlap", "ragTopK", "ragPerQuery", "ragMnemonicLimit",
       "searchProvider", "searchMaxResults", "searchBaseUrl", "searchApiKey",
-      "parserBackend", "mineruMode", "mineruApiBaseUrl", "mineruApiToken",
-      "parserOcr", "parserTables", "parserFormulas",
-      "packName", "packSubject", "packEnabled", "packSoulPath", "packMnemonicsPath",
+      "defaultParserProfileId", "parserBackend", "mineruMode", "mineruApiBaseUrl", "mineruApiToken",
+      "parserOcr", "parserTables", "parserFormulas", "qualityEnabled", "qualityVisibleToUsers",
+      "defaultScenarioId", "packName", "packSubject", "packEnabled", "packSoulPath", "packMnemonicsPath",
       "packMnemonicsJsonPath", "mnemonicsJson"
     ];
     const el = Object.fromEntries(ids.map(id => [id, document.getElementById(id)]));
@@ -270,6 +274,16 @@ ADMIN_SETTINGS_HTML = r"""<!doctype html>
       return settings.content_pack.packs.find(p => p.id === settings.content_pack.active_pack_id) || settings.content_pack.packs[0];
     }
 
+    function qualityProfile() {
+      const parserProfiles = settings.runtime.parser_profiles || { profiles: [] };
+      return parserProfiles.profiles.find(profile => profile.id === "quality") || {};
+    }
+
+    function renderSelect(select, items, value) {
+      select.innerHTML = items.map(item => `<option value="${item.id}">${item.display_name || item.name || item.id}</option>`).join("");
+      select.value = value || (items[0] && items[0].id) || "";
+    }
+
     function render() {
       const llmProfile = activeProfile("llm");
       const llmModel = activeModel("llm");
@@ -278,7 +292,10 @@ ADMIN_SETTINGS_HTML = r"""<!doctype html>
       const searchProfile = activeProfile("search");
       const rag = settings.runtime.rag;
       const parser = settings.runtime.parser;
+      const parserProfiles = settings.runtime.parser_profiles || { default_profile_id: "fast", profiles: [] };
+      const quality = qualityProfile();
       const pack = activePack();
+      const scenarios = settings.content_pack.scenarios || [];
       el.llmBinding.value = llmProfile.binding || "";
       el.llmModel.value = llmModel.model || "";
       el.llmBaseUrl.value = llmProfile.base_url || "";
@@ -296,6 +313,7 @@ ADMIN_SETTINGS_HTML = r"""<!doctype html>
       el.searchMaxResults.value = searchProfile.max_results || 5;
       el.searchBaseUrl.value = searchProfile.base_url || "";
       el.searchApiKey.value = "";
+      renderSelect(el.defaultParserProfileId, parserProfiles.profiles || [], parserProfiles.default_profile_id || "fast");
       el.parserBackend.value = parser.backend || "pymupdf";
       el.mineruMode.value = (parser.mineru && parser.mineru.mode) || "local";
       el.mineruApiBaseUrl.value = (parser.mineru && parser.mineru.api_base_url) || "https://mineru.net";
@@ -303,6 +321,9 @@ ADMIN_SETTINGS_HTML = r"""<!doctype html>
       el.parserOcr.checked = Boolean(parser.ocr);
       el.parserTables.checked = Boolean(parser.tables);
       el.parserFormulas.checked = Boolean(parser.formulas);
+      el.qualityEnabled.checked = Boolean(quality.enabled);
+      el.qualityVisibleToUsers.checked = Boolean(quality.visible_to_users);
+      renderSelect(el.defaultScenarioId, scenarios, settings.content_pack.default_scenario_id);
       el.packName.value = pack.name || "";
       el.packSubject.value = pack.subject || "";
       el.packEnabled.value = String(pack.enabled !== false);
@@ -329,6 +350,8 @@ ADMIN_SETTINGS_HTML = r"""<!doctype html>
       const searchProfile = activeProfile("search");
       const rag = settings.runtime.rag;
       const parser = settings.runtime.parser;
+      const parserProfiles = settings.runtime.parser_profiles || { profiles: [] };
+      const quality = qualityProfile();
       const pack = activePack();
       llmProfile.binding = el.llmBinding.value.trim();
       llmModel.model = el.llmModel.value.trim();
@@ -347,6 +370,7 @@ ADMIN_SETTINGS_HTML = r"""<!doctype html>
       searchProfile.max_results = Number(el.searchMaxResults.value || 5);
       searchProfile.base_url = el.searchBaseUrl.value.trim();
       if (el.searchApiKey.value.trim()) searchProfile.api_key = el.searchApiKey.value.trim();
+      parserProfiles.default_profile_id = el.defaultParserProfileId.value;
       parser.backend = el.parserBackend.value;
       parser.ocr = el.parserOcr.checked;
       parser.tables = el.parserTables.checked;
@@ -355,6 +379,9 @@ ADMIN_SETTINGS_HTML = r"""<!doctype html>
       parser.mineru.mode = el.mineruMode.value;
       parser.mineru.api_base_url = el.mineruApiBaseUrl.value.trim();
       if (el.mineruApiToken.value.trim()) parser.mineru.api_token = el.mineruApiToken.value.trim();
+      quality.enabled = el.qualityEnabled.checked;
+      quality.visible_to_users = el.qualityVisibleToUsers.checked;
+      settings.content_pack.default_scenario_id = el.defaultScenarioId.value;
       pack.name = el.packName.value.trim();
       pack.subject = el.packSubject.value.trim();
       pack.enabled = el.packEnabled.value === "true";

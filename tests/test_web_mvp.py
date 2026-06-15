@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from apps.api.jstudy_api.app import INDEX_HTML, create_app  # noqa: E402
+from apps.api.jstudy_api.app import ADMIN_SETTINGS_HTML, INDEX_HTML, create_app  # noqa: E402
 from packages.core.jstudy_core.admin_settings import AdminSettingsService  # noqa: E402
 from packages.core.jstudy_core.jobs import JobStore  # noqa: E402
 from packages.core.jstudy_core.settings import RuntimeSettings  # noqa: E402
@@ -120,6 +120,12 @@ class WebMvpTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn("adminSettingsApp", response.text)
         self.assertIn("/api/admin/settings", response.text)
+
+    def test_admin_settings_page_contains_parser_profile_controls(self):
+        self.assertIn("defaultScenarioId", ADMIN_SETTINGS_HTML)
+        self.assertIn("defaultParserProfileId", ADMIN_SETTINGS_HTML)
+        self.assertIn("qualityVisibleToUsers", ADMIN_SETTINGS_HTML)
+        self.assertIn("qualityEnabled", ADMIN_SETTINGS_HTML)
 
     def test_admin_settings_endpoint_requires_token_when_configured(self):
         with tempfile.TemporaryDirectory() as tmp:
