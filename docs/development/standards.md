@@ -34,7 +34,7 @@ feature/backend-frontend-mvp
 Current backend baseline:
 
 ```powershell
-python -m py_compile web_mvp.py mvp_runner.py apps/api/jstudy_api/app.py apps/api/jstudy_api/ui.py apps/api/jstudy_api/admin_ui.py packages/core/jstudy_core/admin_settings.py packages/core/jstudy_core/pipeline.py packages/core/jstudy_core/cli.py packages/core/jstudy_core/citations.py packages/core/jstudy_core/jobs.py packages/core/jstudy_core/providers.py packages/core/jstudy_core/settings.py packages/core/jstudy_core/storage.py
+python -m py_compile web_mvp.py mvp_runner.py apps/api/jstudy_api/app.py apps/api/jstudy_api/ui.py apps/api/jstudy_api/admin_ui.py packages/core/jstudy_core/admin_settings.py packages/core/jstudy_core/scenario_router.py packages/core/jstudy_core/parser_profile_router.py packages/core/jstudy_core/pipeline.py packages/core/jstudy_core/cli.py packages/core/jstudy_core/citations.py packages/core/jstudy_core/jobs.py packages/core/jstudy_core/providers.py packages/core/jstudy_core/settings.py packages/core/jstudy_core/storage.py packages/parsers/mineru_parser.py packages/parsers/pymupdf_parser.py
 python -m unittest discover -s tests -v
 ```
 
@@ -54,6 +54,8 @@ Platform code should provide generic capabilities:
 
 - upload
 - parsing
+- scenario routing
+- parser-profile routing
 - retrieval
 - generation orchestration
 - evidence contracts
@@ -72,6 +74,10 @@ Domain code should provide subject behavior:
 - question-generation policy
 
 Medicine is the first domain pack, not the product boundary.
+
+`scenario_id` is the user-facing learning scene. It should resolve content-pack, prompt-profile, RAG-profile, and domain-rule choices. Do not hardcode new subject behavior into the medicine pack when it belongs in a scenario or future domain pack.
+
+`parser_profile_id` is the user-facing parsing experience. It should resolve parser backend and visibility/admin rules. Do not couple a subject scenario to a parser profile.
 
 Current backend module ownership:
 
@@ -104,6 +110,7 @@ MinerU
 ```
 
 Do not make MinerU required for the first lightweight deployment.
+Do not add automatic PDF difficulty scoring until there is evidence it is reliable. The current product choice is explicit user/admin selection: `fast` uses PyMuPDF; `quality` is reserved for MinerU and hidden until configured.
 
 ## Frontend Standards
 
@@ -135,6 +142,7 @@ Deployment should be portable across servers:
 - `JSTUDY_SETTINGS_DIR` should point at a mounted persistent settings directory in containerized deployment
 - `JSTUDY_JOBS_DIR`, `JSTUDY_SOUL_PATH`, and `JSTUDY_MNEMONICS_PATH` should point at mounted deployment paths when containerized
 - `JSTUDY_MAX_PDF_BYTES` should be set explicitly for server deployment
+- `JSTUDY_JOB_RETENTION_HOURS` should be nonzero for public testing; use `72` or `168` unless there is a specific reason to keep outputs longer
 - persistent files mounted under a data volume
 - domain routes frontend at `/` and backend at `/api/...`
 - reverse proxy health checks should call `/api/health`
@@ -142,6 +150,7 @@ Deployment should be portable across servers:
 - deployment verification can call `/api/readiness?probe_provider=true` to check live SiliconFlow chat and embedding connectivity
 
 Initial deployment can be single-server. Add Redis, Postgres, object storage, or workers when needed by real usage.
+Local upload storage is acceptable for the pilot because PDF previews and citation jumps need the source file. For formal user history or course libraries, move uploads and generated artifacts to Tencent COS or another object store instead of growing local disk indefinitely.
 
 ## Documentation Standards
 
