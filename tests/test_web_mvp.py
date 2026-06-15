@@ -140,6 +140,77 @@ class WebMvpTest(unittest.TestCase):
         self.assertEqual(blocked.status_code, 401)
         self.assertEqual(allowed.status_code, 200)
 
+    def test_auth_register_login_me_and_logout(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            settings = self.ready_settings(root)
+            client = TestClient(create_app(settings=settings))
+
+            with patch.dict(os.environ, {"JSTUDY_ADMIN_TOKEN": "secret"}, clear=False):
+                missing_invite = client.post(
+                    "/api/auth/register",
+                    json={"email": "student@example.com", "password": "password123", "invite_code": "MED-PILOT"},
+                )
+                created = client.post(
+                    "/api/admin/invite-codes?admin_token=secret",
+                    json={"code": "MED-PILOT", "label": "Medicine pilot"},
+                )
+                registered = client.post(
+                    "/api/auth/register",
+                    json={"email": "Student@Example.com", "password": "password123", "invite_code": "MED-PILOT"},
+                )
+                me_after_register = client.get("/api/auth/me")
+                logged_out = client.post("/api/auth/logout")
+                me_after_logout = client.get("/api/auth/me")
+                logged_in = client.post(
+                    "/api/auth/login",
+                    json={"email": "student@example.com", "password": "password123"},
+                )
+                me_after_login = client.get("/api/auth/me")
+
+        self.assertEqual(missing_invite.status_code, 400)
+        self.assertEqual(created.status_code, 200)
+        self.assertEqual(created.json()["code"], "MED-PILOT")
+        self.assertEqual(registered.status_code, 200)
+        self.assertIn("jstudy_session=", registered.headers["set-cookie"])
+        self.assertEqual(me_after_register.json()["email"], "student@example.com")
+        self.assertFalse(me_after_register.json()["email_verified"])
+        self.assertEqual(logged_out.status_code, 200)
+        self.assertIn("jstudy_session=", logged_out.headers["set-cookie"])
+        self.assertEqual(me_after_logout.status_code, 401)
+        self.assertEqual(logged_in.status_code, 200)
+        self.assertEqual(me_after_login.json()["email"], "student@example.com")
+
+    def test_admin_invite_api_requires_token_and_shared_code_registers_multiple_users(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            settings = self.ready_settings(root)
+            client = TestClient(create_app(settings=settings))
+
+            with patch.dict(os.environ, {"JSTUDY_ADMIN_TOKEN": "secret"}, clear=False):
+                blocked = client.get("/api/admin/invite-codes")
+                created = client.post(
+                    "/api/admin/invite-codes?admin_token=secret",
+                    json={"code": "MED-PILOT", "label": "Medicine pilot"},
+                )
+                first = client.post(
+                    "/api/auth/register",
+                    json={"email": "one@example.com", "password": "password123", "invite_code": "MED-PILOT"},
+                )
+                client.post("/api/auth/logout")
+                second = client.post(
+                    "/api/auth/register",
+                    json={"email": "two@example.com", "password": "password456", "invite_code": "MED-PILOT"},
+                )
+                invites = client.get("/api/admin/invite-codes?admin_token=secret")
+                uses = client.get(f"/api/admin/invite-codes/{created.json()['id']}/uses?admin_token=secret")
+
+        self.assertEqual(blocked.status_code, 401)
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 200)
+        self.assertEqual(invites.json()[0]["usage_count"], 2)
+        self.assertEqual([item["email"] for item in uses.json()], ["one@example.com", "two@example.com"])
+
     def test_admin_settings_api_redacts_and_persists_settings(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

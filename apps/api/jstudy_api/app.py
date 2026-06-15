@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 import inspect
 import os
@@ -17,6 +18,16 @@ from apps.api.jstudy_api.admin_ui import ADMIN_SETTINGS_HTML
 from apps.api.jstudy_api.ui import INDEX_HTML
 
 from packages.core.jstudy_core.admin_settings import AdminSettingsService
+from packages.core.jstudy_core.auth_db import create_auth_engine, create_auth_tables
+from packages.core.jstudy_core.auth_models import InviteCode, InviteCodeUse, User
+from packages.core.jstudy_core.auth_service import (
+    AuthService,
+    AuthServiceError,
+    DuplicateEmailError,
+    InvalidCredentialsError,
+    InvalidInviteCodeError,
+    InviteCodeExistsError,
+)
 from packages.core.jstudy_core.jobs import JobRecord, JobStore
 from packages.core.jstudy_core.parser_profile_router import (
     ParserProfileRoutingError,
@@ -111,6 +122,52 @@ def is_admin_request(request: Request) -> bool:
     return expected in {bearer, query}
 
 
+def set_session_cookie(response: Response, runtime: RuntimeSettings, token: str) -> None:
+    response.set_cookie(
+        runtime.session_cookie_name,
+        token,
+        httponly=True,
+        secure=runtime.cookie_secure,
+        samesite="lax",
+        path="/",
+    )
+
+
+def clear_session_cookie(response: Response, runtime: RuntimeSettings) -> None:
+    response.delete_cookie(runtime.session_cookie_name, path="/", samesite="lax")
+
+
+def session_token_from_request(request: Request, runtime: RuntimeSettings) -> str:
+    return request.cookies.get(runtime.session_cookie_name, "").strip()
+
+
+def user_payload(user: User) -> dict[str, Any]:
+    return {"id": user.id, "email": user.email, "email_verified": user.email_verified}
+
+
+def invite_payload(invite: InviteCode, usage_count: int = 0) -> dict[str, Any]:
+    return {
+        "id": invite.id,
+        "code": invite.code,
+        "label": invite.label,
+        "enabled": invite.enabled,
+        "created_at": invite.created_at.isoformat(),
+        "updated_at": invite.updated_at.isoformat(),
+        "disabled_at": invite.disabled_at.isoformat() if invite.disabled_at else None,
+        "usage_count": usage_count,
+    }
+
+
+def invite_use_payload(item: InviteCodeUse) -> dict[str, Any]:
+    return {
+        "id": item.id,
+        "invite_code_id": item.invite_code_id,
+        "user_id": item.user_id,
+        "email": item.email,
+        "used_at": item.used_at.isoformat(),
+    }
+
+
 def create_app(
     base_dir: Path | None = None,
     runner: Runner = run_mvp,
@@ -118,7 +175,6 @@ def create_app(
     settings: RuntimeSettings | None = None,
     provider_probe: ProviderProbe | None = None,
 ) -> FastAPI:
-    app = FastAPI(title="J Study MVP")
     runtime = settings or RuntimeSettings.from_env(ROOT, jobs_root=base_dir)
     jobs_root = base_dir or runtime.jobs_root
     jobs_root.mkdir(parents=True, exist_ok=True)
@@ -126,6 +182,19 @@ def create_app(
     admin_settings = AdminSettingsService(
         runtime.admin_settings_dir or runtime.project_root / "data" / "settings"
     )
+    database_url = runtime.database_url or f"sqlite:///{(jobs_root / 'jstudy.db').as_posix()}"
+    auth_engine = create_auth_engine(database_url)
+    create_auth_tables(auth_engine)
+    auth_service = AuthService(auth_engine)
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        try:
+            yield
+        finally:
+            auth_engine.dispose()
+
+    app = FastAPI(title="J Study MVP", lifespan=lifespan)
 
     def refresh_runtime() -> None:
         nonlocal runtime
@@ -204,6 +273,58 @@ def create_app(
         set_no_store(response)
         return admin_settings.load_public()
 
+    @app.get("/api/admin/invite-codes")
+    def list_invite_codes(request: Request, response: Response) -> list[dict[str, Any]]:
+        require_admin(request)
+        set_no_store(response)
+        return [
+            invite_payload(invite, usage_count=len(auth_service.list_invite_uses(invite.id)))
+            for invite in auth_service.list_invite_codes()
+        ]
+
+    @app.post("/api/admin/invite-codes")
+    def create_invite_code(
+        request: Request,
+        response: Response,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        require_admin(request)
+        set_no_store(response)
+        try:
+            invite = auth_service.create_invite_code(
+                str(payload.get("code") or ""),
+                label=str(payload.get("label") or ""),
+            )
+        except InviteCodeExistsError as exc:
+            raise HTTPException(status_code=409, detail=str(exc))
+        except InvalidInviteCodeError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        return invite_payload(invite)
+
+    @app.patch("/api/admin/invite-codes/{invite_id}")
+    def update_invite_code(
+        invite_id: str,
+        request: Request,
+        response: Response,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        require_admin(request)
+        set_no_store(response)
+        try:
+            if "enabled" in payload:
+                invite = auth_service.set_invite_code_enabled(invite_id, bool(payload["enabled"]))
+            else:
+                invite = next(item for item in auth_service.list_invite_codes() if item.id == invite_id)
+        except (InvalidInviteCodeError, StopIteration) as exc:
+            raise HTTPException(status_code=404, detail=str(exc) or "Invite code not found")
+        return invite_payload(invite, usage_count=len(auth_service.list_invite_uses(invite.id)))
+
+    @app.get("/api/admin/invite-codes/{invite_id}/uses")
+    def list_invite_code_uses(invite_id: str, request: Request, response: Response) -> list[dict[str, Any]]:
+        require_admin(request)
+        set_no_store(response)
+        return [invite_use_payload(item) for item in auth_service.list_invite_uses(invite_id)]
+
     @app.put("/api/admin/settings")
     def update_admin_settings(
         request: Request,
@@ -249,6 +370,56 @@ def create_app(
                 return {"name": "search", "status": "error", "detail": "searxng requires base_url"}
             return {"name": "search", "status": "ok", "detail": provider}
         raise HTTPException(status_code=404, detail="Unknown settings service")
+
+    @app.post("/api/auth/register")
+    def register(payload: dict[str, Any], response: Response) -> dict[str, Any]:
+        set_no_store(response)
+        try:
+            user = auth_service.register(
+                str(payload.get("email") or ""),
+                str(payload.get("password") or ""),
+                str(payload.get("invite_code") or ""),
+            )
+            token = auth_service.create_session(user.id)
+        except DuplicateEmailError as exc:
+            raise HTTPException(status_code=409, detail=str(exc))
+        except InvalidInviteCodeError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        except AuthServiceError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        set_session_cookie(response, runtime, token)
+        return user_payload(user)
+
+    @app.post("/api/auth/login")
+    def login(payload: dict[str, Any], response: Response) -> dict[str, Any]:
+        set_no_store(response)
+        try:
+            user, token = auth_service.login(
+                str(payload.get("email") or ""),
+                str(payload.get("password") or ""),
+            )
+        except InvalidCredentialsError as exc:
+            raise HTTPException(status_code=401, detail=str(exc))
+        set_session_cookie(response, runtime, token)
+        return user_payload(user)
+
+    @app.post("/api/auth/logout")
+    def logout(request: Request, response: Response) -> dict[str, str]:
+        set_no_store(response)
+        token = session_token_from_request(request, runtime)
+        if token:
+            auth_service.logout(token)
+        clear_session_cookie(response, runtime)
+        return {"status": "ok"}
+
+    @app.get("/api/auth/me")
+    def me(request: Request, response: Response) -> dict[str, Any]:
+        set_no_store(response)
+        token = session_token_from_request(request, runtime)
+        user = auth_service.get_user_by_token(token) if token else None
+        if user is None:
+            raise HTTPException(status_code=401, detail="Not authenticated")
+        return user_payload(user)
 
     @app.get("/api/health")
     def health(response: Response) -> dict[str, str]:
