@@ -29,6 +29,10 @@ SOUL_PATH_ENV = "JSTUDY_SOUL_PATH"
 MNEMONICS_PATH_ENV = "JSTUDY_MNEMONICS_PATH"
 MAX_PDF_BYTES_ENV = "JSTUDY_MAX_PDF_BYTES"
 JOB_RETENTION_HOURS_ENV = "JSTUDY_JOB_RETENTION_HOURS"
+DATABASE_URL_ENV = "DATABASE_URL"
+SESSION_SECRET_ENV = "JSTUDY_SESSION_SECRET"
+COOKIE_SECURE_ENV = "JSTUDY_COOKIE_SECURE"
+COOKIE_NAME_ENV = "JSTUDY_SESSION_COOKIE_NAME"
 DEFAULT_MAX_PDF_BYTES = 50 * 1024 * 1024
 ProviderProbe = Callable[[str, str, str], dict[str, Any]]
 
@@ -60,6 +64,17 @@ def env_nonnegative_int(name: str, default: int) -> int:
     return parsed
 
 
+def env_bool(name: str, default: bool) -> bool:
+    value = os.getenv(name, "").strip().lower()
+    if not value:
+        return default
+    if value in {"1", "true", "yes", "on"}:
+        return True
+    if value in {"0", "false", "no", "off"}:
+        return False
+    raise RuntimeError(f"{name} must be true or false")
+
+
 @dataclass(frozen=True)
 class RuntimeSettings:
     project_root: Path
@@ -83,6 +98,10 @@ class RuntimeSettings:
     search_config: dict[str, Any] = field(default_factory=dict)
     max_pdf_bytes: int = DEFAULT_MAX_PDF_BYTES
     job_retention_hours: int = 0
+    database_url: str = ""
+    session_secret: str = "dev-session-secret"
+    cookie_secure: bool = False
+    session_cookie_name: str = "jstudy_session"
 
     @classmethod
     def from_env(cls, project_root: Path, jobs_root: Path | None = None) -> "RuntimeSettings":
@@ -100,10 +119,14 @@ class RuntimeSettings:
         api_key_path = _catalog_path(project_root, llm_profile.get("api_key_path"))
         if api_key_path is None:
             api_key_path = project_root / "siliconflow api key.txt"
+        resolved_jobs_root = jobs_root or env_path(JOBS_DIR_ENV, project_root / "web_jobs")
+        database_url = os.getenv(DATABASE_URL_ENV, "").strip()
+        if not database_url:
+            database_url = f"sqlite:///{(resolved_jobs_root / 'jstudy.db').as_posix()}"
 
         return cls(
             project_root=project_root,
-            jobs_root=jobs_root or env_path(JOBS_DIR_ENV, project_root / "web_jobs"),
+            jobs_root=resolved_jobs_root,
             soul_path=env_path(SOUL_PATH_ENV, _project_path(project_root, pack.get("soul_path"), "soul.md")),
             mnemonics_path=env_path(
                 MNEMONICS_PATH_ENV,
@@ -136,6 +159,10 @@ class RuntimeSettings:
                 JOB_RETENTION_HOURS_ENV,
                 runtime["jobs"]["job_retention_hours"],
             ),
+            database_url=database_url,
+            session_secret=os.getenv(SESSION_SECRET_ENV, "dev-session-secret").strip() or "dev-session-secret",
+            cookie_secure=env_bool(COOKIE_SECURE_ENV, False),
+            session_cookie_name=os.getenv(COOKIE_NAME_ENV, "jstudy_session").strip() or "jstudy_session",
         )
 
     def readiness(

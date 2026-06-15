@@ -35,6 +35,24 @@ class SettingsTest(unittest.TestCase):
         self.assertEqual(settings.max_pdf_bytes, 12345)
         self.assertEqual(settings.job_retention_hours, 12)
 
+    def test_runtime_settings_loads_auth_database_environment(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            env = {
+                "DATABASE_URL": "postgresql+psycopg://jstudy:secret@postgres:5432/jstudy",
+                "JSTUDY_SESSION_SECRET": "session-secret",
+                "JSTUDY_COOKIE_SECURE": "true",
+                "JSTUDY_SESSION_COOKIE_NAME": "custom_session",
+            }
+
+            with patch.dict(os.environ, env, clear=False):
+                settings = RuntimeSettings.from_env(root)
+
+        self.assertEqual(settings.database_url, env["DATABASE_URL"])
+        self.assertEqual(settings.session_secret, "session-secret")
+        self.assertTrue(settings.cookie_secure)
+        self.assertEqual(settings.session_cookie_name, "custom_session")
+
     def test_runtime_settings_keep_mvp_defaults(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -47,6 +65,17 @@ class SettingsTest(unittest.TestCase):
         self.assertEqual(settings.api_key_path, root / "siliconflow api key.txt")
         self.assertEqual(settings.max_pdf_bytes, 50 * 1024 * 1024)
         self.assertEqual(settings.job_retention_hours, 0)
+        self.assertEqual(settings.database_url, f"sqlite:///{(root / 'web_jobs' / 'jstudy.db').as_posix()}")
+        self.assertEqual(settings.session_secret, "dev-session-secret")
+        self.assertFalse(settings.cookie_secure)
+        self.assertEqual(settings.session_cookie_name, "jstudy_session")
+
+    def test_invalid_cookie_secure_environment_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch.dict(os.environ, {"JSTUDY_COOKIE_SECURE": "maybe"}, clear=True):
+                with self.assertRaises(RuntimeError):
+                    RuntimeSettings.from_env(root)
 
     def test_runtime_settings_reads_admin_json_defaults(self):
         with tempfile.TemporaryDirectory() as tmp:
