@@ -293,16 +293,28 @@ content: 一嗅二视三动眼。
                     rag_config=RagConfig(top_k_candidates=1, per_query_limit=1),
                     embedding_cache_path=cache,
                     outline_path=outline,
+                    parser_backend="pymupdf",
+                    routing_metadata={
+                        "scenario": {"resolved_scenario_id": "medicine-default"},
+                        "parser_profile": {
+                            "resolved_parser_profile_id": "fast",
+                            "backend": "pymupdf",
+                        },
+                    },
                 )
 
             quality = json.loads(outputs["quality"].read_text(encoding="utf-8"))
             evidence_links = json.loads(outputs["evidence_links"].read_text(encoding="utf-8"))
+            trace = json.loads(outputs["trace"].read_text(encoding="utf-8"))
 
             self.assertTrue(outputs["markdown"].exists())
             self.assertTrue(outputs["evidence"].exists())
             self.assertTrue(cache.exists())
             self.assertEqual(quality["status"], "pass")
             self.assertEqual(evidence_links[0]["target"]["page"], 1)
+            self.assertEqual(trace["scenario"]["resolved_scenario_id"], "medicine-default")
+            self.assertEqual(trace["parser_profile"]["resolved_parser_profile_id"], "fast")
+            self.assertEqual(trace["parser"]["backend"], "pymupdf")
 
     @patch("packages.core.jstudy_core.pipeline.extract_pdf_pages")
     @patch("packages.core.jstudy_core.providers.embed_texts")

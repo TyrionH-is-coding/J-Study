@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, replace
 from pathlib import Path
+from typing import Any
 
 from packages.core.jstudy_core import citations
 from packages.core.jstudy_core import providers
@@ -16,6 +17,7 @@ from packages.domains.medicine import (
     parse_mnemonics,
     retrieve_mnemonics,
 )
+from packages.parsers.mineru_parser import extract_pdf_pages_with_mineru
 from packages.parsers.pymupdf_parser import extract_pdf_pages
 from packages.retrieval.hybrid import (
     Chunk,
@@ -79,11 +81,19 @@ def run_mvp(
     api_key: str | None = None,
     chat_base_url: str = SILICONFLOW_BASE_URL,
     embed_base_url: str = SILICONFLOW_BASE_URL,
+    parser_backend: str = "pymupdf",
+    routing_metadata: dict[str, Any] | None = None,
+    parser_config: dict[str, Any] | None = None,
 ) -> dict[str, Path]:
     rag_config = rag_config or RagConfig()
     embedding_cache_path = embedding_cache_path or output_dir / ".mvp_cache" / "embeddings.json"
     resolved_api_key = api_key or read_api_key(api_key_path)
-    pages = extract_pdf_pages(pdf_path)
+    if parser_backend == "pymupdf":
+        pages = extract_pdf_pages(pdf_path)
+    elif parser_backend == "mineru":
+        pages = extract_pdf_pages_with_mineru(pdf_path, parser_config or {})
+    else:
+        raise RuntimeError(f"Unknown parser backend: {parser_backend}")
     chunks = chunk_pages(
         pages,
         max_chars=rag_config.chunk_max_chars,
@@ -145,6 +155,9 @@ def run_mvp(
             "pdf": str(pdf_path),
             "chat_model": chat_model,
             "embed_model": embed_model,
+            "scenario": (routing_metadata or {}).get("scenario", {}),
+            "parser_profile": (routing_metadata or {}).get("parser_profile", {}),
+            "parser": {"backend": parser_backend},
             "rag_config": asdict(rag_config),
             "embedding_cache": str(embedding_cache_path),
             "retrieval_strategy": "deeptutor-style multi-query hybrid reciprocal-rank fusion",
