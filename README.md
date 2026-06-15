@@ -13,12 +13,15 @@ The current backend can:
 - extract page text with PyMuPDF
 - use the `fast` parser profile as the public PyMuPDF path by default
 - reserve a hidden/admin-only `quality` parser profile for a future MinerU-backed path
+- require invite-gated email/password registration before users submit PDFs
+- store user accounts, reusable invite codes, invite-code uses, and HTTP-only sessions in SQLModel-backed storage
+- attach generated jobs to the owner user and block cross-user job access
 - retrieve evidence chunks with embedding + BM25/RRF
 - retrieve related mnemonics from `mnemonics.md`
 - generate Markdown study material using `soul.md`
 - emit evidence links so the UI can jump from "依据 E001" to the original PDF page
 
-This is still a single-machine MVP. It does not yet include users, database-backed jobs, object storage, a production task queue, or a separate frontend app.
+This is still a single-machine MVP. It does not yet include object storage, a production task queue, database-backed job records, or a separate frontend app.
 
 ## Repository Status
 
@@ -30,6 +33,9 @@ Current important files:
 apps/api/jstudy_api/    FastAPI MVP service and temporary UI module
 packages/core/          Pipeline orchestration, job lifecycle, output storage, runtime settings, CLI
 packages/core/jstudy_core/admin_settings.py JSON-backed admin settings and mnemonic rendering
+packages/core/jstudy_core/auth_db.py SQLModel engine/session helpers for auth persistence
+packages/core/jstudy_core/auth_models.py User, invite, invite-use, and session tables
+packages/core/jstudy_core/auth_service.py Invite-gated auth and session service
 packages/core/jstudy_core/citations.py Evidence item and citation-link contracts
 packages/core/jstudy_core/cli.py Legacy CLI entrypoint implementation
 packages/core/jstudy_core/jobs.py MVP job lifecycle store with JSON persistence
@@ -73,7 +79,7 @@ docs/
 Run from the repository root:
 
 ```powershell
-python -m py_compile web_mvp.py mvp_runner.py apps/api/jstudy_api/app.py apps/api/jstudy_api/ui.py apps/api/jstudy_api/admin_ui.py packages/core/jstudy_core/admin_settings.py packages/core/jstudy_core/scenario_router.py packages/core/jstudy_core/parser_profile_router.py packages/core/jstudy_core/pipeline.py packages/core/jstudy_core/cli.py packages/core/jstudy_core/citations.py packages/core/jstudy_core/jobs.py packages/core/jstudy_core/providers.py packages/core/jstudy_core/settings.py packages/core/jstudy_core/storage.py packages/parsers/mineru_parser.py packages/parsers/pymupdf_parser.py
+python -m py_compile web_mvp.py mvp_runner.py apps/api/jstudy_api/app.py apps/api/jstudy_api/ui.py apps/api/jstudy_api/admin_ui.py packages/core/jstudy_core/admin_settings.py packages/core/jstudy_core/auth_db.py packages/core/jstudy_core/auth_models.py packages/core/jstudy_core/auth_service.py packages/core/jstudy_core/scenario_router.py packages/core/jstudy_core/parser_profile_router.py packages/core/jstudy_core/pipeline.py packages/core/jstudy_core/cli.py packages/core/jstudy_core/citations.py packages/core/jstudy_core/jobs.py packages/core/jstudy_core/providers.py packages/core/jstudy_core/settings.py packages/core/jstudy_core/storage.py packages/parsers/mineru_parser.py packages/parsers/pymupdf_parser.py
 python -m unittest discover -s tests -v
 ```
 
@@ -95,6 +101,8 @@ The admin settings directory defaults to `data/settings` and can be moved with `
 `JSTUDY_JOBS_DIR`, `JSTUDY_SOUL_PATH`, and `JSTUDY_MNEMONICS_PATH` can be used to move runtime data and domain templates outside the repository in Docker or on a server.
 `JSTUDY_MAX_PDF_BYTES` controls the upload limit for courseware PDFs; the default is 50 MB.
 `JSTUDY_JOB_RETENTION_HOURS` is optional. The application default is `0`, which disables cleanup, but public pilot deployments should set `72` or `168` so uploaded PDFs and generated artifacts do not accumulate indefinitely.
+`DATABASE_URL` controls auth persistence. It defaults to a local SQLite file in development; Docker Compose uses Postgres.
+Set `JSTUDY_SESSION_SECRET` before deployment. Use `JSTUDY_COOKIE_SECURE=true` when serving over HTTPS.
 
 Health check:
 
@@ -117,6 +125,17 @@ Use `/api/readiness?probe_provider=true` during deployment to run a live Silicon
 Job status is persisted in `JSTUDY_JOBS_DIR/jobs.json`; jobs that were queued or running during a server restart are marked failed because the MVP has no separate worker queue yet.
 Completed jobs expose retrieval diagnostics at `/api/jobs/{job_id}/trace`.
 
+User auth:
+
+```text
+POST /api/auth/register
+POST /api/auth/login
+POST /api/auth/logout
+GET /api/auth/me
+```
+
+Registration requires a reusable invite code created from the admin settings page or invite-code API.
+
 Admin settings:
 
 ```text
@@ -124,6 +143,10 @@ GET /admin/settings
 GET /api/admin/settings
 PUT /api/admin/settings
 POST /api/admin/settings/test/{llm|embedding|search}
+GET /api/admin/invite-codes
+POST /api/admin/invite-codes
+PATCH /api/admin/invite-codes/{invite_id}
+GET /api/admin/invite-codes/{invite_id}/uses
 ```
 
 The first admin settings version stores model catalog, RAG settings, web-search settings, parser settings, parser-profile visibility, content-pack scenarios and paths, and `mnemonics.json`. Structured mnemonic JSON is rendered back to Markdown for the existing prompt flow.
@@ -148,7 +171,7 @@ Then open:
 http://127.0.0.1:8765/
 ```
 
-Backend Docker Compose scaffold:
+Backend Docker Compose scaffold with Postgres:
 
 ```powershell
 docker compose -f deploy/docker-compose/api.compose.yml config

@@ -30,6 +30,15 @@ class DeploymentFilesTest(unittest.TestCase):
         self.assertIn("docker compose", runbook_text)
         self.assertIn("data/", gitignore_text)
 
+    def test_compose_includes_postgres_and_auth_environment(self):
+        compose_file = ROOT / "deploy" / "docker-compose" / "api.compose.yml"
+
+        compose_text = compose_file.read_text(encoding="utf-8")
+
+        self.assertIn("postgres:", compose_text)
+        self.assertIn("DATABASE_URL", compose_text)
+        self.assertIn("JSTUDY_SESSION_SECRET", compose_text)
+
 
 if __name__ == "__main__":
     unittest.main()

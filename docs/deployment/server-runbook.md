@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This runbook describes the intended single-server deployment path for J-Study. It is written before the full frontend and user-auth implementation so deployment choices stay reproducible instead of becoming a set of one-off shell commands.
+This runbook describes the intended single-server deployment path for J-Study. It keeps the pilot portable so the same Docker Compose structure can move from the current Tencent Cloud server to a formal server later.
 
 ## Deployment Principles
 
@@ -25,9 +25,10 @@ Current backend-only phase:
 
 ```text
 jstudy-api
+postgres
 ```
 
-Auth/frontend deployment phase:
+Frontend deployment phase:
 
 ```text
 reverse-proxy
@@ -71,9 +72,9 @@ Recommended directories:
 
 ## Environment Variables
 
-The deployment `.env` should start from `.env.example` and add auth/database settings after they exist.
+The deployment `.env` should start from `.env.example`.
 
-Current backend variables:
+Backend variables:
 
 ```text
 SILICONFLOW_API_KEY=
@@ -88,11 +89,6 @@ JSTUDY_SOUL_PATH=/app/soul.md
 JSTUDY_MNEMONICS_PATH=/app/mnemonics.md
 JSTUDY_MAX_PDF_BYTES=52428800
 JSTUDY_JOB_RETENTION_HOURS=72
-```
-
-Auth/database variables to add with the user system:
-
-```text
 DATABASE_URL=postgresql+psycopg://jstudy:password@postgres:5432/jstudy
 POSTGRES_DB=jstudy
 POSTGRES_USER=jstudy
@@ -105,6 +101,8 @@ Rules:
 
 - Generate `JSTUDY_ADMIN_TOKEN`, `POSTGRES_PASSWORD`, and `JSTUDY_SESSION_SECRET` with high entropy.
 - Do not reuse local/dev secrets on the server.
+- Keep `DATABASE_URL`, `POSTGRES_DB`, `POSTGRES_USER`, and `POSTGRES_PASSWORD` consistent.
+- URL-encode reserved characters in the password portion of `DATABASE_URL`.
 - Keep a copy of the production `.env` outside the repository and include it in backup procedures.
 
 ## Data Volumes
@@ -121,6 +119,8 @@ Auth phase mounted data:
 ```text
 data/postgres   Postgres database files
 ```
+
+The API creates the current SQLModel tables on startup. Add Alembic migrations before making destructive schema changes.
 
 Retention:
 
@@ -141,7 +141,7 @@ Backend-only compose exists at:
 deploy/docker-compose/api.compose.yml
 ```
 
-After auth/frontend work, add a full compose file or extend the existing deployment:
+After frontend work, add a full compose file or extend the existing deployment:
 
 ```text
 deploy/docker-compose/app.compose.yml
@@ -175,12 +175,13 @@ Caddy is recommended for the first server because it can manage HTTPS automatica
 
 ## First Backend-Only Deployment
 
-Use this only for backend smoke testing before auth/frontend is ready:
+Use this for backend smoke testing before the separate frontend and reverse proxy are ready:
 
 ```bash
 cd /opt/jstudy/app
 cp .env.example .env
-# edit .env: set SILICONFLOW_API_KEY and JSTUDY_ADMIN_TOKEN
+# edit .env: set SILICONFLOW_API_KEY, JSTUDY_ADMIN_TOKEN, POSTGRES_PASSWORD,
+# DATABASE_URL, and JSTUDY_SESSION_SECRET
 docker compose -f deploy/docker-compose/api.compose.yml up -d --build
 ```
 
@@ -193,23 +194,23 @@ curl "http://127.0.0.1:8765/api/readiness?probe_provider=true"
 ```
 
 The readiness response must be `ready` before pilot users submit PDFs.
+After startup, create at least one reusable invite code from `/admin/settings?admin_token=...` before testing registration.
 
-## First Full Deployment After Auth/Frontend
+## First Full Deployment After Frontend
 
 Planned sequence:
 
 1. Pull the reviewed branch or release tag.
 2. Create or update `.env`.
 3. Start Postgres.
-4. Run database migrations.
-5. Start backend.
-6. Verify `/api/health` and `/api/readiness`.
-7. Create at least one invite code from the admin panel.
-8. Start frontend.
-9. Start or reload reverse proxy.
-10. Verify HTTPS domain routes.
-11. Register a test user with the invite code.
-12. Upload a small test PDF and verify citation preview.
+4. Start backend.
+5. Verify `/api/health` and `/api/readiness`.
+6. Create at least one invite code from the admin panel.
+7. Start frontend.
+8. Start or reload reverse proxy.
+9. Verify HTTPS domain routes.
+10. Register a test user with the invite code.
+11. Upload a small test PDF and verify citation preview.
 
 Expected commands will be finalized after `app.compose.yml` and migrations exist.
 
@@ -298,7 +299,7 @@ Add external uptime monitoring after the domain is public.
 Before public testing:
 
 - `JSTUDY_ADMIN_TOKEN` is set.
-- `JSTUDY_SESSION_SECRET` is set after auth exists.
+- `JSTUDY_SESSION_SECRET` is set.
 - HTTPS is enabled.
 - Cookies are `HttpOnly`, `Secure`, and `SameSite=Lax`.
 - Invite registration is required.
@@ -326,9 +327,7 @@ If object storage has been introduced, migrate objects before switching DNS and 
 
 ## Open Items Before Full Deployment
 
-- Implement user auth and invite-code management.
-- Add Postgres service and migrations.
-- Move job ownership into user-aware persistence.
 - Add frontend container after `apps/web` exists.
 - Add reverse proxy config.
-- Finalize exact deployment commands after the compose file exists.
+- Add Alembic migrations before the schema needs versioned changes.
+- Move uploaded PDFs and generated artifacts to object storage when pilot retention is no longer enough.
