@@ -112,6 +112,31 @@ def _runtime_default() -> dict[str, Any]:
                 "local_cli_path": "",
             },
         },
+        "parser_profiles": {
+            "default_profile_id": "fast",
+            "profiles": [
+                {
+                    "id": "fast",
+                    "display_name": "Fast parsing",
+                    "backend": "pymupdf",
+                    "enabled": True,
+                    "visible_to_users": True,
+                    "requires_admin": False,
+                    "tier": "free",
+                    "estimated_wait": "Short",
+                },
+                {
+                    "id": "quality",
+                    "display_name": "Quality parsing",
+                    "backend": "mineru",
+                    "enabled": False,
+                    "visible_to_users": False,
+                    "requires_admin": True,
+                    "tier": "internal",
+                    "estimated_wait": "Longer",
+                },
+            ],
+        },
         "jobs": {
             "max_pdf_bytes": 50 * 1024 * 1024,
             "job_retention_hours": 0,
@@ -123,6 +148,7 @@ def _content_pack_default() -> dict[str, Any]:
     return {
         "version": 1,
         "active_pack_id": "medicine-default",
+        "default_scenario_id": "medicine-default",
         "packs": [
             {
                 "id": "medicine-default",
@@ -133,6 +159,28 @@ def _content_pack_default() -> dict[str, Any]:
                 "mnemonics_json_path": f"{DEFAULT_SETTINGS_DIR_NAME}/mnemonics.json",
                 "enabled": True,
             }
+        ],
+        "scenarios": [
+            {
+                "id": "medicine-default",
+                "display_name": "Medicine",
+                "subject": "medicine",
+                "enabled": True,
+                "content_pack_id": "medicine-default",
+                "prompt_profile": "medicine-default",
+                "rag_profile": "default",
+                "domain_rules": ["medicine"],
+            },
+            {
+                "id": "general-default",
+                "display_name": "General",
+                "subject": "general",
+                "enabled": True,
+                "content_pack_id": "medicine-default",
+                "prompt_profile": "general-default",
+                "rag_profile": "default",
+                "domain_rules": [],
+            },
         ],
     }
 
@@ -186,6 +234,17 @@ def _bool(value: Any, default: bool = False) -> bool:
     if text in {"0", "false", "no", "off"}:
         return False
     return default
+
+
+def _choice(value: Any, allowed: set[str], default: str) -> str:
+    text = _string(value)
+    return text if text in allowed else default
+
+
+def _string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item).strip() for item in value if str(item).strip()]
 
 
 def _active_profile(catalog: dict[str, Any], service_name: str) -> dict[str, Any] | None:
@@ -292,6 +351,10 @@ def _normalize_runtime(settings: dict[str, Any]) -> dict[str, Any]:
         **default["jobs"],
         **(runtime.get("jobs", {}) if isinstance(runtime.get("jobs"), dict) else {}),
     }
+    parser_profiles = _normalize_parser_profiles(
+        runtime.get("parser_profiles", default["parser_profiles"]),
+        default["parser_profiles"],
+    )
     chunk_max_chars = _int(rag.get("chunk_max_chars"), 512, minimum=1)
     chunk_overlap = _int(rag.get("chunk_overlap"), 50, minimum=0)
     if chunk_overlap >= chunk_max_chars:
@@ -317,11 +380,40 @@ def _normalize_runtime(settings: dict[str, Any]) -> dict[str, Any]:
                 "local_cli_path": _string(mineru.get("local_cli_path")),
             },
         },
+        "parser_profiles": parser_profiles,
         "jobs": {
             "max_pdf_bytes": _int(jobs.get("max_pdf_bytes"), 50 * 1024 * 1024, minimum=1),
             "job_retention_hours": _int(jobs.get("job_retention_hours"), 0, minimum=0),
         },
     }
+
+
+def _normalize_parser_profiles(settings: Any, default: dict[str, Any]) -> dict[str, Any]:
+    source = settings if isinstance(settings, dict) else default
+    raw_profiles = source.get("profiles") if isinstance(source.get("profiles"), list) else default["profiles"]
+    profiles = []
+    for index, profile in enumerate(raw_profiles):
+        if not isinstance(profile, dict):
+            continue
+        profile_id = _string(profile.get("id")) or f"parser-profile-{index + 1}"
+        profiles.append(
+            {
+                "id": profile_id,
+                "display_name": _string(profile.get("display_name")) or profile_id,
+                "backend": _choice(profile.get("backend"), {"pymupdf", "mineru"}, "pymupdf"),
+                "enabled": _bool(profile.get("enabled"), True),
+                "visible_to_users": _bool(profile.get("visible_to_users"), False),
+                "requires_admin": _bool(profile.get("requires_admin"), False),
+                "tier": _choice(profile.get("tier"), {"free", "paid", "internal"}, "free"),
+                "estimated_wait": _string(profile.get("estimated_wait")),
+            }
+        )
+    if not profiles:
+        profiles = default["profiles"]
+    default_profile_id = _string(source.get("default_profile_id")) or default["default_profile_id"]
+    if default_profile_id not in {profile["id"] for profile in profiles}:
+        default_profile_id = profiles[0]["id"]
+    return {"default_profile_id": default_profile_id, "profiles": profiles}
 
 
 def _normalize_content_pack(settings: dict[str, Any]) -> dict[str, Any]:
@@ -349,7 +441,40 @@ def _normalize_content_pack(settings: dict[str, Any]) -> dict[str, Any]:
     active_id = _string(content.get("active_pack_id")) or normalized_packs[0]["id"]
     if active_id not in {pack["id"] for pack in normalized_packs}:
         active_id = normalized_packs[0]["id"]
-    return {"version": 1, "active_pack_id": active_id, "packs": normalized_packs}
+    scenarios = _normalize_scenarios(content.get("scenarios"), default["scenarios"])
+    default_scenario_id = _string(content.get("default_scenario_id")) or default["default_scenario_id"]
+    scenario_ids = {scenario["id"] for scenario in scenarios if scenario["enabled"]}
+    if default_scenario_id not in scenario_ids:
+        default_scenario_id = next((scenario["id"] for scenario in scenarios if scenario["enabled"]), scenarios[0]["id"])
+    return {
+        "version": 1,
+        "active_pack_id": active_id,
+        "default_scenario_id": default_scenario_id,
+        "packs": normalized_packs,
+        "scenarios": scenarios,
+    }
+
+
+def _normalize_scenarios(settings: Any, default: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    raw_scenarios = settings if isinstance(settings, list) and settings else default
+    scenarios = []
+    for index, scenario in enumerate(raw_scenarios):
+        if not isinstance(scenario, dict):
+            continue
+        scenario_id = _string(scenario.get("id")) or f"scenario-{index + 1}"
+        scenarios.append(
+            {
+                "id": scenario_id,
+                "display_name": _string(scenario.get("display_name")) or scenario_id,
+                "subject": _string(scenario.get("subject")) or "general",
+                "enabled": _bool(scenario.get("enabled"), True),
+                "content_pack_id": _string(scenario.get("content_pack_id")) or "medicine-default",
+                "prompt_profile": _string(scenario.get("prompt_profile")) or scenario_id,
+                "rag_profile": _string(scenario.get("rag_profile")) or "default",
+                "domain_rules": _string_list(scenario.get("domain_rules")),
+            }
+        )
+    return scenarios or default
 
 
 def _normalize_mnemonics(settings: dict[str, Any]) -> dict[str, Any]:

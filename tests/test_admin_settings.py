@@ -30,6 +30,32 @@ class AdminSettingsTest(unittest.TestCase):
             self.assertTrue((Path(tmp) / "settings" / "content_pack.json").is_file())
             self.assertTrue((Path(tmp) / "settings" / "mnemonics.json").is_file())
 
+    def test_content_pack_defaults_include_scenarios(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            service = AdminSettingsService(Path(tmp) / "settings")
+
+            payload = service.load_content_pack()
+
+        self.assertEqual(payload["default_scenario_id"], "medicine-default")
+        scenario_ids = {item["id"] for item in payload["scenarios"]}
+        self.assertIn("medicine-default", scenario_ids)
+        self.assertIn("general-default", scenario_ids)
+
+    def test_runtime_defaults_include_parser_profiles(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            service = AdminSettingsService(Path(tmp) / "settings")
+
+            payload = service.load_runtime()
+
+        profiles = payload["parser_profiles"]
+        self.assertEqual(profiles["default_profile_id"], "fast")
+        by_id = {item["id"]: item for item in profiles["profiles"]}
+        self.assertEqual(by_id["fast"]["backend"], "pymupdf")
+        self.assertTrue(by_id["fast"]["visible_to_users"])
+        self.assertEqual(by_id["quality"]["backend"], "mineru")
+        self.assertFalse(by_id["quality"]["visible_to_users"])
+        self.assertTrue(by_id["quality"]["requires_admin"])
+
     def test_public_payload_redacts_api_keys_but_marks_presence(self):
         with tempfile.TemporaryDirectory() as tmp:
             service = AdminSettingsService(Path(tmp) / "settings")
