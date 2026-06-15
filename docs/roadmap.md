@@ -44,6 +44,28 @@ Acceptance:
 - old root-level scripts are documented as compatibility shims
 - runtime settings can come from environment variables before server deployment - done for API key, model names, jobs directory, and template paths
 
+## Phase 1.5: User Auth and Invite Gate
+
+Goal: add the minimum user boundary before the full frontend is built.
+
+Deliverables:
+
+- Postgres-backed user persistence
+- email/password registration and login
+- reusable invite code required for registration
+- `email_verified` field reserved but not enforced
+- HTTP-only cookie session
+- admin-token-protected invite-code management
+- user-owned jobs and result access control
+
+Acceptance:
+
+- users can register only with an enabled invite code
+- one shared invite code can register multiple users
+- users can only see their own jobs and generated artifacts
+- admin invite management remains protected by `JSTUDY_ADMIN_TOKEN`
+- auth behavior is covered by automated tests before server deployment
+
 ## Phase 2: Frontend MVP
 
 Goal: replace the temporary built-in HTML with a real frontend.
@@ -52,6 +74,7 @@ Deliverables:
 
 - `apps/web` with Next.js
 - selected shadcn/ui template
+- login and registration pages
 - upload page
 - job progress state
 - generated Markdown reader
@@ -60,6 +83,7 @@ Deliverables:
 
 Acceptance:
 
+- unauthenticated users see the login/register flow
 - user can upload a PDF from the frontend
 - generated output displays cleanly
 - clicking "依据 E001" scrolls only the source preview area
@@ -153,7 +177,7 @@ Possible deliverables:
 - Redis queue
 - Postgres job store
 - object storage
-- user accounts and permissions
+- advanced user roles and permissions
 
 Acceptance:
 
