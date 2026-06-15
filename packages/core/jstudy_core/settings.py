@@ -76,6 +76,10 @@ class RuntimeSettings:
     rag_config: RagConfig = field(default_factory=RagConfig)
     parser_config: dict[str, Any] = field(default_factory=dict)
     content_pack: dict[str, Any] = field(default_factory=dict)
+    content_pack_config: dict[str, Any] = field(default_factory=dict)
+    default_scenario_id: str = "medicine-default"
+    scenarios: list[dict[str, Any]] = field(default_factory=list)
+    parser_profiles_config: dict[str, Any] = field(default_factory=dict)
     search_config: dict[str, Any] = field(default_factory=dict)
     max_pdf_bytes: int = DEFAULT_MAX_PDF_BYTES
     job_retention_hours: int = 0
@@ -122,6 +126,10 @@ class RuntimeSettings:
             rag_config=RagConfig(**runtime["rag"]),
             parser_config=runtime["parser"],
             content_pack=pack,
+            content_pack_config=content,
+            default_scenario_id=str(content.get("default_scenario_id") or content.get("active_pack_id") or "medicine-default"),
+            scenarios=list(content.get("scenarios", [])),
+            parser_profiles_config=dict(runtime.get("parser_profiles", {})),
             search_config=search_profile,
             max_pdf_bytes=env_int(MAX_PDF_BYTES_ENV, runtime["jobs"]["max_pdf_bytes"]),
             job_retention_hours=env_nonnegative_int(

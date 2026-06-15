@@ -84,6 +84,22 @@ class SettingsTest(unittest.TestCase):
         self.assertEqual(settings.soul_path, root / "content" / "soul.md")
         self.assertEqual(settings.mnemonics_path, root / "content" / "mnemonics.md")
 
+    def test_runtime_settings_exposes_scenario_and_parser_profile_config(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            service = AdminSettingsService(root / "data" / "settings")
+            content = service.load_content_pack()
+            content["default_scenario_id"] = "general-default"
+            service.save_content_pack(content)
+
+            with patch.dict(os.environ, {}, clear=True):
+                settings = RuntimeSettings.from_env(root)
+
+        self.assertEqual(settings.default_scenario_id, "general-default")
+        self.assertIn("medicine-default", {item["id"] for item in settings.scenarios})
+        self.assertEqual(settings.parser_profiles_config["default_profile_id"], "fast")
+        self.assertEqual(settings.content_pack_config["default_scenario_id"], "general-default")
+
     def test_runtime_environment_overrides_admin_json(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
