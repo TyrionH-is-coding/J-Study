@@ -58,6 +58,9 @@ INDEX_HTML = r"""<!doctype html>
       font-weight: 600;
     }
     input[type="file"],
+    input[type="email"],
+    input[type="password"],
+    input[type="text"],
     select {
       width: 100%;
       margin-top: 6px;
@@ -255,7 +258,27 @@ INDEX_HTML = r"""<!doctype html>
   <div class="workspace">
     <aside>
       <h1>J Study MVP</h1>
-      <form id="form">
+      <section id="authPanel">
+        <h2>Login</h2>
+        <form id="loginForm">
+          <label>Email</label>
+          <input name="email" type="email" autocomplete="email" required />
+          <label>Password</label>
+          <input name="password" type="password" autocomplete="current-password" required />
+          <button class="run" type="submit">Login</button>
+        </form>
+        <h2>Register</h2>
+        <form id="registerForm">
+          <label>Email</label>
+          <input name="email" type="email" autocomplete="email" required />
+          <label>Password</label>
+          <input name="password" type="password" autocomplete="new-password" required />
+          <label>Invite code</label>
+          <input name="invite_code" type="text" autocomplete="off" required />
+          <button class="run" type="submit">Register</button>
+        </form>
+      </section>
+      <form id="form" hidden>
         <label>课件 PDF</label>
         <input name="pdf" type="file" accept="application/pdf" required />
         <label>课程大纲</label>
@@ -281,7 +304,10 @@ INDEX_HTML = r"""<!doctype html>
     </section>
   </div>
   <script>
+    const authPanel = document.getElementById("authPanel");
     const form = document.getElementById("form");
+    const loginForm = document.getElementById("loginForm");
+    const registerForm = document.getElementById("registerForm");
     const run = document.getElementById("run");
     const statusBox = document.getElementById("status");
     const output = document.getElementById("output");
@@ -319,6 +345,58 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     loadOptions().catch(() => {});
+
+    function showAuthenticated(user) {
+      authPanel.hidden = true;
+      form.hidden = false;
+      statusBox.textContent = `Signed in as ${user.email}`;
+    }
+
+    function showSignedOut() {
+      authPanel.hidden = false;
+      form.hidden = true;
+      statusBox.textContent = "Sign in to upload";
+    }
+
+    async function loadSession() {
+      const res = await fetch("/api/auth/me");
+      if (!res.ok) {
+        showSignedOut();
+        return;
+      }
+      showAuthenticated(await res.json());
+    }
+
+    async function submitAuth(path, formEl) {
+      const payload = Object.fromEntries(new FormData(formEl));
+      const response = await fetch(path, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      const body = await response.json();
+      if (!response.ok) {
+        statusBox.innerHTML = `<span class="error">${escapeHtml(String(body.detail || "Authentication failed"))}</span>`;
+        return;
+      }
+      showAuthenticated(body);
+    }
+
+    loginForm.addEventListener("submit", event => {
+      event.preventDefault();
+      submitAuth("/api/auth/login", loginForm).catch(err => {
+        statusBox.innerHTML = `<span class="error">${escapeHtml(err.message)}</span>`;
+      });
+    });
+
+    registerForm.addEventListener("submit", event => {
+      event.preventDefault();
+      submitAuth("/api/auth/register", registerForm).catch(err => {
+        statusBox.innerHTML = `<span class="error">${escapeHtml(err.message)}</span>`;
+      });
+    });
+
+    loadSession().catch(showSignedOut);
 
     function evidenceButtons(ids, seenRefs) {
       return ids.map(id => {
@@ -521,6 +599,11 @@ INDEX_HTML = r"""<!doctype html>
       pdfPages.innerHTML = `<div class="empty">等待 PDF 预览</div>`;
       const res = await fetch("/api/generate", { method: "POST", body: new FormData(form) });
       const data = await res.json();
+      if (!res.ok) {
+        statusBox.innerHTML = `<span class="error">${escapeHtml(String(data.detail || "Request failed"))}</span>`;
+        run.disabled = false;
+        return;
+      }
       currentJob = data.job_id;
       poll(currentJob);
     });

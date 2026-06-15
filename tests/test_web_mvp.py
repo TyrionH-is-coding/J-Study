@@ -113,6 +113,12 @@ class WebMvpTest(unittest.TestCase):
         self.assertIn('name="scenario_id"', INDEX_HTML)
         self.assertIn('name="parser_profile_id"', INDEX_HTML)
 
+    def test_index_html_contains_auth_gate(self):
+        self.assertIn("/api/auth/me", INDEX_HTML)
+        self.assertIn("/api/auth/login", INDEX_HTML)
+        self.assertIn("/api/auth/register", INDEX_HTML)
+        self.assertIn('name="invite_code"', INDEX_HTML)
+
     def test_health_endpoint_reports_api_status(self):
         client = TestClient(create_app())
 
@@ -155,6 +161,11 @@ class WebMvpTest(unittest.TestCase):
         self.assertIn("defaultParserProfileId", ADMIN_SETTINGS_HTML)
         self.assertIn("qualityVisibleToUsers", ADMIN_SETTINGS_HTML)
         self.assertIn("qualityEnabled", ADMIN_SETTINGS_HTML)
+
+    def test_admin_settings_page_contains_invite_management(self):
+        self.assertIn("/api/admin/invite-codes", ADMIN_SETTINGS_HTML)
+        self.assertIn("inviteCodeInput", ADMIN_SETTINGS_HTML)
+        self.assertIn("createInviteBtn", ADMIN_SETTINGS_HTML)
 
     def test_admin_settings_endpoint_requires_token_when_configured(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -128,6 +128,25 @@ ADMIN_SETTINGS_HTML = r"""<!doctype html>
       font-size: 12px;
       white-space: pre-wrap;
     }
+    .invite-list {
+      display: grid;
+      gap: 10px;
+      margin-top: 12px;
+    }
+    .invite-row {
+      display: grid;
+      gap: 8px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--soft);
+      padding: 10px;
+    }
+    .invite-meta {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.5;
+      word-break: break-word;
+    }
     @media (max-width: 960px) {
       main { grid-template-columns: 1fr; padding: 16px; }
       header { align-items: flex-start; flex-direction: column; padding: 16px; }
@@ -228,6 +247,19 @@ ADMIN_SETTINGS_HTML = r"""<!doctype html>
         </div>
       </section>
       <section>
+        <h2>Invite Codes</h2>
+        <div class="grid">
+          <label class="full">Code <input id="inviteCodeInput" autocomplete="off"></label>
+          <label class="full">Label <input id="inviteLabelInput"></label>
+        </div>
+        <div class="toolbar" style="margin-top:14px">
+          <button class="secondary" id="createInviteBtn" type="button">Create Invite</button>
+          <button class="secondary" id="reloadInvitesBtn" type="button">Reload Invites</button>
+        </div>
+        <div class="invite-list" id="inviteCodes">Invite codes appear here.</div>
+        <pre id="inviteCodeUses">Invite usage appears here.</pre>
+      </section>
+      <section>
         <h2>Mnemonics JSON</h2>
         <h3>JSON is the management source; Markdown is rendered for prompts.</h3>
         <textarea id="mnemonicsJson" spellcheck="false"></textarea>
@@ -248,10 +280,18 @@ ADMIN_SETTINGS_HTML = r"""<!doctype html>
     const el = Object.fromEntries(ids.map(id => [id, document.getElementById(id)]));
     const statusBox = document.getElementById("status");
     const diagnostics = document.getElementById("diagnostics");
+    const inviteCodeInput = document.getElementById("inviteCodeInput");
+    const inviteLabelInput = document.getElementById("inviteLabelInput");
+    const inviteCodes = document.getElementById("inviteCodes");
+    const inviteCodeUses = document.getElementById("inviteCodeUses");
     let settings = null;
 
     function apiPath(path) {
       return `${path}${window.location.search || ""}`;
+    }
+
+    function escapeHtml(value) {
+      return String(value).replace(/[&<>"']/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
     }
 
     function setStatus(text, error = false) {
@@ -333,12 +373,76 @@ ADMIN_SETTINGS_HTML = r"""<!doctype html>
       el.mnemonicsJson.value = JSON.stringify(settings.mnemonics, null, 2);
     }
 
+    function renderInviteCodes(items) {
+      if (!items.length) {
+        inviteCodes.textContent = "No invite codes.";
+        return;
+      }
+      inviteCodes.innerHTML = items.map(item => {
+        const enabledText = item.enabled ? "Enabled" : "Disabled";
+        const toggleText = item.enabled ? "Disable" : "Enable";
+        const usageCount = Number(item.usage_count || 0);
+        return `
+          <div class="invite-row">
+            <strong>${escapeHtml(item.code)}</strong>
+            <div class="invite-meta">${escapeHtml(item.label || "No label")} | ${enabledText} | uses: ${usageCount}</div>
+            <div class="toolbar">
+              <button class="secondary" data-invite-toggle="${escapeHtml(item.id)}" data-next-enabled="${item.enabled ? "false" : "true"}" type="button">${toggleText}</button>
+              <button class="secondary" data-invite-uses="${escapeHtml(item.id)}" type="button">View Uses</button>
+            </div>
+          </div>
+        `;
+      }).join("");
+    }
+
+    async function loadInviteCodes() {
+      const response = await fetch(apiPath("/api/admin/invite-codes"));
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.detail || `HTTP ${response.status}`);
+      renderInviteCodes(payload);
+    }
+
+    async function createInviteCode() {
+      const code = inviteCodeInput.value.trim();
+      if (!code) throw new Error("Invite code is required");
+      const response = await fetch(apiPath("/api/admin/invite-codes"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code, label: inviteLabelInput.value.trim() })
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.detail || `HTTP ${response.status}`);
+      inviteCodeInput.value = "";
+      inviteLabelInput.value = "";
+      inviteCodeUses.textContent = "Invite usage appears here.";
+      await loadInviteCodes();
+    }
+
+    async function setInviteEnabled(inviteId, enabled) {
+      const response = await fetch(apiPath(`/api/admin/invite-codes/${inviteId}`), {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled })
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.detail || `HTTP ${response.status}`);
+      await loadInviteCodes();
+    }
+
+    async function loadInviteUses(inviteId) {
+      const response = await fetch(apiPath(`/api/admin/invite-codes/${inviteId}/uses`));
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.detail || `HTTP ${response.status}`);
+      inviteCodeUses.textContent = JSON.stringify(payload, null, 2);
+    }
+
     async function load() {
       setStatus("Loading...");
       const response = await fetch(apiPath("/api/admin/settings"));
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       settings = await response.json();
       render();
+      await loadInviteCodes();
       setStatus("Loaded");
     }
 
@@ -415,6 +519,20 @@ ADMIN_SETTINGS_HTML = r"""<!doctype html>
 
     document.getElementById("reloadBtn").addEventListener("click", () => load().catch(err => setStatus(err.message, true)));
     document.getElementById("saveBtn").addEventListener("click", () => save().catch(err => setStatus(err.message, true)));
+    document.getElementById("createInviteBtn").addEventListener("click", () => createInviteCode().catch(err => setStatus(err.message, true)));
+    document.getElementById("reloadInvitesBtn").addEventListener("click", () => loadInviteCodes().catch(err => setStatus(err.message, true)));
+    inviteCodes.addEventListener("click", event => {
+      const toggle = event.target.closest("[data-invite-toggle]");
+      if (toggle) {
+        setInviteEnabled(toggle.dataset.inviteToggle, toggle.dataset.nextEnabled === "true")
+          .catch(err => setStatus(err.message, true));
+        return;
+      }
+      const uses = event.target.closest("[data-invite-uses]");
+      if (uses) {
+        loadInviteUses(uses.dataset.inviteUses).catch(err => setStatus(err.message, true));
+      }
+    });
     document.querySelectorAll("[data-test]").forEach(button => {
       button.addEventListener("click", () => runTest(button.dataset.test).catch(err => {
         diagnostics.textContent = err.message;
