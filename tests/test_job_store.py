@@ -78,6 +78,25 @@ class JobStoreTest(unittest.TestCase):
         self.assertEqual(restored.quality["status"], "pass")
         self.assertEqual(restored.error, "")
 
+    def test_job_store_persists_routing_metadata(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store_path = Path(tmp) / "jobs.json"
+            store = JobStore(store_path=store_path)
+            store.create(
+                job_id="job-routing",
+                pdf_path=Path("input/lecture.pdf"),
+                output_dir=Path("output"),
+                metadata={
+                    "scenario": {"resolved_scenario_id": "medicine-default"},
+                    "parser_profile": {"resolved_parser_profile_id": "fast"},
+                },
+            )
+
+            restored = JobStore(store_path=store_path).require("job-routing")
+
+        self.assertEqual(restored.metadata["scenario"]["resolved_scenario_id"], "medicine-default")
+        self.assertEqual(restored.metadata["parser_profile"]["resolved_parser_profile_id"], "fast")
+
     def test_job_store_marks_interrupted_jobs_failed_after_restart(self):
         with tempfile.TemporaryDirectory() as tmp:
             store_path = Path(tmp) / "jobs.json"

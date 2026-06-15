@@ -34,6 +34,7 @@ class JobRecord:
     outline_path: Path | None = None
     outputs: dict[str, Path] = field(default_factory=dict)
     quality: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
     error: str = ""
     created_at: str = field(default_factory=utc_now_iso)
     updated_at: str = field(default_factory=utc_now_iso)
@@ -47,6 +48,7 @@ class JobRecord:
             "outline_path": str(self.outline_path) if self.outline_path else None,
             "outputs": {key: str(path) for key, path in self.outputs.items()},
             "quality": self.quality,
+            "metadata": self.metadata,
             "error": self.error,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
@@ -65,6 +67,7 @@ class JobRecord:
             outline_path=Path(outline_path) if outline_path else None,
             outputs={key: Path(path) for key, path in payload.get("outputs", {}).items()},
             quality=payload.get("quality", {}),
+            metadata=payload.get("metadata", {}),
             error=payload.get("error", ""),
             created_at=created_at,
             updated_at=str(payload.get("updated_at") or created_at),
@@ -83,6 +86,7 @@ class JobStore:
         pdf_path: Path,
         output_dir: Path,
         outline_path: Path | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> JobRecord:
         record = JobRecord(
             job_id=job_id,
@@ -90,6 +94,7 @@ class JobStore:
             pdf_path=pdf_path,
             outline_path=outline_path,
             output_dir=output_dir,
+            metadata=metadata or {},
         )
         self._jobs[job_id] = record
         self._save()
