@@ -654,7 +654,7 @@ INDEX_HTML = r"""<!doctype html>
         downloadBtn.hidden = false;
         statusBox.textContent = `已完成  (${jobId})`;
       } catch {
-        statusBox.innerHTML = `<span class="error">加载失败，可能会话已过期</span>`;
+        statusBox.innerHTML = `<span class="error">加载失败，请刷新页面重新登录</span>`;
       }
     }
 
@@ -923,16 +923,18 @@ INDEX_HTML = r"""<!doctype html>
         statusBox.textContent = `状态：${job.status}  (${jobId})`;
       }
       if (job.status === "completed") {
-        const [outRes, evidenceRes, pdfInfoRes] = await Promise.all([
-          fetch(job.output_url),
-          fetch(job.evidence_url),
-          fetch(job.pdf_info_url)
-        ]);
-        const out = await outRes.json();
-        const evidence = await evidenceRes.json();
-        const pdfInfo = await pdfInfoRes.json();
-        evidenceLinks = evidence.evidence_links || [];
-        output.innerHTML = renderMarkdown(out.markdown);
+        try {
+          const [outRes, evidenceRes, pdfInfoRes] = await Promise.all([
+            fetch(job.output_url),
+            fetch(job.evidence_url),
+            fetch(job.pdf_info_url)
+          ]);
+          if (!outRes.ok) { statusBox.innerHTML = `<span class="error">获取输出失败 (${outRes.status})</span>`; run.disabled = false; return; }
+          const out = await outRes.json();
+          const evidence = await evidenceRes.json();
+          const pdfInfo = await pdfInfoRes.json();
+          evidenceLinks = evidence.evidence_links || [];
+          output.innerHTML = renderMarkdown(out.markdown);
         // Quality badge — insert before first heading or at top
         if (job.quality && job.quality.status) {
           const badge = document.createElement("span");
@@ -951,6 +953,11 @@ INDEX_HTML = r"""<!doctype html>
         run.disabled = false;
         loadHistory();
         return;
+        } catch (e) {
+          statusBox.innerHTML = `<span class="error">渲染失败: ${escapeHtml(e.message || "未知错误")}</span>`;
+          run.disabled = false;
+          return;
+        }
       }
       if (job.status === "failed") {
         statusBox.innerHTML = `<span class="error">${escapeHtml(job.error || "生成失败")}</span>`;
