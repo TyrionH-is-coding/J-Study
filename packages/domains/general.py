@@ -14,78 +14,50 @@ class StudyQuery:
     required_any: tuple[str, ...] = ()
 
 
-FALLBACK_TOPICS = ("医学", "核心概念", "机制", "分类", "诊断", "治疗", "检查", "考点")
-STOP_TERMS = {
-    "第一章",
-    "第二章",
-    "第三章",
-    "第四章",
-    "第五章",
-    "第六章",
-    "第七章",
-    "第八章",
-    "第九章",
-    "第十章",
-    "绪论",
-    "目录",
-    "课件",
-    "课程",
-    "学习目标",
-    "教学目标",
-    "重点",
-    "难点",
-    "小结",
-}
+FALLBACK_TOPICS = ("核心概念", "主要内容", "重点")
+STOP_TERMS: set[str] = set()
 
 
 def build_study_queries(source_text: str = "", outline: str = "") -> list[StudyQuery]:
-    """Build RAG queries from the current upload instead of a fixed lecture topic."""
-
-    topics = extract_study_topics(source_text=source_text, outline=outline)
+    topics = _extract_topics(source_text=source_text, outline=outline)
     topic_text = " ".join(topics)
     required_any = tuple(topics[:8])
 
     return [
         StudyQuery(
             "overview",
-            "体系概览",
-            f"{topic_text} 课程结构 体系概览 核心概念 总结",
+            "概述",
+            f"{topic_text} 课程结构 体系概览 核心概念 总述",
             required_any,
         ),
         StudyQuery(
             "key_concepts",
             "核心概念",
-            f"{topic_text} 定义 概念 特点 组成 分类",
+            f"{topic_text} 定义 概念 原理 要点",
             required_any,
         ),
         StudyQuery(
-            "mechanisms",
-            "机制与流程",
-            f"{topic_text} 机制 原理 流程 步骤 调控 发生发展",
+            "classification",
+            "分类与对比",
+            f"{topic_text} 分类 比较 区别 维度 类型",
             required_any,
         ),
         StudyQuery(
-            "comparisons",
-            "分类与鉴别",
-            f"{topic_text} 分类 比较 区别 鉴别 表格 易混点",
+            "process",
+            "流程与步骤",
+            f"{topic_text} 流程 步骤 过程 方法 操作",
             required_any,
         ),
         StudyQuery(
-            "clinical_lab",
-            "临床与检查",
-            f"{topic_text} 临床表现 诊断 检查 实验 治疗 预防",
-            required_any,
-        ),
-        StudyQuery(
-            "exam_review",
-            "复习与考点",
-            f"{topic_text} 高频考点 记忆 易错点 总结 复习",
+            "summary",
+            "要点总结",
+            f"{topic_text} 重点 结论 关键点 总结 应用",
             required_any,
         ),
     ]
 
 
-def extract_study_topics(source_text: str = "", outline: str = "", limit: int = 12) -> list[str]:
+def _extract_topics(source_text: str = "", outline: str = "", limit: int = 12) -> list[str]:
     outline_terms = _topic_candidates(outline)
     source_terms = _topic_candidates(source_text)
     ranked_source_terms = [term for term, _count in Counter(source_terms).most_common(limit * 2)]
@@ -141,62 +113,6 @@ def _dedupe_terms(terms: list[str]) -> list[str]:
     return result
 
 
-def parse_mnemonics(text: str) -> list[dict[str, Any]]:
-    blocks = [block.strip() for block in re.split(r"(?m)^---\s*$", text) if block.strip()]
-    mnemonics: list[dict[str, Any]] = []
-
-    for block in blocks:
-        item: dict[str, Any] = {}
-        for line in block.splitlines():
-            if ":" not in line:
-                continue
-            key, value = line.split(":", 1)
-            item[key.strip()] = value.strip()
-
-        if "keywords" in item:
-            item["keywords"] = [
-                keyword.strip()
-                for keyword in str(item["keywords"]).split(",")
-                if keyword.strip()
-            ]
-
-        if item.get("id") and item.get("content"):
-            item.setdefault("source", "待审核候选")
-            item.setdefault("keywords", [])
-            mnemonics.append(item)
-
-    return mnemonics
-
-
-def retrieve_mnemonics(
-    query: str,
-    mnemonics: list[dict[str, Any]],
-    limit: int = 5,
-) -> list[dict[str, Any]]:
-    scored: list[dict[str, Any]] = []
-    query_text = query.lower()
-
-    for item in mnemonics:
-        score = 0
-        for keyword in item.get("keywords", []):
-            if str(keyword).lower() in query_text:
-                score += 3
-
-        title = str(item.get("title", "")).lower()
-        content = str(item.get("content", "")).lower()
-        if title and title in query_text:
-            score += 2
-        if content and any(token in content for token in query_text.split()[:20]):
-            score += 1
-
-        if score > 0:
-            copied = dict(item)
-            copied["score"] = score
-            scored.append(copied)
-
-    return sorted(scored, key=lambda row: (-int(row["score"]), str(row["id"])))[:limit]
-
-
 def build_generation_prompt(
     soul: str,
     evidence: list[dict[str, Any]],
@@ -224,23 +140,18 @@ def build_generation_prompt(
         )
         evidence_blocks.append(f"### {title}\n\n{body}")
     evidence_text = "\n\n".join(evidence_blocks)
-    mnemonic_text = "\n".join(
-        f"- {item['title']}（{item['source']}）：{item['content']}"
-        for item in mnemonics
-    ) or "无命中口诀。"
+
     outline_text = outline.strip()
     outline_block = (
         f"下面是用户上传的课程大纲参考；如果它和课件证据冲突，以课件证据为准，但组织顺序优先参考大纲：\n{outline_text[:8000]}"
         if outline_text
-        else "用户未上传课程大纲，本次按课件严格模式组织。"
+        else "用户未上传课程大纲，按课件顺序组织。"
     )
 
-    system = (
-        "你是面向医学生的课件整理助手。严格遵守用户提供的 soul.md。"
-        "正文应像高质量学习资料，不要展示工程调试痕迹。"
-    )
+    system = "你是面向学生的课件整理助手。严格遵守用户提供的 soul。正文应像高质量学习资料，不要展示工程调试痕迹。"
+
     user = f"""
-下面是 soul.md 规则：
+下面是 soul 规则：
 
 {soul.replace("{mode}", mode_display)}
 
@@ -252,22 +163,14 @@ def build_generation_prompt(
 
 {outline_block}
 
-下面是口诀库检索命中。口诀不是事实来源，必须按来源状态标注。
-
-{mnemonic_text}
-
-请基于以上内容生成一份单课件 MVP 学习资料。
+请基于以上内容生成一份学习资料。
 
 硬性要求：
-1. 使用“课件严格模式”。
-2. 输出 Markdown。
-3. 使用表格、Directory tree、竖向流程箭头三种形式，但不要为了形式而形式。
-4. 关键知识点附近保留隐藏证据注释，例如 `<!-- evidence: E001 E002 -->`。
-5. 缩写第一次出现必须写中文名、英文全称和缩写。
-6. 口诀只在确实相关的位置出现。口诀来源必须用学生可见的正文标注，例如“来源：待审核候选”；不要用 HTML 注释隐藏口诀来源。
-7. 每个主要小节都要尽量引用本小节对应 evidence；不要把一个 evidence 挪去支撑无关小节。
-8. 关键鉴别表只能使用 evidence 明确出现的鉴别点；不要补写 evidence 中没有出现的糖发酵结果、年龄分布、流行病学细节或额外检查项。
-9. 不要写“根据证据片段”“本 MVP”等工程化表达。
+1. 输出 Markdown。
+2. 遵守当前模式（{mode_display}）的规则。
+3. 关键知识点附近保留隐藏证据注释，例如 `<!-- evidence: E001 E002 -->`。
+4. 缩写第一次出现必须写全称。
+5. 不要写"根据证据片段""本 MVP"等工程化表达。
 """
     return [{"role": "system", "content": system}, {"role": "user", "content": user}]
 
@@ -292,7 +195,6 @@ def audit_section_citations(markdown: str) -> dict[str, Any]:
         body = markdown[body_start:body_end]
         if not body.strip():
             continue
-
         section_count += 1
         if extract_evidence_refs(body):
             cited_section_count += 1
@@ -317,54 +219,44 @@ def audit_output_quality(markdown: str, evidence: list[dict[str, Any]]) -> dict[
     issues: list[dict[str, Any]] = []
 
     if not referenced_ids:
-        issues.append(
-            {
-                "code": "missing_evidence_refs",
-                "severity": "error",
-                "message": "No hidden evidence comments were found in the generated markdown.",
-            }
-        )
+        issues.append({
+            "code": "missing_evidence_refs",
+            "severity": "error",
+            "message": "No hidden evidence comments were found in the generated markdown.",
+        })
     if unknown_refs:
-        issues.append(
-            {
-                "code": "unknown_evidence_refs",
-                "severity": "error",
-                "message": "Generated markdown references evidence ids that do not exist.",
-                "ids": unknown_refs,
-            }
-        )
+        issues.append({
+            "code": "unknown_evidence_refs",
+            "severity": "error",
+            "message": "Generated markdown references evidence ids that do not exist.",
+            "ids": unknown_refs,
+        })
 
     engineering_terms = ["MVP", "根据证据片段", "证据片段", "工程"]
     matched_terms = [term for term in engineering_terms if term in markdown]
     if matched_terms:
-        issues.append(
-            {
-                "code": "engineering_language",
-                "severity": "error",
-                "message": "Generated markdown contains implementation-facing wording.",
-                "terms": matched_terms,
-            }
-        )
+        issues.append({
+            "code": "engineering_language",
+            "severity": "error",
+            "message": "Generated markdown contains implementation-facing wording.",
+            "terms": matched_terms,
+        })
 
     if unused_evidence:
-        issues.append(
-            {
-                "code": "unused_evidence",
-                "severity": "warning",
-                "message": "Some retrieved evidence ids were not cited in the markdown.",
-                "ids": unused_evidence,
-            }
-        )
+        issues.append({
+            "code": "unused_evidence",
+            "severity": "warning",
+            "message": "Some retrieved evidence ids were not cited in the markdown.",
+            "ids": unused_evidence,
+        })
 
     if section_audit["uncited_sections"]:
-        issues.append(
-            {
-                "code": "uncited_sections",
-                "severity": "warning",
-                "message": "Some markdown sections do not contain hidden evidence comments.",
-                "sections": section_audit["uncited_sections"],
-            }
-        )
+        issues.append({
+            "code": "uncited_sections",
+            "severity": "warning",
+            "message": "Some markdown sections do not contain hidden evidence comments.",
+            "sections": section_audit["uncited_sections"],
+        })
 
     status = "fail" if any(issue["severity"] == "error" for issue in issues) else "pass"
     return {
@@ -382,3 +274,50 @@ def audit_output_quality(markdown: str, evidence: list[dict[str, Any]]) -> dict[
         "uncited_sections": section_audit["uncited_sections"],
         "issues": issues,
     }
+
+
+def parse_mnemonics(text: str) -> list[dict[str, Any]]:
+    blocks = [block.strip() for block in re.split(r"(?m)^---\s*$", text) if block.strip()]
+    mnemonics: list[dict[str, Any]] = []
+    for block in blocks:
+        item: dict[str, Any] = {}
+        for line in block.splitlines():
+            if ":" not in line:
+                continue
+            key, value = line.split(":", 1)
+            item[key.strip()] = value.strip()
+        if "keywords" in item:
+            item["keywords"] = [
+                keyword.strip() for keyword in str(item["keywords"]).split(",")
+                if keyword.strip()
+            ]
+        if item.get("id") and item.get("content"):
+            item.setdefault("source", "待审核候选")
+            item.setdefault("keywords", [])
+            mnemonics.append(item)
+    return mnemonics
+
+
+def retrieve_mnemonics(
+    query: str,
+    mnemonics: list[dict[str, Any]],
+    limit: int = 5,
+) -> list[dict[str, Any]]:
+    scored: list[dict[str, Any]] = []
+    query_text = query.lower()
+    for item in mnemonics:
+        score = 0
+        for keyword in item.get("keywords", []):
+            if str(keyword).lower() in query_text:
+                score += 3
+        title = str(item.get("title", "")).lower()
+        content = str(item.get("content", "")).lower()
+        if title and title in query_text:
+            score += 2
+        if content and any(token in content for token in query_text.split()[:20]):
+            score += 1
+        if score > 0:
+            copied = dict(item)
+            copied["score"] = score
+            scored.append(copied)
+    return sorted(scored, key=lambda row: (-int(row["score"]), str(row["id"])))[:limit]

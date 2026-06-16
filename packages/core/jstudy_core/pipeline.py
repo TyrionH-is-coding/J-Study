@@ -8,15 +8,9 @@ from packages.core.jstudy_core import citations
 from packages.core.jstudy_core import providers
 from packages.core.jstudy_core.settings import read_api_key
 from packages.core.jstudy_core.storage import build_output_paths, write_json
-from packages.domains.medicine import (
-    StudyQuery,
-    audit_output_quality,
-    build_generation_prompt,
-    build_study_queries,
-    extract_evidence_refs,
-    parse_mnemonics,
-    retrieve_mnemonics,
-)
+from packages.domains import medicine as domain_medicine
+from packages.domains import general as domain_general
+from packages.domains import engineering as domain_engineering
 from packages.parsers.mineru_parser import extract_pdf_pages_with_mineru
 from packages.parsers.pymupdf_parser import extract_pdf_pages
 from packages.retrieval.hybrid import (
@@ -44,6 +38,20 @@ embed_texts_cached = providers.embed_texts_cached
 generate_markdown = providers.generate_markdown
 build_evidence_items = citations.build_evidence_items
 build_evidence_links = citations.build_evidence_links
+
+
+DOMAIN_MODULES = {
+    "medicine": domain_medicine,
+    "general": domain_general,
+    "engineering": domain_engineering,
+}
+
+
+def _resolve_domain(routing_metadata: dict[str, Any] | None) -> Any:
+    """Select domain module based on scenario domain_rules."""
+    rules = (routing_metadata or {}).get("scenario", {}).get("domain_rules", [])
+    primary = rules[0] if rules else "medicine"
+    return DOMAIN_MODULES.get(primary, domain_medicine)
 
 
 def retrieve_chunks(
@@ -86,11 +94,14 @@ def run_mvp(
     soul_profile_id: str | None = None,
     routing_metadata: dict[str, Any] | None = None,
     parser_config: dict[str, Any] | None = None,
+    generation_mode: str | None = None,
 ) -> dict[str, Path]:
     rag_config = rag_config or RagConfig()
     embedding_cache_path = embedding_cache_path or output_dir / ".mvp_cache" / "embeddings.json"
     resolved_api_key = api_key or read_api_key(api_key_path)
     resolved_embed_key = embed_api_key or resolved_api_key
+    domain = _resolve_domain(routing_metadata)
+
     if parser_backend == "pymupdf":
         pages = extract_pdf_pages(pdf_path)
     elif parser_backend == "mineru":
@@ -114,7 +125,7 @@ def run_mvp(
     )
 
     outline_text = outline_path.read_text(encoding="utf-8") if outline_path else ""
-    study_queries = build_study_queries(
+    study_queries = domain.build_study_queries(
         source_text="\n".join(chunk.text for chunk in chunks),
         outline=outline_text,
     )
@@ -135,9 +146,9 @@ def run_mvp(
     )
 
     evidence = citations.build_evidence_items(selected_chunks, pdf_path.name)
-    mnemonics = parse_mnemonics(mnemonics_path.read_text(encoding="utf-8"))
+    mnemonics = domain.parse_mnemonics(mnemonics_path.read_text(encoding="utf-8"))
     retrieval_query = "\n".join(study_query.query for study_query in study_queries)
-    mnemonic_hits = retrieve_mnemonics(
+    mnemonic_hits = domain.retrieve_mnemonics(
         retrieval_query + "\n" + "\n".join(chunk.text for chunk in selected_chunks),
         mnemonics,
         limit=rag_config.mnemonic_limit,
@@ -173,15 +184,18 @@ def run_mvp(
             "selected_chunks": [asdict(chunk) for chunk in selected_chunks],
             "query_traces": retrieval_trace,
             "mnemonic_hits": mnemonic_hits,
+            "generation_mode": generation_mode or "summary",
+            "domain": _resolve_domain(routing_metadata).__name__,
         },
     )
     write_json(output_paths.evidence, evidence)
 
-    messages = build_generation_prompt(
+    messages = domain.build_generation_prompt(
         soul_path.read_text(encoding="utf-8"),
         evidence,
         mnemonic_hits,
         outline=outline_text,
+        mode=generation_mode or "",
     )
     if chat_base_url == SILICONFLOW_BASE_URL:
         markdown = providers.generate_markdown(messages, api_key=resolved_api_key, model=chat_model)
@@ -194,6 +208,6 @@ def run_mvp(
         )
     output_paths.markdown.write_text(markdown + "\n", encoding="utf-8")
     write_json(output_paths.evidence_links, citations.build_evidence_links(markdown, evidence))
-    write_json(output_paths.quality, audit_output_quality(markdown, evidence))
+    write_json(output_paths.quality, domain.audit_output_quality(markdown, evidence))
 
     return output_paths.as_dict()

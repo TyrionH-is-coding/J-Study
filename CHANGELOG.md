@@ -1,20 +1,35 @@
 # J-Study Changelog
 
-## 2026-06-16 — `eric/user-modes` Phase 1: 用户输出模式路由
+## 2026-06-16 — Phase 2: 通用学科 + 工科领域包
 
 ### 新增
 
-- **soul-exam-quick.md**: 考前速记模式 soul。输出浓缩、口诀密集、星级评分、易错陷阱标注。输出比标准版短 30-50%。
-- **soul-rewrite.md**: 改写重述模式 soul。完整保留课件内容覆盖，用更清晰的语言重述。输出比标准版长 20-50%，更偏叙述性。
-- **mode 路由**: `POST /api/generate` 新增 `mode` form 字段。支持 `summary`（默认）/ `exam-quick` / `rewrite`。后端根据 mode 切换 soul 文件路径。
-- **前端选择器**: 上传表单新增"生成模式"下拉框，可选 总结 / 考前速记 / 改写重述。
+- **soul.md (更新)**: 嵌入考前速记 + 改写模式章节，通过 `{mode}` 占位符由 build_generation_prompt 替换
+- **soul-general.md**: 通用学科 soul，含总结/考前速记/改写三模式，零学科偏见
+- **soul-engineering.md**: 工科 soul，公式+流程+设计决策导向，含三模式
+- **packages/domains/general.py**: 通用领域包 — 5 个通用检索查询 + 通用生成 prompt + 质量审计
+- **packages/domains/engineering.py**: 工科领域包 — 6 个工科检索查询（定义/定理/推导/算法/应用/陷阱）+ 工程 prompt
+- **pipeline.py (重构)**: 动态领域路由 — 根据 scenario domain_rules 自动加载对应 domain module；`generation_mode` 参数透传到 `build_generation_prompt`
+- **content_pack.json**: General / Engineering scenario 激活，各指向独立 soul_profile + domain_rules
+
+### 架构变更
+
+| 变更 | 说明 |
+|:--|:--|
+| 领域选择 | pipeline.py 从 `from medicine import ...` → `_resolve_domain(routing_metadata)` 动态加载 |
+| 模式路由 | mode 从 form → job metadata → pipeline → domain.build_generation_prompt → soul `{mode}` 替换 |
+| soul 文件 | 每份 soul 内含 3 个模式章节，由 `当前模式：{mode}` 指示 LLM 遵守哪套规则 |
 
 ### 文件变更
 
 | 文件 | 变更 |
 |:--|:--|
-| `soul-exam-quick.md` | 新建 — 考前速记 soul |
-| `soul-rewrite.md` | 新建 — 改写重述 soul |
-| `apps/api/jstudy_api/app.py` | generate 端点 + mode 路由逻辑 |
-| `apps/api/jstudy_api/ui.py` | HTML 表单新增 mode select |
-| `CHANGELOG.md` | 新建 |
+| `soul.md` | 新增考前速记 + 改写模式章节；末尾 `{mode}` 占位 |
+| `soul-general.md` | 新建 |
+| `soul-engineering.md` | 新建 |
+| `packages/domains/general.py` | 新建 |
+| `packages/domains/engineering.py` | 新建 |
+| `packages/core/jstudy_core/pipeline.py` | 重构为动态领域路由 + generation_mode |
+| `packages/domains/medicine.py` | build_generation_prompt 接受 mode 参数 |
+| `apps/api/jstudy_api/app.py` | run_job 传 generation_mode |
+| `data/settings/content_pack.json` | 新增 General/Engineering 场景 |

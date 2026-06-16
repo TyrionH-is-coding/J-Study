@@ -298,6 +298,7 @@ def create_app(
                 "parser_backend": job.metadata.get("parser_profile", {}).get("backend", "pymupdf"),
                 "routing_metadata": job.metadata,
                 "parser_config": runtime.parser_config,
+                "generation_mode": job.metadata.get("mode", ""),
             }
             outputs = runner(
                 **filter_runner_kwargs(runner, runner_kwargs)
