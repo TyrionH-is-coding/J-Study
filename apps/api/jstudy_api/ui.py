@@ -707,7 +707,17 @@ INDEX_HTML = r"""<!doctype html>
         .split(/(<button class="evidence-btn"[\s\S]*?<\/button>)/g)
         .map(part => {
           if (part.startsWith("<button")) return part;
-          return escapeHtml(part)
+          // Process LaTeX placeholders inside markdown (e.g. table cells)
+          let processed = escapeHtml(part);
+          processed = processed.replace(/\x00LATEX_INLINE_(\d+)\x00/g, (_, idx) => {
+            const { expr } = latexPlaceholders[parseInt(idx)];
+            return renderKatex(expr, false);
+          });
+          processed = processed.replace(/\x00LATEX_DISPLAY_(\d+)\x00/g, (_, idx) => {
+            const { expr } = latexPlaceholders[parseInt(idx)];
+            return renderKatex(expr, true);
+          });
+          return processed
             .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
             .replace(/`([^`]+)`/g, "<code>$1</code>");
         })
