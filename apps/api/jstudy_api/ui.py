@@ -1032,8 +1032,8 @@ INDEX_HTML = r"""<!doctype html>
           const workspace = document.querySelector(".workspace");
           const style = getComputedStyle(workspace);
           const current = parseInt(target === "aside"
-            ? style.getPropertyValue("--aside-w").trim()
-            : style.getPropertyValue("--pdf-w").trim());
+            ? style.getPropertyValue("--aside-w").trim() || "300"
+            : style.getPropertyValue("--pdf-w").trim() || "360");
           const startX = e.clientX;
           h.classList.add("active");
           drag = { target, minW, maxW, startX, current, h };
