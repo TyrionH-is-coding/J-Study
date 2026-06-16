@@ -893,10 +893,16 @@ INDEX_HTML = r"""<!doctype html>
         const page = target.page || 1;
         const chunk = target.chunk_id || "";
         const quote = String(target.quote || "").slice(0, 220);
+        // Clean PDF artifact noise from quote text
+        const cleanQuote = quote
+          .replace(/^[+\-\\*/=·•■□○●\s]{5,}$/gm, "") // strip ASCII-art lines
+          .replace(/[\u2000-\u200f\u2028-\u202f\u2500-\u257f]+/g, " ") // strip box-drawing & control chars
+          .replace(/\s{3,}/g, " ")  // collapse whitespace
+          .trim() || "(non-text content)";
         return `<button class="citation-item" data-ref="${link.ref_id}" data-occurrence="${link.occurrence || 1}" type="button">
           <span class="citation-ref">${escapeHtml(link.ref_id)}</span>
           <span class="citation-meta">page ${escapeHtml(String(page))}${chunk ? " · " + escapeHtml(chunk) : ""}</span>
-          <span class="citation-quote">${escapeHtml(quote)}</span>
+          <span class="citation-quote">${escapeHtml(cleanQuote)}</span>
         </button>`;
       }).join("");
     }

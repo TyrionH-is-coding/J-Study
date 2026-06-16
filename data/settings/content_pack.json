@@ -1,0 +1,89 @@
+{
+  "version": 1,
+  "active_pack_id": "general-default",
+  "default_scenario_id": "general-default",
+  "packs": [
+    {
+      "id": "medicine-default",
+      "name": "Medicine MVP",
+      "subject": "medicine",
+      "soul_path": "soul.md",
+      "mnemonics_path": "mnemonics.md",
+      "mnemonics_json_path": "data/settings/mnemonics.json",
+      "enabled": true
+    },
+    {
+      "id": "general-default",
+      "name": "General MVP",
+      "subject": "general",
+      "soul_path": "soul-general.md",
+      "mnemonics_path": "mnemonics.md",
+      "mnemonics_json_path": "data/settings/mnemonics.json",
+      "enabled": true
+    },
+    {
+      "id": "engineering-default",
+      "name": "Engineering MVP",
+      "subject": "engineering",
+      "soul_path": "soul-engineering.md",
+      "mnemonics_path": "mnemonics.md",
+      "mnemonics_json_path": "data/settings/mnemonics.json",
+      "enabled": true
+    }
+  ],
+  "soul_profiles": [
+    {
+      "id": "medicine-default",
+      "name": "Medicine Default",
+      "subject": "medicine",
+      "soul_path": "soul.md",
+      "notes": "Medicine courseware generation rules with summary/exam-quick/rewrite modes."
+    },
+    {
+      "id": "general-default",
+      "name": "General Default",
+      "subject": "general",
+      "soul_path": "soul-general.md",
+      "notes": "General-purpose study material with summary/exam-quick/rewrite modes."
+    },
+    {
+      "id": "engineering-default",
+      "name": "Engineering Default",
+      "subject": "engineering",
+      "soul_path": "soul-engineering.md",
+      "notes": "Engineering study material with formula/process emphasis and summary/exam-quick/rewrite modes."
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "medicine-default",
+      "display_name": "Medicine",
+      "subject": "medicine",
+      "enabled": true,
+      "content_pack_id": "medicine-default",
+      "prompt_profile": "medicine-default",
+      "rag_profile": "default",
+      "domain_rules": ["medicine"]
+    },
+    {
+      "id": "general-default",
+      "display_name": "General",
+      "subject": "general",
+      "enabled": true,
+      "content_pack_id": "general-default",
+      "prompt_profile": "general-default",
+      "rag_profile": "default",
+      "domain_rules": ["general"]
+    },
+    {
+      "id": "engineering-default",
+      "display_name": "Engineering",
+      "subject": "engineering",
+      "enabled": true,
+      "content_pack_id": "engineering-default",
+      "prompt_profile": "engineering-default",
+      "rag_profile": "default",
+      "domain_rules": ["engineering"]
+    }
+  ]
+}
