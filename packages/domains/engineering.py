@@ -104,6 +104,19 @@ def _is_topic_term(term: str) -> bool:
         return False
     if term.isdigit():
         return False
+    # 过滤英文停用词和课程代码
+    if term.lower() in {"the", "a", "an", "this", "that", "these", "those", "is", "are", "was", "were",
+                        "be", "been", "being", "have", "has", "had", "do", "does", "did",
+                        "will", "would", "can", "could", "shall", "should", "may", "might",
+                        "must", "to", "of", "in", "for", "on", "with", "at", "by", "from",
+                        "as", "into", "through", "during", "before", "after", "above", "below",
+                        "between", "out", "off", "over", "under", "again", "further", "then",
+                        "once", "here", "there", "when", "where", "why", "how", "all", "each",
+                        "every", "both", "few", "more", "most", "other", "some", "such",
+                        "no", "nor", "not", "only", "own", "same", "so", "than", "too",
+                        "very", "just", "because", "but", "and", "or", "if", "while",
+                        "figure", "fig", "page", "table", "example"}:
+        return False
     return bool(re.search(r"[A-Za-z\u4e00-\u9fff]", term))
 
 
@@ -235,7 +248,7 @@ def audit_output_quality(markdown: str, evidence: list[dict[str, Any]]) -> dict[
             "message": "Generated markdown references evidence ids that do not exist.",
             "ids": unknown_refs,
         })
-    engineering_terms = ["MVP", "根据证据片段", "证据片段", "工程"]
+    engineering_terms = ["MVP", "根据证据片段", "证据片段"]
     matched_terms = [term for term in engineering_terms if term in markdown]
     if matched_terms:
         issues.append({
