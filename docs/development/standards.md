@@ -4,6 +4,21 @@
 
 Make small changes that directly serve the current goal. Do not refactor adjacent code just because it looks imperfect. If unrelated problems are noticed, document them or add them to the roadmap instead of mixing them into the current change.
 
+## Product Direction
+
+J-Study should be more vertical than DeepTutor. Use DeepTutor as a reference for reusable framework ideas such as RAG flow, model configuration, and operational patterns, but do not copy its broad general-purpose positioning into J-Study.
+
+The core service must run before the vertical libraries are complete. Keep backend, frontend, deployment, auth, parser routing, scenario routing, and storage boundaries moving toward a working pilot. Treat `soul` profiles and the knowledge snippet library as curated product assets that will be improved one subject at a time.
+
+When a change touches subject behavior, first ask whether it belongs in:
+
+- platform code: routing, parsing, retrieval, jobs, API contracts, deployment
+- a soul profile: output philosophy, learning style, subject-specific generation rules
+- the knowledge snippet library: reviewed reusable explanations, memory aids, comparisons, pitfalls, or wording patterns
+- domain code: planners, filters, graders, question-generation logic that cannot stay as data
+
+Do not hardcode vertical knowledge into generic platform code. Do not block service delivery on fully populated subject libraries.
+
 ## Branching
 
 Use `main` as the stable deployable branch.

@@ -4,6 +4,8 @@ J-Study is a multi-discipline study-material generation product. The current MVP
 
 The product goal is not limited to medicine. The platform should eventually support different subject packs, each with its own prompts, retrieval strategy, output templates, quality checks, and question-generation logic.
 
+Compared with DeepTutor's broader general-purpose direction, J-Study should build vertical depth through curated soul profiles and a reviewed knowledge snippet library. These libraries can start small while the backend, frontend, and deployment path are made reliable.
+
 ## Current MVP
 
 The current backend can:

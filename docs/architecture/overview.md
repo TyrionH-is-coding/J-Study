@@ -4,6 +4,8 @@
 
 J-Study is a single-server MVP that should evolve into a formally structured product. The current backend now has canonical package paths: `apps/api/jstudy_api/app.py` serves the FastAPI MVP, `apps/api/jstudy_api/ui.py` owns the temporary built-in user UI, `apps/api/jstudy_api/admin_ui.py` owns the temporary backend-served admin settings page, `packages/core/jstudy_core/pipeline.py` orchestrates the generation pipeline, `packages/core/jstudy_core/cli.py` owns the legacy CLI entrypoint implementation, `packages/core/jstudy_core/admin_settings.py` owns JSON-backed runtime admin settings, `packages/core/jstudy_core/scenario_router.py` owns learning-scenario resolution, `packages/core/jstudy_core/parser_profile_router.py` owns user-facing parser-profile resolution, `packages/core/jstudy_core/citations.py` owns evidence and citation-link contracts, `packages/core/jstudy_core/jobs.py` owns the MVP job lifecycle and JSON persistence, `packages/core/jstudy_core/providers.py` owns SiliconFlow-compatible chat and embedding calls, `packages/core/jstudy_core/settings.py` owns runtime resolution and deployment overrides, `packages/core/jstudy_core/storage.py` owns local output file contracts, `packages/parsers` owns document parsing, `packages/retrieval` owns chunking and hybrid retrieval, and `packages/domains/medicine.py` owns the first subject pack. Root-level `web_mvp.py` and `mvp_runner.py` remain compatibility shims for old commands.
 
+The architecture should support vertical depth rather than only broad generality. DeepTutor is the reference for mature RAG and configuration patterns, but J-Study's quality advantage should come from subject-specific soul profiles and a reviewed knowledge snippet ecosystem. Those libraries can stay thin while the service is being made deployable; the architecture must make them easy to expand later without rewriting the platform.
+
 ## Target Repository Structure
 
 ```text
@@ -64,6 +66,8 @@ The platform layer should own common product behavior:
 - deployment and runtime configuration
 
 It should not own medicine-specific prompt wording, knowledge-snippet rules, or subject quality standards.
+
+The platform should expose stable routing hooks for vertical assets. A new subject should mainly add or enable a scenario, a soul profile, approved snippets, and optional domain code; it should not require changes to upload, job, parser, retrieval, or deployment infrastructure.
 
 ## Document Parser Boundary
 
@@ -187,9 +191,13 @@ The default library contains:
 
 Users should choose the scenario on the upload page. Admins should control visibility by enabling or disabling scenario entries. A blank placeholder must receive a real `soul_path` before the scenario is enabled; the backend does not silently fall back from an explicitly blank soul profile to the medicine soul.
 
+Soul profiles are curated vertical assets. They should encode the subject's learning style, output priorities, terminology conventions, common traps, and generation philosophy. The MVP only needs routing and safe defaults; the actual profile content can be built gradually by the product owner as each subject matures.
+
 ## Knowledge Snippet Library
 
 The original memory-aid seed file should evolve into a broader knowledge snippet library. A snippet may be a memory aid, terminology explanation, comparison table, workflow summary, common pitfall, or high-quality wording pattern. The library is a second retrieval source after courseware RAG, not a replacement for courseware evidence.
+
+This library is part of J-Study's vertical ecosystem. It should not become a generic bag of prompts. Snippets should remain tied to scenario, subject, review status, and evidence expectations so the same platform can serve different fields without flattening their learning logic.
 
 The safe feedback loop has three layers:
 

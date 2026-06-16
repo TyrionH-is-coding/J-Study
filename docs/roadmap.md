@@ -85,6 +85,7 @@ Acceptance:
 
 - unauthenticated users see the login/register flow
 - user can upload a PDF from the frontend
+- user can choose an exposed scenario before upload
 - generated output displays cleanly
 - clicking "依据 E001" scrolls only the source preview area
 - frontend and backend run locally together
@@ -134,12 +135,14 @@ Acceptance:
 
 ## Phase 5: Multi-Discipline Domain Packs
 
-Goal: prove that medicine is a first domain, not a hard-coded product boundary.
+Goal: prove that medicine is a first domain, not a hard-coded product boundary, while keeping J-Study more vertical than a general DeepTutor-style assistant.
 
 Deliverables:
 
 - stable domain-pack interface
 - medicine pack extracted from root templates
+- subject-specific soul profile authoring path
+- scenario visibility managed by admin settings
 - at least one second lightweight domain prototype
 - domain-specific query planner contract
 
@@ -147,10 +150,12 @@ Acceptance:
 
 - adding a new subject does not require editing platform pipeline code
 - medicine-specific prompts and rules live under `packages/domains/medicine`
+- a new subject can start with a blank hidden soul profile, then become visible only after the profile has usable content
+- service delivery is not blocked by fully populated soul libraries
 
 ## Phase 5.5: Knowledge Snippet Feedback Hook
 
-Goal: leave the product hook for user-driven quality improvement without making feedback affect generation too early.
+Goal: leave the product hook for user-driven quality improvement without making feedback affect generation too early, and grow J-Study's vertical snippet ecosystem one reviewed candidate at a time.
 
 Deliverables:
 
@@ -160,6 +165,8 @@ Deliverables:
 - embedding generation for feedback fragments
 - semantic deduplication into administrator-visible candidate clusters
 - review status model: `candidate`, `approved`, `rejected`, `deprecated`
+- subject and scenario metadata on every snippet candidate
+- manual review workflow before snippets become reusable product knowledge
 
 Acceptance:
 
@@ -168,6 +175,7 @@ Acceptance:
 - no candidate can affect generation until it is approved
 - approved snippets are retrieved as auxiliary guidance, not as independent fact sources
 - automatic replacement remains disabled until current-upload evidence matching is reliable
+- snippet growth improves vertical quality without turning the library into generic prompt storage
 
 ## Phase 6: Question Generation
 

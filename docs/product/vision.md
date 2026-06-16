@@ -6,6 +6,8 @@ J-Study is a multi-discipline study-material generation product. It turns course
 
 The first validated domain is medicine. That does not define the long-term boundary of the product. Medicine is the first subject pack because domain quality can be judged directly and the initial workload is mostly organization, citation, and learning-output design.
 
+J-Study is intentionally more vertical than DeepTutor. DeepTutor can remain a broad general-purpose learning framework; J-Study should build subject-specific depth through curated soul profiles and a reviewed knowledge snippet library. Those two libraries are product assets, not incidental prompt files. They will be improved one subject at a time after the core service is running.
+
 ## Product Principles
 
 1. Source-grounded output comes first.
@@ -23,13 +25,15 @@ The first validated domain is medicine. That does not define the long-term bound
 5. Deployable beats theoretical.
    The product must run reliably before adding heavy infrastructure. Database-backed jobs, queues, object storage, and MinerU can be introduced when their value is proven by usage.
 
+6. Vertical quality compounds through curated libraries.
+   The platform should make it easy to route by subject and scenario, but quality will come from manually refined soul profiles and reviewed knowledge snippets. Do not dilute the product into a fully generic assistant before the vertical libraries have depth.
+
 ## Current MVP Scope
 
 The MVP supports one courseware PDF plus an optional outline. It extracts text, retrieves evidence, generates Markdown study material, and maps evidence comments to original PDF pages.
 
 The MVP does not yet include:
 
-- user accounts or permissions
 - persistent job database
 - production queue or worker process
 - object storage
@@ -43,6 +47,7 @@ A domain pack owns subject-specific behavior:
 
 - output template
 - prompt fragments
+- soul profiles
 - retrieval query planner
 - evidence filtering rules
 - knowledge snippet and terminology library
