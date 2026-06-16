@@ -550,20 +550,7 @@ def create_app(
             outline_path = input_dir / outline_name
             await save_upload(outline, outline_path)
 
-        # mode → soul_path override (resolve BEFORE selected_content_paths)
-        MODE_SOUL_MAP = {
-            "exam-quick": "soul-exam-quick.md",
-            "rewrite": "soul-rewrite.md",
-        }
         clean_mode = (mode or "").strip()
-        mode_soul_file = MODE_SOUL_MAP.get(clean_mode)
-        if mode_soul_file:
-            # Inject mode soul into scenario so selected_content_paths finds it
-            mode_soul_path = str(
-                project_path(runtime.project_root, mode_soul_file)
-                or runtime.project_root / mode_soul_file
-            )
-            scenario.soul_profile["soul_path"] = mode_soul_path
 
         content_paths = selected_content_paths(scenario)
 
