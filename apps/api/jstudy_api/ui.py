@@ -319,6 +319,52 @@ INDEX_HTML = r"""<!doctype html>
     /* KaTeX display math spacing */
     .output .katex-display { margin: 8px 0; overflow-x: auto; overflow-y: hidden; }
     .output .katex { font-size: 1.05em; }
+
+    /* === Card selector === */
+    .section-label {
+      font-size: 11px; font-weight: 600; text-transform: uppercase;
+      letter-spacing: .6px; color: var(--text-secondary);
+      margin: 8px 0 4px; }
+    .section-label:first-of-type { margin-top: 4px; }
+    .scenario-cards { display: flex; flex-direction: column; gap: 5px; }
+    .scenario-card {
+      display: flex; align-items: center; gap: 10px;
+      padding: 8px 10px;
+      border: 1px solid var(--border); border-radius: 8px;
+      background: var(--surface);
+      cursor: pointer;
+      transition: border-color .12s, background .12s, box-shadow .12s;
+    }
+    .scenario-card:hover { border-color: var(--text-muted); }
+    .scenario-card.active {
+      border-color: var(--accent);
+      background: var(--accent-soft);
+      box-shadow: 0 0 0 3px rgba(94,106,210,.1);
+    }
+    .scenario-icon {
+      width: 32px; height: 32px; border-radius: 6px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 16px; flex-shrink: 0;
+    }
+    .scenario-name { font-size: 13px; font-weight: 600; color: var(--text); }
+    .scenario-desc { font-size: 11px; color: var(--text-secondary); margin-top: 1px; }
+    .mode-pills { display: flex; gap: 4px; margin-top: 2px; }
+    .mode-pill {
+      flex: 1; padding: 6px 4px;
+      border: 1px solid var(--border); border-radius: 6px;
+      background: var(--surface);
+      font-size: 11px; font-weight: 500; color: var(--text-secondary);
+      text-align: center; cursor: pointer;
+      transition: all .12s; font-family: inherit;
+    }
+    .mode-pill:hover { border-color: var(--text-muted); color: var(--text); }
+    .mode-pill.active {
+      border-color: var(--accent); background: var(--accent);
+      color: #fff; font-weight: 600;
+    }
+    .icon-med { background: #fce7f3; }
+    .icon-gen { background: #dbeafe; }
+    .icon-eng { background: #e0e7ff; }
   </style>
 </head>
 <body>
@@ -346,20 +392,21 @@ INDEX_HTML = r"""<!doctype html>
         </form>
       </section>
       <form id="form" hidden>
+        <div class="section-label">学科</div>
+        <div class="scenario-cards" id="scenarioCards"></div>
+        <div class="section-label">模式</div>
+        <div class="mode-pills" id="modePills">
+          <div class="mode-pill active" data-mode="">总结</div>
+          <div class="mode-pill" data-mode="exam-quick">考前速记</div>
+          <div class="mode-pill" data-mode="rewrite">改写重述</div>
+        </div>
         <label>课件 PDF</label>
         <input name="pdf" type="file" accept="application/pdf" required />
         <label>课程大纲</label>
         <input name="outline" type="file" accept=".md,.txt,.pdf" />
-        <label>学科</label>
-        <select name="scenario_id" id="scenarioSelect"></select>
-        <label>模式</label>
-        <select name="mode" id="modeSelect">
-          <option value="">总结</option>
-          <option value="exam-quick">考前速记</option>
-          <option value="rewrite">改写重述</option>
-        </select>
-        <label id="parserProfileLabel" hidden>解析器</label>
-        <select name="parser_profile_id" id="parserProfileSelect" hidden></select>
+        <input type="hidden" name="scenario_id" id="scenarioIdInput" value="" />
+        <input type="hidden" name="mode" id="modeInput" value="" />
+        <input type="hidden" name="parser_profile_id" id="parserProfileIdInput" value="fast" />
         <button class="btn-primary run" id="run" type="submit">生成学习资料</button>
       </form>
       <div class="status" id="status">等待上传</div>
@@ -388,9 +435,11 @@ INDEX_HTML = r"""<!doctype html>
     const pdfMeta = document.getElementById("pdfMeta");
     const evidenceList = document.getElementById("evidenceList");
     const pdfPages = document.getElementById("pdfPages");
-    const scenarioSelect = document.getElementById("scenarioSelect");
-    const parserProfileLabel = document.getElementById("parserProfileLabel");
-    const parserProfileSelect = document.getElementById("parserProfileSelect");
+    const scenarioCards = document.getElementById("scenarioCards");
+    const scenarioIdInput = document.getElementById("scenarioIdInput");
+    const modeInput = document.getElementById("modeInput");
+    const parserProfileIdInput = document.getElementById("parserProfileIdInput");
+    const modePills = document.getElementById("modePills");
     let currentJob = "";
     let evidenceLinks = [];
 
@@ -398,26 +447,61 @@ INDEX_HTML = r"""<!doctype html>
       return value.replace(/[&<>"']/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
     }
 
-    function renderOption(item) {
+    const SCENARIO_ICONS = { "medicine": "icon-med", "general": "icon-gen", "engineering": "icon-eng" };
+    const SCENARIO_EMOJI = { "medicine": "\uD83E\uDE7A", "general": "\uD83D\uDCD8", "engineering": "\uD83D\uDD27" };
+    const SCENARIO_DESC = { "medicine": "医学课件", "general": "通用学科", "engineering": "工科课程" };
+
+    function renderScenarioCard(item) {
       const id = String(item.id || "");
-      const label = String(item.display_name || item.id || "");
-      return `<option value="${escapeHtml(id)}">${escapeHtml(label)}</option>`;
+      const subj = String(item.subject || "");
+      const emoji = SCENARIO_EMOJI[subj] || "\uD83D\uDCC4";
+      const iconCls = SCENARIO_ICONS[subj] || "";
+      const desc = SCENARIO_DESC[subj] || subj;
+      return `<div class="scenario-card" data-id="${escapeHtml(id)}">
+        <div class="scenario-icon ${iconCls}">${emoji}</div>
+        <div class="scenario-info">
+          <div class="scenario-name">${escapeHtml(item.display_name || item.id || "")}</div>
+          <div class="scenario-desc">${desc}</div>
+        </div>
+      </div>`;
+    }
+
+    function selectScenario(id) {
+      scenarioIdInput.value = id;
+      scenarioCards.querySelectorAll(".scenario-card").forEach(c => {
+        c.classList.toggle("active", c.dataset.id === id);
+      });
+    }
+
+    function selectMode(mode) {
+      modeInput.value = mode;
+      modePills.querySelectorAll(".mode-pill").forEach(p => {
+        p.classList.toggle("active", p.dataset.mode === mode);
+      });
     }
 
     async function loadOptions() {
       const res = await fetch("/api/options");
       const opts = await res.json();
       const scenarios = opts.scenarios || [];
-      const parserProfiles = opts.parser_profiles || [];
-      scenarioSelect.innerHTML = scenarios.map(renderOption).join("");
-      scenarioSelect.value = opts.default_scenario_id || (scenarios[0] && scenarios[0].id) || "";
-      parserProfileSelect.innerHTML = parserProfiles.map(renderOption).join("");
-      parserProfileSelect.value = opts.default_parser_profile_id || (parserProfiles[0] && parserProfiles[0].id) || "fast";
-      const showParser = parserProfiles.length > 1;
-      parserProfileLabel.hidden = !showParser;
-      parserProfileSelect.hidden = !showParser;
+      // Render scenario cards
+      scenarioCards.innerHTML = scenarios.map(renderScenarioCard).join("");
+      // Card click handlers
+      scenarioCards.querySelectorAll(".scenario-card").forEach(card => {
+        card.addEventListener("click", () => selectScenario(card.dataset.id));
+      });
+      // Select default
+      const defaultId = opts.default_scenario_id || (scenarios[0] && scenarios[0].id) || "";
+      selectScenario(defaultId);
     }
     loadOptions().catch(() => {});
+
+    // Mode pill click handler
+    modePills.querySelectorAll(".mode-pill").forEach(pill => {
+      pill.addEventListener("click", () => selectMode(pill.dataset.mode));
+    });
+    // Default mode = summary (empty string)
+    selectMode("");
 
     function showAuthenticated(user) {
       authPanel.hidden = true;
