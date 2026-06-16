@@ -327,7 +327,7 @@ INDEX_HTML = r"""<!doctype html>
       <h1>J Study</h1>
       <section id="authPanel">
         <h2>Login</h2>
-        <form id="loginForm">
+        <form id="loginForm" method="POST" action="/api/auth/login">
           <label>Email</label>
           <input name="email" type="email" autocomplete="email" required />
           <label>Password</label>
@@ -335,7 +335,7 @@ INDEX_HTML = r"""<!doctype html>
           <button class="btn-primary run" type="submit">Login</button>
         </form>
         <h2>Register</h2>
-        <form id="registerForm">
+        <form id="registerForm" method="POST" action="/api/auth/register">
           <label>Email</label>
           <input name="email" type="email" autocomplete="email" required />
           <label>Password</label>
