@@ -60,3 +60,11 @@ Engineering/exam-quick 输出对比改前改后：LaTeX 公式密度提升、⭐
 ### 修复
 - **`_is_topic_term()` 英文停用词过滤**: 三个 domain 模块（medicine/general/engineering）均加入约 80 个英文停用词过滤（the, of, a, figure, page 等），防止 PDF 页眉/页脚内容污染检索关键词。该 bug 源自上游 `feature/backend-frontend-mvp` 的 `packages/domains/medicine.py`，仅英文 PDF 复现。
 - **`audit_output_quality()` 移除 "工程" 误判**: `engineering_terms` 从 `["MVP", "根据证据片段", "证据片段", "工程"]` 改为 `["MVP", "根据证据片段", "证据片段"]`。originates from 上游 `feature/backend-frontend-mvp`。工科输出必然包含"工程注意事项"等合法内容，导致所有工科 output quality:fail。
+
+## 2026-06-16 — 卡片选择器 UI
+
+### 改动
+- **学科选择器**: 下拉框改为垂直卡片（带 icon + 学科名 + 描述文字），选中蓝边高亮
+- **模式选择器**: 下拉框改为横向 pill 按钮（总结/考前速记/改写重述），选中蓝底白字
+- **后端兼容**: 使用 `<input type="hidden">` 保持 FormData 提交格式不变
+- **学科图标**: Medicine 粉色、General 蓝色、Engineering 紫色背景
