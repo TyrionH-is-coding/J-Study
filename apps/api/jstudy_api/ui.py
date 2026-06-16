@@ -1019,11 +1019,12 @@ INDEX_HTML = r"""<!doctype html>
     });
 
     // --- Column resize ---
-    (function() {
+    document.addEventListener("DOMContentLoaded", function() {
       const handles = document.querySelectorAll(".resize-handle");
       const workspace = document.querySelector(".workspace");
       const aside = document.querySelector("aside");
       const pdfPanel = document.querySelector(".pdf-panel");
+      if (!workspace || !aside || !pdfPanel) return;
       let drag = null;
 
       // Initialize grid with defaults
@@ -1057,7 +1058,7 @@ INDEX_HTML = r"""<!doctype html>
         drag.h.classList.remove("active");
         drag = null;
       });
-    })();
+    });
   </script>
 </body>
 </html>
