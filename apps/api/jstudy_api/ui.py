@@ -562,20 +562,12 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     function renderInlineMarkdown(line) {
-      // Split by evidence buttons and KaTeX spans (keep them intact)
+      // Split by evidence buttons (keep them intact)
       return line
         .split(/(<button class="evidence-btn"[\s\S]*?<\/button>)/g)
         .map(part => {
           if (part.startsWith("<button")) return part;
-          // Protect KaTeX HTML from escaping
-          const katexFragments = [];
-          const escaped = part.replace(/<span class="katex[\s\S]*?<\/span>/g, m => {
-            const idx = katexFragments.length;
-            katexFragments.push(m);
-            return `\x00KATEX_${idx}\x00`;
-          });
-          return escapeHtml(escaped)
-            .replace(/\x00KATEX_(\d+)\x00/g, (_, idx) => katexFragments[parseInt(idx)])
+          return escapeHtml(part)
             .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
             .replace(/`([^`]+)`/g, "<code>$1</code>");
         })
@@ -665,17 +657,22 @@ INDEX_HTML = r"""<!doctype html>
         }
         if (!line.trim()) continue;
 
-        // Process inline LaTeX inside a paragraph
+        // Process inline LaTeX inside a paragraph — protect KaTeX HTML from escapeHtml
         let htmlLine = line;
+        const katexSpans = [];
         htmlLine = htmlLine.replace(/\x00LATEX_INLINE_(\d+)\x00/g, (_, idx) => {
           const { expr } = latexPlaceholders[parseInt(idx)];
-          return renderKatex(expr, false);
+          const kidx = katexSpans.length;
+          katexSpans.push(renderKatex(expr, false));
+          return `\x00KATEX_SPAN_${kidx}\x00`;
         });
         htmlLine = htmlLine.replace(/\x00LATEX_DISPLAY_(\d+)\x00/g, (_, idx) => {
           const { expr } = latexPlaceholders[parseInt(idx)];
-          return renderKatex(expr, true);
+          const kidx = katexSpans.length;
+          katexSpans.push(renderKatex(expr, true));
+          return `\x00KATEX_SPAN_${kidx}\x00`;
         });
-        blocks.push(`<p>${renderInlineMarkdown(htmlLine)}</p>`);
+        blocks.push(`<p>${renderInlineMarkdown(htmlLine).replace(/\x00KATEX_SPAN_(\d+)\x00/g, (_, idx) => katexSpans[parseInt(idx)])}</p>`);
       }
 
       // Step 4: Restore LaTeX placeholders that ended up as standalone blocks
