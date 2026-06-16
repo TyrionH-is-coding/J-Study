@@ -59,6 +59,17 @@ INDEX_HTML = r"""<!doctype html>
       background: var(--accent);
       opacity: .35;
     }
+    .resize-handle-v {
+      height: 5px;
+      cursor: row-resize;
+      background: transparent;
+      transition: background .15s;
+    }
+    .resize-handle-v:hover,
+    .resize-handle-v.active {
+      background: var(--accent);
+      opacity: .35;
+    }
     aside {
       padding: 20px 16px;
       background: var(--surface-alt);
@@ -237,7 +248,7 @@ INDEX_HTML = r"""<!doctype html>
     /* PDF panel */
     .pdf-panel {
       display: grid;
-      grid-template-rows: auto minmax(100px, 16vh) minmax(0, 1fr);
+      grid-template-rows: auto var(--cite-h, 16vh) 5px minmax(0, 1fr);
       min-height: 0;
       background: var(--surface-alt);
       border-right: 0;
@@ -497,6 +508,7 @@ INDEX_HTML = r"""<!doctype html>
         </div>
       </div>
       <div class="citation-list" id="evidenceList"><div class="empty">生成后显示 citation 对照</div></div>
+      <div class="resize-handle-v" id="pdfResizeHandle"></div>
       <div class="pdf-pages" id="pdfPages"><div class="empty">生成后显示 PDF 页面预览</div></div>
     </section>
   </div>
@@ -1055,8 +1067,28 @@ INDEX_HTML = r"""<!doctype html>
 
       document.addEventListener("mouseup", () => {
         if (!drag) return;
-        drag.h.classList.remove("active");
+        if (drag.h) drag.h.classList.remove("active");
+        if (drag.v) document.getElementById("pdfResizeHandle").classList.remove("active");
         drag = null;
+      });
+
+      // --- Vertical resize (citation ↔ PDF) ---
+      const vHandle = document.getElementById("pdfResizeHandle");
+      if (vHandle) {
+        vHandle.addEventListener("mousedown", e => {
+          e.preventDefault();
+          const startY = e.clientY;
+          const currentH = pdfPanel.querySelector(".citation-list").offsetHeight;
+          vHandle.classList.add("active");
+          drag = { v: true, startY, currentH };
+        });
+      }
+
+      document.addEventListener("mousemove", e => {
+        if (!drag || !drag.v) return;
+        const delta = drag.startY - e.clientY; // up = more citation space
+        const newH = Math.min(400, Math.max(80, drag.currentH + delta));
+        pdfPanel.style.gridTemplateRows = `auto ${newH}px 5px minmax(0, 1fr)`;
       });
     });
   </script>
