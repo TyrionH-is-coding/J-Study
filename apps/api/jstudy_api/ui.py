@@ -562,12 +562,20 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     function renderInlineMarkdown(line) {
-      // Split by evidence buttons (keep them intact)
+      // Split by evidence buttons and KaTeX spans (keep them intact)
       return line
         .split(/(<button class="evidence-btn"[\s\S]*?<\/button>)/g)
         .map(part => {
           if (part.startsWith("<button")) return part;
-          return escapeHtml(part)
+          // Protect KaTeX HTML from escaping
+          const katexFragments = [];
+          const escaped = part.replace(/<span class="katex[\s\S]*?<\/span>/g, m => {
+            const idx = katexFragments.length;
+            katexFragments.push(m);
+            return `\x00KATEX_${idx}\x00`;
+          });
+          return escapeHtml(escaped)
+            .replace(/\x00KATEX_(\d+)\x00/g, (_, idx) => katexFragments[parseInt(idx)])
             .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
             .replace(/`([^`]+)`/g, "<code>$1</code>");
         })
