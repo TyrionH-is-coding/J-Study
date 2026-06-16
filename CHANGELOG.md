@@ -1,5 +1,12 @@
 # J-Study Changelog
 
+## 2026-06-17 — 修复: PDF 引用文本乱码
+
+### 修复
+- `citations.py`: 添加 `clean_quote()` 函数，源头清洗 PDF 提取产生的垃圾字符（Odia/Tamil/Telugu/Malayalam/Sinhala/私用区等编码错误）
+- `ui.py`: 扩展前端 `cleanQuote` 正则覆盖更多 Unicode 垃圾范围，作为旧 job 的兜底处理
+- 全量清理 25 个已存在 job 的 evidence_links.json 文件
+
 ## 2026-06-16 — Phase 2: 通用学科 + 工科领域包
 
 ### 新增

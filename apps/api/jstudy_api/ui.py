@@ -896,7 +896,9 @@ INDEX_HTML = r"""<!doctype html>
         // Clean PDF artifact noise from quote text
         const cleanQuote = quote
           .replace(/^[+\-\\*/=·•■□○●\s]{5,}$/gm, "") // strip ASCII-art lines
-          .replace(/[\u2000-\u200f\u2028-\u202f\u2500-\u257f]+/g, " ") // strip box-drawing & control chars
+          .replace(/[\u2000-\u206f\u2070-\u209f\u20d0-\u20ff\u2190-\u21ff\u2300-\u23ff\u25a0-\u25ff\u27c0-\u27ef\u2980-\u29ff\u2a00-\u2aff\u1d400-\u1d7ff]+/g, " ") // strip math/chart unicode
+          .replace(/[\u0b00-\u0bff\u0c00-\u0cff\u0d00-\u0dff\u0e00-\u0eff\u0f00-\u0fff\u1000-\u10ff\u1200-\u137f\u1700-\u17ff\u1800-\u18af\u05c0-\u05ff\u0600-\u06ff\u0900-\u09ff\u0a00-\u0a7f]/g, "") // strip PDF garbage scripts
+          .replace(/[\ue000-\uf8ff]/g, "") // strip Private Use Area (PDF ligature artifacts)
           .replace(/\s{3,}/g, " ")  // collapse whitespace
           .trim() || "(non-text content)";
         return `<button class="citation-item" data-ref="${link.ref_id}" data-occurrence="${link.occurrence || 1}" type="button">
