@@ -893,14 +893,52 @@ INDEX_HTML = r"""<!doctype html>
         const page = target.page || 1;
         const chunk = target.chunk_id || "";
         const quote = String(target.quote || "").slice(0, 220);
-        // Clean PDF artifact noise from quote text
-        const cleanQuote = quote
-          .replace(/^[+\-\\*/=·•■□○●\s]{5,}$/gm, "") // strip ASCII-art lines
-          .replace(/[\u2000-\u206f\u2070-\u209f\u20d0-\u20ff\u2190-\u21ff\u2300-\u23ff\u25a0-\u25ff\u27c0-\u27ef\u2980-\u29ff\u2a00-\u2aff\u1d400-\u1d7ff]+/g, " ") // strip math/chart unicode
-          .replace(/[\u0b00-\u0bff\u0c00-\u0cff\u0d00-\u0dff\u0e00-\u0eff\u0f00-\u0fff\u1000-\u10ff\u1200-\u137f\u1700-\u17ff\u1800-\u18af\u05c0-\u05ff\u0600-\u06ff\u0900-\u09ff\u0a00-\u0a7f]/g, "") // strip PDF garbage scripts
-          .replace(/[\ue000-\uf8ff]/g, "") // strip Private Use Area (PDF ligature artifacts)
-          .replace(/\s{3,}/g, " ")  // collapse whitespace
-          .trim() || "(non-text content)";
+        // Step 1: strip PDF garbage scripts and PUA artifacts (encoding errors)
+        const cleaned = quote
+          .replace(/^[+\-\\*/=·•■□○●\s]{5,}$/gm, "")
+          .replace(/[\u0b00-\u0bff\u0c00-\u0cff\u0d00-\u0dff\u0e00-\u0eff\u0f00-\u0fff\u1000-\u10ff\u1200-\u137f\u1700-\u17ff\u1800-\u18af\u05c0-\u05ff\u0600-\u06ff\u0900-\u09ff\u0a00-\u0a7f]/g, "")
+          .replace(/[\ue000-\uf8ff]/g, "");
+
+        // Step 2: classify each character → segment → keep only TEXT segments
+        let result = "";
+        let current = "";
+        let inText = false;
+        for (const ch of cleaned) {
+          const cp = ch.codePointAt(0);
+          const isSpace = /\s/.test(ch);
+          // FORMULA: math alphanumeric, operators, arrows, superscripts, combining diacritics
+          const isFormula =
+            (cp >= 0x1d400 && cp <= 0x1d7ff) ||        // math alphanumeric (𝐸, 𝑞, 𝒓, 𝚤, 𝟎)
+            (cp >= 0x2200 && cp <= 0x22ff) ||        // math operators (∀, ∃, ∑, ∫, √, ∞, ∂)
+            (cp >= 0x2190 && cp <= 0x21ff) ||        // arrows (←, →, ⇒, ⇔)
+            (cp >= 0x25a0 && cp <= 0x25ff) ||        // geometric shapes (■, □, ○)
+            (cp >= 0x27c0 && cp <= 0x27ef) ||        // misc math A (⟀, ⟁, ⟂, ⟃)
+            (cp >= 0x2100 && cp <= 0x214f) ||        // letterlike symbols (ℂ, ℏ, ℓ, ℕ, ℝ)
+            (cp >= 0x2980 && cp <= 0x29ff) ||        // misc math B (⦀, ⦁, ⦂)
+            (cp >= 0x2a00 && cp <= 0x2aff) ||        // supplemental math ops (⨀, ⨁, ⨂)
+            (cp >= 0x2070 && cp <= 0x209f) ||        // supers/subscripts (⁰, ⁱ, ⁿ)
+            (cp >= 0x20d0 && cp <= 0x20ff);          // combining diacritics (vector arrow ⃗)
+
+          if (isSpace) {
+            // carry space into current segment
+            current += ch;
+          } else if (isFormula) {
+            // segment boundary: flush current text segment
+            if (inText) { result += current; current = ""; inText = false; }
+            // discard formula chars (don't accumulate)
+            current = "";
+          } else {
+            // TEXT: flush current formula/space into nothing, start text
+            if (!inText) { current = ""; inText = true; }
+            current += ch;
+          }
+        }
+        // flush trailing text
+        if (inText) result += current;
+
+        // Step 3: clean up whitespace
+        const cleanQuote = result.replace(/\s{2,}/g, " ").trim()
+          || "(数学公式内容，详见 PDF)";
         return `<button class="citation-item" data-ref="${link.ref_id}" data-occurrence="${link.occurrence || 1}" type="button">
           <span class="citation-ref">${escapeHtml(link.ref_id)}</span>
           <span class="citation-meta">page ${escapeHtml(String(page))}${chunk ? " · " + escapeHtml(chunk) : ""}</span>
