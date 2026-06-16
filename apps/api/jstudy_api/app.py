@@ -39,6 +39,7 @@ from packages.core.jstudy_core.pipeline import run_mvp
 from packages.core.jstudy_core.scenario_router import ScenarioRoutingError, resolve_scenario
 from packages.core.jstudy_core.settings import RuntimeSettings
 from packages.core.jstudy_core.storage import read_json
+import subprocess
 
 Runner = Callable[..., dict[str, Path]]
 ProviderProbe = Callable[[str, str, str], dict[str, Any]]
@@ -552,6 +553,16 @@ def create_app(
 
         clean_mode = (mode or "").strip()
 
+        # Capture build commit at generation time
+        build_commit = ""
+        try:
+            build_commit = subprocess.run(
+                ["git", "rev-parse", "--short", "HEAD"],
+                capture_output=True, text=True, timeout=2,
+            ).stdout.strip()
+        except Exception:
+            pass
+
         content_paths = selected_content_paths(scenario)
 
         jobs.create(
@@ -565,6 +576,7 @@ def create_app(
                 "parser_profile": parser_profile.trace_metadata(),
                 "content_paths": content_paths,
                 "mode": clean_mode,
+                "build_commit": build_commit,
             },
         )
         background_tasks.add_task(run_job, job_id)
@@ -674,6 +686,7 @@ def create_app(
                 "pdf_name": pdf_path.name if pdf_path else "",
                 "created_at": record.created_at,
                 "quality": record.quality.get("status", ""),
+                "build_commit": record.metadata.get("build_commit", ""),
             })
         return result
 

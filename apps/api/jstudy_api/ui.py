@@ -599,11 +599,12 @@ INDEX_HTML = r"""<!doctype html>
           const qCls = j.quality === "pass" ? "history-item-q-pass" : "history-item-q-fail";
           const qText = j.quality === "pass" ? "✅" : "❌";
           const pdfName = j.pdf_name ? j.pdf_name.slice(0, 28) + (j.pdf_name.length > 28 ? "…" : "") : "";
+          const commit = j.build_commit || "";
           return `<button class="history-item" data-job-id="${j.job_id}">
             <span class="history-item-title">${escapeHtml(scenarioName)}</span>
             <span class="history-item-mode">${escapeHtml(modeName)} <span class="${qCls}">${qText}</span></span>
             <span class="history-item-meta">${escapeHtml(pdfName)}</span>
-            <span class="history-item-meta">${escapeHtml(j.job_id.slice(0, 12))}…</span>
+            <span class="history-item-meta">${commit ? escapeHtml(commit) : ""}${escapeHtml(j.job_id.slice(0, 12))}…</span>
           </button>`;
         }).join("");
         // Click to reload
@@ -626,7 +627,8 @@ INDEX_HTML = r"""<!doctype html>
           fetch(`/api/jobs/${jobId}/evidence`),
           fetch(`/api/jobs/${jobId}/pdf-info`)
         ]);
-        if (!outRes.ok) { statusBox.innerHTML = `<span class="error">输出不存在</span>`; return; }
+        if (outRes.status === 401) { statusBox.innerHTML = `<span class="error">会话已过期，请刷新页面重新登录</span>`; return; }
+        if (!outRes.ok) { statusBox.innerHTML = `<span class="error">输出不存在或已清理</span>`; return; }
         const out = await outRes.json();
         const evidence = await evidenceRes.json();
         const pdfInfo = await pdfInfoRes.json();
@@ -634,14 +636,16 @@ INDEX_HTML = r"""<!doctype html>
         output.innerHTML = renderMarkdown(out.markdown);
         // Quality badge
         const qualRes = await fetch(`/api/jobs/${jobId}`);
-        const jobData = await qualRes.json();
-        if (jobData.quality && jobData.quality.status) {
-          const badge = document.createElement("span");
-          badge.className = `quality-badge ${jobData.quality.status}`;
-          badge.textContent = jobData.quality.status === "pass" ? "✅ 通过" : "❌ 未通过";
-          const firstH = output.querySelector("h1, h2");
-          if (firstH) firstH.insertAdjacentElement("afterend", badge);
-          else output.insertBefore(badge, output.firstChild);
+        if (qualRes.ok) {
+          const jobData = await qualRes.json();
+          if (jobData.quality && jobData.quality.status) {
+            const badge = document.createElement("span");
+            badge.className = `quality-badge ${jobData.quality.status}`;
+            badge.textContent = jobData.quality.status === "pass" ? "✅ 通过" : "❌ 未通过";
+            const firstH = output.querySelector("h1, h2");
+            if (firstH) firstH.insertAdjacentElement("afterend", badge);
+            else output.insertBefore(badge, output.firstChild);
+          }
         }
         renderEvidencePanel(evidenceLinks);
         renderPdfPages(pdfInfo.page_count || 0);
@@ -650,7 +654,7 @@ INDEX_HTML = r"""<!doctype html>
         downloadBtn.hidden = false;
         statusBox.textContent = `已完成  (${jobId})`;
       } catch {
-        statusBox.innerHTML = `<span class="error">加载失败</span>`;
+        statusBox.innerHTML = `<span class="error">加载失败，可能会话已过期</span>`;
       }
     }
 
@@ -945,6 +949,7 @@ INDEX_HTML = r"""<!doctype html>
         downloadBtn.href = `/api/jobs/${jobId}/export`;
         downloadBtn.hidden = false;
         run.disabled = false;
+        loadHistory();
         return;
       }
       if (job.status === "failed") {
