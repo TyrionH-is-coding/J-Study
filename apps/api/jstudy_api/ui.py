@@ -28,6 +28,7 @@ INDEX_HTML = r"""<!doctype html>
       --shadow-md: 0 4px 12px rgba(0,0,0,.06);
     }
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { overflow: hidden; height: 100%; }
     body {
       font-family: 'Inter', system-ui, -apple-system, sans-serif;
       color: var(--text);
@@ -36,7 +37,7 @@ INDEX_HTML = r"""<!doctype html>
     }
     .workspace {
       display: grid;
-      grid-template-columns: 300px minmax(0, 1fr) minmax(340px, 40vw);
+      grid-template-columns: var(--aside-w, 300px) 1fr var(--pdf-w, 360px);
       height: 100vh;
       overflow: hidden;
     }
@@ -44,6 +45,19 @@ INDEX_HTML = r"""<!doctype html>
       min-width: 0;
       min-height: 0;
       border-right: 1px solid var(--border-light);
+    }
+    .resize-handle {
+      width: 5px;
+      cursor: col-resize;
+      background: transparent;
+      transition: background .15s;
+      position: relative;
+      z-index: 10;
+    }
+    .resize-handle:hover,
+    .resize-handle.active {
+      background: var(--accent);
+      opacity: .35;
     }
     aside {
       padding: 20px 16px;
@@ -469,9 +483,11 @@ INDEX_HTML = r"""<!doctype html>
         <div class="history-list" id="historyList"></div>
       </div>
     </aside>
+    <div class="resize-handle" data-target="aside" data-min="220" data-max="500"></div>
     <main>
       <article class="output" id="output"><div class="empty">生成后显示学习资料</div></article>
     </main>
+    <div class="resize-handle" data-target="pdf" data-min="260" data-max="700"></div>
     <section class="pdf-panel">
       <div class="pdf-head">
         <strong>课件依据</strong>
@@ -1001,6 +1017,47 @@ INDEX_HTML = r"""<!doctype html>
       const link = findEvidenceLink(btn.dataset.ref, btn.dataset.occurrence);
       showEvidenceLink(link, { scrollCitationList: true });
     });
+
+    // --- Column resize ---
+    (function() {
+      const handles = document.querySelectorAll(".resize-handle");
+      let drag = null;
+
+      handles.forEach(h => {
+        h.addEventListener("mousedown", e => {
+          e.preventDefault();
+          const target = h.dataset.target;
+          const minW = parseInt(h.dataset.min) || 200;
+          const maxW = parseInt(h.dataset.max) || 800;
+          const workspace = document.querySelector(".workspace");
+          const style = getComputedStyle(workspace);
+          const current = parseInt(target === "aside"
+            ? style.getPropertyValue("--aside-w").trim()
+            : style.getPropertyValue("--pdf-w").trim());
+          const startX = e.clientX;
+          h.classList.add("active");
+          drag = { target, minW, maxW, startX, current, h };
+        });
+      });
+
+      document.addEventListener("mousemove", e => {
+        if (!drag) return;
+        const delta = e.clientX - drag.startX;
+        const newW = Math.min(drag.maxW, Math.max(drag.minW, drag.current + delta));
+        const workspace = document.querySelector(".workspace");
+        if (drag.target === "aside") {
+          workspace.style.setProperty("--aside-w", newW + "px");
+        } else {
+          workspace.style.setProperty("--pdf-w", newW + "px");
+        }
+      });
+
+      document.addEventListener("mouseup", () => {
+        if (!drag) return;
+        drag.h.classList.remove("active");
+        drag = null;
+      });
+    })();
   </script>
 </body>
 </html>
