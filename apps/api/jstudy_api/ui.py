@@ -379,6 +379,43 @@ INDEX_HTML = r"""<!doctype html>
     .icon-med { background: #fce7f3; }
     .icon-gen { background: #dbeafe; }
     .icon-eng { background: #e0e7ff; }
+
+    /* History list */
+    .history {
+      margin-top: 12px;
+      padding-top: 10px;
+      border-top: 1px solid var(--border-light);
+    }
+    .history-header {
+      display: flex; align-items: center; justify-content: space-between;
+      font-size: 12px; font-weight: 600; color: var(--text-secondary);
+      cursor: pointer; user-select: none; padding: 2px 0;
+    }
+    .history-header:hover { color: var(--text); }
+    .history-count {
+      font-size: 10px; font-weight: 600; color: var(--text-muted);
+      background: var(--border-light); padding: 1px 6px; border-radius: 999px;
+    }
+    .history-list {
+      display: flex; flex-direction: column; gap: 3px; margin-top: 6px; max-height: 240px; overflow-y: auto;
+    }
+    .history-item {
+      display: grid; grid-template-columns: 1fr auto;
+      gap: 2px 8px;
+      padding: 6px 8px;
+      border: 1px solid var(--border-light); border-radius: 6px;
+      background: var(--surface);
+      cursor: pointer; font-size: 11px; text-align: left; font-family: inherit; color: var(--text);
+      transition: border-color .12s, background .12s;
+    }
+    .history-item:hover { border-color: var(--text-muted); }
+    .history-item:active { background: var(--accent-soft); border-color: var(--accent); }
+    .history-item-title { font-weight: 600; }
+    .history-item-meta { color: var(--text-muted); font-size: 10px; }
+    .history-item-mode { font-size: 10px; color: var(--text-secondary); }
+    .history-item-q-pass { color: #065f46; font-weight: 600; }
+    .history-item-q-fail { color: #991b1b; font-weight: 600; }
+    .history-empty { font-size: 11px; color: var(--text-muted); padding: 6px 0; }
   </style>
 </head>
 <body>
@@ -424,6 +461,13 @@ INDEX_HTML = r"""<!doctype html>
         <button class="btn-primary run" id="run" type="submit">生成学习资料</button>
       </form>
       <div class="status" id="status">等待上传</div>
+      <div class="history" id="historySection" hidden>
+        <div class="history-header" id="historyToggle">
+          <span>📋 历史记录</span>
+          <span class="history-count" id="historyCount">0</span>
+        </div>
+        <div class="history-list" id="historyList"></div>
+      </div>
     </aside>
     <main>
       <article class="output" id="output"><div class="empty">生成后显示学习资料</div></article>
@@ -458,6 +502,10 @@ INDEX_HTML = r"""<!doctype html>
     const parserProfileIdInput = document.getElementById("parserProfileIdInput");
     const modePills = document.getElementById("modePills");
     const downloadBtn = document.getElementById("downloadBtn");
+    const historySection = document.getElementById("historySection");
+    const historyToggle = document.getElementById("historyToggle");
+    const historyCount = document.getElementById("historyCount");
+    const historyList = document.getElementById("historyList");
     let currentJob = "";
     let evidenceLinks = [];
 
@@ -525,11 +573,85 @@ INDEX_HTML = r"""<!doctype html>
       authPanel.hidden = true;
       form.hidden = false;
       statusBox.textContent = `已登录 ${user.email}`;
+      loadHistory();
     }
     function showSignedOut() {
       authPanel.hidden = false;
       form.hidden = true;
       statusBox.textContent = "请先登录";
+      historySection.hidden = true;
+    }
+
+    const MODE_LABELS = { "": "总结", "exam-quick": "考前速记", "rewrite": "改写" };
+    const SCENARIO_DISPLAY = { "medicine-default": "Medicine", "general-default": "General", "engineering-default": "Engineering" };
+
+    async function loadHistory() {
+      try {
+        const res = await fetch("/api/jobs");
+        if (!res.ok) return;
+        const jobs = await res.json();
+        if (!jobs.length) { historySection.hidden = true; return; }
+        historySection.hidden = false;
+        historyCount.textContent = jobs.length;
+        historyList.innerHTML = jobs.map(j => {
+          const scenarioName = SCENARIO_DISPLAY[j.scenario_id] || j.scenario_id;
+          const modeName = MODE_LABELS[j.mode] || j.mode;
+          const qCls = j.quality === "pass" ? "history-item-q-pass" : "history-item-q-fail";
+          const qText = j.quality === "pass" ? "✅" : "❌";
+          const pdfName = j.pdf_name ? j.pdf_name.slice(0, 28) + (j.pdf_name.length > 28 ? "…" : "") : "";
+          return `<button class="history-item" data-job-id="${j.job_id}">
+            <span class="history-item-title">${escapeHtml(scenarioName)}</span>
+            <span class="history-item-mode">${escapeHtml(modeName)} <span class="${qCls}">${qText}</span></span>
+            <span class="history-item-meta">${escapeHtml(pdfName)}</span>
+            <span class="history-item-meta">${escapeHtml(j.job_id.slice(0, 12))}…</span>
+          </button>`;
+        }).join("");
+        // Click to reload
+        historyList.querySelectorAll(".history-item").forEach(item => {
+          item.addEventListener("click", () => loadJob(item.dataset.jobId));
+        });
+      } catch { historySection.hidden = true; }
+    }
+
+    async function loadJob(jobId) {
+      currentJob = jobId;
+      statusBox.textContent = `加载中…  (${jobId})`;
+      output.innerHTML = `<div class="empty">加载中</div>`;
+      evidenceList.innerHTML = `<div class="empty">加载引用</div>`;
+      pdfPages.innerHTML = `<div class="empty">加载 PDF</div>`;
+      downloadBtn.hidden = true;
+      try {
+        const [outRes, evidenceRes, pdfInfoRes] = await Promise.all([
+          fetch(`/api/jobs/${jobId}/output`),
+          fetch(`/api/jobs/${jobId}/evidence`),
+          fetch(`/api/jobs/${jobId}/pdf-info`)
+        ]);
+        if (!outRes.ok) { statusBox.innerHTML = `<span class="error">输出不存在</span>`; return; }
+        const out = await outRes.json();
+        const evidence = await evidenceRes.json();
+        const pdfInfo = await pdfInfoRes.json();
+        evidenceLinks = evidence.evidence_links || [];
+        output.innerHTML = renderMarkdown(out.markdown);
+        // Quality badge
+        const qualRes = await fetch(`/api/jobs/${jobId}`);
+        const jobData = await qualRes.json();
+        if (jobData.quality && jobData.quality.status) {
+          const badge = document.createElement("span");
+          badge.className = `quality-badge ${jobData.quality.status}`;
+          badge.textContent = jobData.quality.status === "pass" ? "✅ 通过" : "❌ 未通过";
+          const firstH = output.querySelector("h1, h2");
+          if (firstH) firstH.insertAdjacentElement("afterend", badge);
+          else output.insertBefore(badge, output.firstChild);
+        }
+        renderEvidencePanel(evidenceLinks);
+        renderPdfPages(pdfInfo.page_count || 0);
+        pdfMeta.textContent = "已生成";
+        downloadBtn.href = `/api/jobs/${jobId}/export`;
+        downloadBtn.hidden = false;
+        statusBox.textContent = `已完成  (${jobId})`;
+      } catch {
+        statusBox.innerHTML = `<span class="error">加载失败</span>`;
+      }
     }
 
     async function loadSession() {

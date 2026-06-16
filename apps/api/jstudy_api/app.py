@@ -655,6 +655,28 @@ def create_app(
             ]
         return {"page_count": len(pages), "pages": pages}
 
+    @app.get("/api/jobs")
+    def list_user_jobs(request: Request, response: Response) -> list[dict[str, Any]]:
+        set_no_store(response)
+        current_user = current_user_or_401(request)
+        result = []
+        for record in jobs.list_completed():
+            owner = str(record.metadata.get("owner_user_id") or "")
+            if owner != current_user.id:
+                continue
+            scenario = record.metadata.get("scenario", {})
+            pdf_path = record.pdf_path
+            result.append({
+                "job_id": record.job_id,
+                "status": record.status,
+                "scenario_id": scenario.get("requested_scenario_id", ""),
+                "mode": record.metadata.get("mode", ""),
+                "pdf_name": pdf_path.name if pdf_path else "",
+                "created_at": record.created_at,
+                "quality": record.quality.get("status", ""),
+            })
+        return result
+
     @app.get("/api/jobs/{job_id}/pdf-page/{page_no}.png")
     def job_pdf_page_png(job_id: str, page_no: int, request: Request) -> Response:
         job = job_or_404(job_id, current_user_or_401(request))

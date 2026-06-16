@@ -136,6 +136,12 @@ class JobStore:
         record.updated_at = utc_now_iso()
         self._save()
 
+    def list_completed(self) -> list[JobRecord]:
+        """Return all completed/failed jobs, newest first."""
+        done = [r for r in self._jobs.values() if r.status in {"completed", "failed"}]
+        done.sort(key=lambda r: r.created_at, reverse=True)
+        return done
+
     def cleanup_finished_older_than(self, cutoff: datetime, delete_files: bool = False) -> list[str]:
         normalized_cutoff = normalized_datetime(cutoff)
         pruned: list[str] = []
