@@ -43,6 +43,7 @@ class SettingsTest(unittest.TestCase):
                 "JSTUDY_SESSION_SECRET": "session-secret",
                 "JSTUDY_COOKIE_SECURE": "true",
                 "JSTUDY_SESSION_COOKIE_NAME": "custom_session",
+                "JSTUDY_INVITE_REQUIRED": "false",
             }
 
             with patch.dict(os.environ, env, clear=False):
@@ -52,6 +53,7 @@ class SettingsTest(unittest.TestCase):
         self.assertEqual(settings.session_secret, "session-secret")
         self.assertTrue(settings.cookie_secure)
         self.assertEqual(settings.session_cookie_name, "custom_session")
+        self.assertFalse(settings.invite_required)
 
     def test_runtime_settings_keep_mvp_defaults(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -69,6 +71,7 @@ class SettingsTest(unittest.TestCase):
         self.assertEqual(settings.session_secret, "dev-session-secret")
         self.assertFalse(settings.cookie_secure)
         self.assertEqual(settings.session_cookie_name, "jstudy_session")
+        self.assertTrue(settings.invite_required)
 
     def test_invalid_cookie_secure_environment_is_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:

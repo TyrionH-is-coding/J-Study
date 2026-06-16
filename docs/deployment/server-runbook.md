@@ -182,7 +182,7 @@ Use this for backend smoke testing before the separate frontend and reverse prox
 cd /opt/jstudy/app
 cp .env.example .env
 # edit .env: set SILICONFLOW_API_KEY, JSTUDY_ADMIN_TOKEN, POSTGRES_PASSWORD,
-# DATABASE_URL, and JSTUDY_SESSION_SECRET
+# DATABASE_URL, JSTUDY_SESSION_SECRET, and JSTUDY_INVITE_REQUIRED
 docker compose -f deploy/docker-compose/api.compose.yml up -d --build
 ```
 
@@ -195,7 +195,7 @@ curl "http://127.0.0.1:8765/api/readiness?probe_provider=true"
 ```
 
 The readiness response must be `ready` before pilot users submit PDFs.
-After startup, create at least one reusable invite code from `/admin/settings?admin_token=...` before testing registration.
+Keep `JSTUDY_INVITE_REQUIRED=true` for normal pilot access. For a small private test, `JSTUDY_INVITE_REQUIRED=false` allows registration without invite codes; restore it before opening registration more broadly. When invite registration is enabled, create at least one reusable invite code from `/admin/settings?admin_token=...` before testing registration.
 
 The first Tencent Cloud backend-only trial record is tracked in
 [`tencent-cloud-trial-2026-06-15.md`](tencent-cloud-trial-2026-06-15.md).
@@ -209,11 +209,11 @@ Planned sequence:
 3. Start Postgres.
 4. Start backend.
 5. Verify `/api/health` and `/api/readiness`.
-6. Create at least one invite code from the admin panel.
+6. Create at least one invite code from the admin panel when `JSTUDY_INVITE_REQUIRED=true`.
 7. Start frontend.
 8. Start or reload reverse proxy.
 9. Verify HTTPS domain routes.
-10. Register a test user with the invite code.
+10. Register a test user, using the invite code when `JSTUDY_INVITE_REQUIRED=true`.
 11. Upload a small test PDF and verify citation preview.
 
 Expected commands will be finalized after `app.compose.yml` and migrations exist.
@@ -306,7 +306,7 @@ Before public testing:
 - `JSTUDY_SESSION_SECRET` is set.
 - HTTPS is enabled.
 - Cookies are `HttpOnly`, `Secure`, and `SameSite=Lax`.
-- Invite registration is required.
+- `JSTUDY_INVITE_REQUIRED=true` before public registration.
 - Admin invite endpoints require admin token.
 - Users can only access their own jobs.
 - `JSTUDY_JOB_RETENTION_HOURS` is nonzero.

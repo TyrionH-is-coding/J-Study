@@ -15,7 +15,7 @@ The current backend can:
 - extract page text with PyMuPDF
 - use the `fast` parser profile as the public PyMuPDF path by default
 - reserve a hidden/admin-only `quality` parser profile for a future MinerU-backed path
-- require invite-gated email/password registration before users submit PDFs
+- require invite-gated email/password registration by default before users submit PDFs
 - store user accounts, reusable invite codes, invite-code uses, and HTTP-only sessions in SQLModel-backed storage
 - attach generated jobs to the owner user and block cross-user job access
 - retrieve evidence chunks with embedding + BM25/RRF
@@ -105,6 +105,7 @@ The admin settings directory defaults to `data/settings` and can be moved with `
 `JSTUDY_JOB_RETENTION_HOURS` is optional. The application default is `0`, which disables cleanup, but public pilot deployments should set `72` or `168` so uploaded PDFs and generated artifacts do not accumulate indefinitely.
 `DATABASE_URL` controls auth persistence. It defaults to a local SQLite file in development; Docker Compose uses Postgres.
 Set `JSTUDY_SESSION_SECRET` before deployment. Use `JSTUDY_COOKIE_SECURE=true` when serving over HTTPS.
+`JSTUDY_INVITE_REQUIRED` defaults to `true`. For small private tests only, set `JSTUDY_INVITE_REQUIRED=false` to allow registration without an invite code; set it back to `true` before broader public access.
 
 Health check:
 
@@ -136,7 +137,7 @@ POST /api/auth/logout
 GET /api/auth/me
 ```
 
-Registration requires a reusable invite code created from the admin settings page or invite-code API.
+Registration requires a reusable invite code created from the admin settings page or invite-code API when `JSTUDY_INVITE_REQUIRED=true`.
 
 Admin settings:
 

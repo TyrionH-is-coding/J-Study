@@ -33,6 +33,7 @@ DATABASE_URL_ENV = "DATABASE_URL"
 SESSION_SECRET_ENV = "JSTUDY_SESSION_SECRET"
 COOKIE_SECURE_ENV = "JSTUDY_COOKIE_SECURE"
 COOKIE_NAME_ENV = "JSTUDY_SESSION_COOKIE_NAME"
+INVITE_REQUIRED_ENV = "JSTUDY_INVITE_REQUIRED"
 DEFAULT_MAX_PDF_BYTES = 50 * 1024 * 1024
 ProviderProbe = Callable[[str, str, str], dict[str, Any]]
 
@@ -102,6 +103,7 @@ class RuntimeSettings:
     session_secret: str = "dev-session-secret"
     cookie_secure: bool = False
     session_cookie_name: str = "jstudy_session"
+    invite_required: bool = True
 
     @classmethod
     def from_env(cls, project_root: Path, jobs_root: Path | None = None) -> "RuntimeSettings":
@@ -163,6 +165,7 @@ class RuntimeSettings:
             session_secret=os.getenv(SESSION_SECRET_ENV, "dev-session-secret").strip() or "dev-session-secret",
             cookie_secure=env_bool(COOKIE_SECURE_ENV, False),
             session_cookie_name=os.getenv(COOKIE_NAME_ENV, "jstudy_session").strip() or "jstudy_session",
+            invite_required=env_bool(INVITE_REQUIRED_ENV, True),
         )
 
     def readiness(

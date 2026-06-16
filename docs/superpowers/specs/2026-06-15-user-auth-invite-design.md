@@ -2,13 +2,14 @@
 
 ## Goal
 
-Add a minimal learner account system before building the full frontend. The system should let pilot users register with an email, password, and shared invite code, then use J-Study with an HTTP-only cookie session.
+Add a minimal learner account system before building the full frontend. The system should let pilot users register with an email, password, and a shared invite code by default, then use J-Study with an HTTP-only cookie session. For small private tests, operators may temporarily set `JSTUDY_INVITE_REQUIRED=false` to allow registration without an invite code.
 
 This design is for the first productized pilot. It should not add social login, email verification delivery, billing, teams, or admin user roles.
 
 ## Decisions
 
-- Registration uses email, password, and invite code.
+- Registration uses email, password, and invite code by default.
+- `JSTUDY_INVITE_REQUIRED=false` may temporarily disable the invite-code requirement for small private tests.
 - Invite codes can be shared by many users.
 - Invite codes can be enabled or disabled by the operator.
 - Email verification is represented by `email_verified`, defaulting to `false`, but it does not block registration or login in the first version.
@@ -129,9 +130,9 @@ Registration behavior:
 
 - Validate email format.
 - Require a password with a minimum length of 8 characters.
-- Require an enabled invite code.
+- Require an enabled invite code when `JSTUDY_INVITE_REQUIRED=true`.
 - Create user with `email_verified=false`.
-- Record invite-code usage.
+- Record invite-code usage only when invite registration is enabled.
 - Start a session after successful registration.
 
 `POST /api/auth/login` behavior:
@@ -276,7 +277,8 @@ Do not reveal whether an email exists during login.
 
 Backend tests:
 
-- registration requires invite code
+- registration requires invite code by default
+- registration can skip invite code when `JSTUDY_INVITE_REQUIRED=false`
 - shared invite code can register multiple users
 - disabled invite code is rejected
 - duplicate email is rejected

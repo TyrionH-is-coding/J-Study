@@ -274,7 +274,7 @@ INDEX_HTML = r"""<!doctype html>
           <label>Password</label>
           <input name="password" type="password" autocomplete="new-password" required />
           <label>Invite code</label>
-          <input name="invite_code" type="text" autocomplete="off" required />
+          <input name="invite_code" type="text" autocomplete="off" />
           <button class="run" type="submit">Register</button>
         </form>
       </section>

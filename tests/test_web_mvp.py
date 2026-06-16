@@ -32,6 +32,7 @@ class WebMvpTest(unittest.TestCase):
         root: Path,
         max_pdf_bytes: int = 50 * 1024 * 1024,
         job_retention_hours: int = 0,
+        invite_required: bool = True,
     ) -> RuntimeSettings:
         soul_path = root / "config" / "soul.md"
         mnemonics_path = root / "config" / "mnemonics.md"
@@ -51,6 +52,7 @@ class WebMvpTest(unittest.TestCase):
             embed_model="embed-model",
             max_pdf_bytes=max_pdf_bytes,
             job_retention_hours=job_retention_hours,
+            invite_required=invite_required,
         )
 
     def register_user(
@@ -118,6 +120,7 @@ class WebMvpTest(unittest.TestCase):
         self.assertIn("/api/auth/login", INDEX_HTML)
         self.assertIn("/api/auth/register", INDEX_HTML)
         self.assertIn('name="invite_code"', INDEX_HTML)
+        self.assertNotIn('name="invite_code" type="text" autocomplete="off" required', INDEX_HTML)
 
     def test_health_endpoint_reports_api_status(self):
         client = TestClient(create_app())
@@ -220,6 +223,22 @@ class WebMvpTest(unittest.TestCase):
         self.assertEqual(me_after_logout.status_code, 401)
         self.assertEqual(logged_in.status_code, 200)
         self.assertEqual(me_after_login.json()["email"], "student@example.com")
+
+    def test_auth_register_allows_missing_invite_when_disabled(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            settings = self.ready_settings(root, invite_required=False)
+            client = TestClient(create_app(settings=settings))
+
+            registered = client.post(
+                "/api/auth/register",
+                json={"email": "student@example.com", "password": "password123"},
+            )
+            me_after_register = client.get("/api/auth/me")
+
+        self.assertEqual(registered.status_code, 200)
+        self.assertEqual(registered.json()["email"], "student@example.com")
+        self.assertEqual(me_after_register.json()["email"], "student@example.com")
 
     def test_admin_invite_api_requires_token_and_shared_code_registers_multiple_users(self):
         with tempfile.TemporaryDirectory() as tmp:

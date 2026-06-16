@@ -5,7 +5,7 @@ from pathlib import Path
 from sqlmodel import Session, select
 
 from packages.core.jstudy_core.auth_db import create_auth_engine, create_auth_tables
-from packages.core.jstudy_core.auth_models import User, UserSession
+from packages.core.jstudy_core.auth_models import InviteCodeUse, User, UserSession
 from packages.core.jstudy_core.auth_service import (
     AuthService,
     DuplicateEmailError,
@@ -51,6 +51,17 @@ class AuthServiceTest(unittest.TestCase):
 
         with self.assertRaises(InvalidInviteCodeError):
             service.register("student@example.com", "password123", "MED-PILOT")
+
+    def test_invite_can_be_disabled_for_small_pilot(self):
+        _service, engine = self.make_service()
+        service = AuthService(engine, invite_required=False)
+
+        user = service.register("student@example.com", "password123", "")
+        with Session(engine) as session:
+            invite_uses = session.exec(select(InviteCodeUse)).all()
+
+        self.assertEqual(user.email, "student@example.com")
+        self.assertEqual(invite_uses, [])
 
     def test_duplicate_email_is_rejected(self):
         service, _engine = self.make_service()

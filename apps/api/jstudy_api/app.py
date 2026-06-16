@@ -193,7 +193,7 @@ def create_app(
     database_url = runtime.database_url or f"sqlite:///{(jobs_root / 'jstudy.db').as_posix()}"
     auth_engine = create_auth_engine(database_url)
     create_auth_tables(auth_engine)
-    auth_service = AuthService(auth_engine)
+    auth_service = AuthService(auth_engine, invite_required=runtime.invite_required)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):

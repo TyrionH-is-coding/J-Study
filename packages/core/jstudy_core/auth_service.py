@@ -49,8 +49,9 @@ def now_utc() -> datetime:
 
 
 class AuthService:
-    def __init__(self, engine: Engine):
+    def __init__(self, engine: Engine, invite_required: bool = True):
         self.engine = engine
+        self.invite_required = invite_required
         self.password_hash = PasswordHash.recommended()
 
     def create_invite_code(self, code: str, label: str = "") -> InviteCode:
@@ -97,16 +98,18 @@ class AuthService:
         if len(password) < 8:
             raise AuthServiceError("Password must be at least 8 characters")
         code = normalize_invite_code(invite_code)
-        if not code:
+        if self.invite_required and not code:
             raise InvalidInviteCodeError("Invite code is required")
 
         with session_scope(self.engine) as session:
             existing_user = session.exec(select(User).where(User.email == normalized_email)).first()
             if existing_user is not None:
                 raise DuplicateEmailError("Email is already registered")
-            invite = session.exec(select(InviteCode).where(InviteCode.code == code)).first()
-            if invite is None or not invite.enabled:
-                raise InvalidInviteCodeError("Invite code is invalid")
+            invite = None
+            if self.invite_required:
+                invite = session.exec(select(InviteCode).where(InviteCode.code == code)).first()
+                if invite is None or not invite.enabled:
+                    raise InvalidInviteCodeError("Invite code is invalid")
 
             user = User(
                 email=normalized_email,
@@ -115,7 +118,8 @@ class AuthService:
             )
             session.add(user)
             session.flush()
-            session.add(InviteCodeUse(invite_code_id=invite.id, user_id=user.id, email=user.email))
+            if invite is not None:
+                session.add(InviteCodeUse(invite_code_id=invite.id, user_id=user.id, email=user.email))
             return user
 
     def login(self, email: str, password: str) -> tuple[User, str]:
