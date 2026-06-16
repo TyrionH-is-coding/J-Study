@@ -37,7 +37,7 @@ INDEX_HTML = r"""<!doctype html>
     }
     .workspace {
       display: grid;
-      grid-template-columns: var(--aside-w, 300px) 5px 1fr 5px var(--pdf-w, 360px);
+      grid-template-columns: 300px 5px 1fr 5px 360px;
       height: 100vh;
       overflow: hidden;
     }
@@ -1021,7 +1021,13 @@ INDEX_HTML = r"""<!doctype html>
     // --- Column resize ---
     (function() {
       const handles = document.querySelectorAll(".resize-handle");
+      const workspace = document.querySelector(".workspace");
+      const aside = document.querySelector("aside");
+      const pdfPanel = document.querySelector(".pdf-panel");
       let drag = null;
+
+      // Initialize grid with defaults
+      workspace.style.gridTemplateColumns = "300px 5px 1fr 5px 360px";
 
       handles.forEach(h => {
         h.addEventListener("mousedown", e => {
@@ -1029,11 +1035,7 @@ INDEX_HTML = r"""<!doctype html>
           const target = h.dataset.target;
           const minW = parseInt(h.dataset.min) || 200;
           const maxW = parseInt(h.dataset.max) || 800;
-          const workspace = document.querySelector(".workspace");
-          const style = getComputedStyle(workspace);
-          const current = parseInt(target === "aside"
-            ? style.getPropertyValue("--aside-w").trim() || "300"
-            : style.getPropertyValue("--pdf-w").trim() || "360");
+          const current = target === "aside" ? aside.offsetWidth : pdfPanel.offsetWidth;
           const startX = e.clientX;
           h.classList.add("active");
           drag = { target, minW, maxW, startX, current, h };
@@ -1043,16 +1045,11 @@ INDEX_HTML = r"""<!doctype html>
       document.addEventListener("mousemove", e => {
         if (!drag) return;
         const delta = e.clientX - drag.startX;
-        // Left handle: drag right = wider sidebar (+delta)
-        // Right handle: drag right = narrower PDF (-delta)
         const sign = drag.target === "aside" ? 1 : -1;
         const newW = Math.min(drag.maxW, Math.max(drag.minW, drag.current + sign * delta));
-        const workspace = document.querySelector(".workspace");
-        if (drag.target === "aside") {
-          workspace.style.setProperty("--aside-w", newW + "px");
-        } else {
-          workspace.style.setProperty("--pdf-w", newW + "px");
-        }
+        const asideW = drag.target === "aside" ? newW : aside.offsetWidth;
+        const pdfW = drag.target === "pdf" ? newW : pdfPanel.offsetWidth;
+        workspace.style.gridTemplateColumns = `${asideW}px 5px 1fr 5px ${pdfW}px`;
       });
 
       document.addEventListener("mouseup", () => {
