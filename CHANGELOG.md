@@ -68,3 +68,8 @@ Engineering/exam-quick 输出对比改前改后：LaTeX 公式密度提升、⭐
 - **模式选择器**: 下拉框改为横向 pill 按钮（总结/考前速记/改写重述），选中蓝底白字
 - **后端兼容**: 使用 `<input type="hidden">` 保持 FormData 提交格式不变
 - **学科图标**: Medicine 粉色、General 蓝色、Engineering 紫色背景
+
+## 2026-06-16 — 修复：含 LaTeX 的行中加粗不渲染
+
+### 修复
+- `renderMarkdown` 中，当一行同时包含 `$...$` 和 `**加粗**` 时，`hasLatex` 分支直接推了 KaTeX 渲染结果，跳过了 `renderInlineMarkdown`，导致 `**` 原文显示。现已统一走 `renderInlineMarkdown` 后再渲染 KaTeX。
