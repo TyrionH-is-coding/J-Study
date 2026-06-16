@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from collections import Counter
 from dataclasses import dataclass
 from typing import Any
 
@@ -13,94 +14,131 @@ class StudyQuery:
     required_any: tuple[str, ...] = ()
 
 
-def build_study_queries() -> list[StudyQuery]:
-    """Queries for the single-courseware cocci MVP.
+FALLBACK_TOPICS = ("医学", "核心概念", "机制", "分类", "诊断", "治疗", "检查", "考点")
+STOP_TERMS = {
+    "第一章",
+    "第二章",
+    "第三章",
+    "第四章",
+    "第五章",
+    "第六章",
+    "第七章",
+    "第八章",
+    "第九章",
+    "第十章",
+    "绪论",
+    "目录",
+    "课件",
+    "课程",
+    "学习目标",
+    "教学目标",
+    "重点",
+    "难点",
+    "小结",
+}
 
-    DeepTutor's tool layer can call RAG multiple times. The MVP mirrors that
-    pattern by searching each learning module separately instead of issuing one
-    broad query for the whole lecture.
-    """
+
+def build_study_queries(source_text: str = "", outline: str = "") -> list[StudyQuery]:
+    """Build RAG queries from the current upload instead of a fixed lecture topic."""
+
+    topics = extract_study_topics(source_text=source_text, outline=outline)
+    topic_text = " ".join(topics)
+    required_any = tuple(topics[:8])
 
     return [
         StudyQuery(
             "overview",
             "体系概览",
-            "病原性球菌 化脓性球菌 革兰阳性球菌 革兰阴性球菌 分类 葡萄球菌 链球菌 奈瑟菌",
-            ("病原性球菌", "化脓性球菌", "革兰阳性", "革兰阴性"),
+            f"{topic_text} 课程结构 体系概览 核心概念 总结",
+            required_any,
         ),
         StudyQuery(
-            "staphylococcus_basic",
-            "葡萄球菌：基本特征",
-            "葡萄球菌 生物学性状 形态 染色 葡萄串状 革兰阳性 触酶 catalase 培养特性",
-            ("葡萄球菌", "staphylococci", "staphylococcus", "触酶"),
+            "key_concepts",
+            "核心概念",
+            f"{topic_text} 定义 概念 特点 组成 分类",
+            required_any,
         ),
         StudyQuery(
-            "staphylococcus_virulence",
-            "葡萄球菌：致病物质",
-            "葡萄球菌 致病物质 凝固酶 耐热核酸酶 透明质酸酶 脂酶 β内酰胺酶 溶血素 肠毒素 TSST 表皮剥脱毒素",
-            ("葡萄球菌", "staphylococcal", "凝固酶", "coagulase", "tsst", "肠毒素"),
+            "mechanisms",
+            "机制与流程",
+            f"{topic_text} 机制 原理 流程 步骤 调控 发生发展",
+            required_any,
         ),
         StudyQuery(
-            "staphylococcus_disease",
-            "葡萄球菌：所致疾病",
-            "葡萄球菌 所致疾病 侵袭性感染 化脓性感染 食物中毒 SSSS TSS 假膜性肠炎",
-            ("葡萄球菌", "staphylococcal", "食物中毒", "ssss", "tss", "肠毒素"),
+            "comparisons",
+            "分类与鉴别",
+            f"{topic_text} 分类 比较 区别 鉴别 表格 易混点",
+            required_any,
         ),
         StudyQuery(
-            "staphylococcus_lab",
-            "葡萄球菌：微生物学检查",
-            "葡萄球菌 微生物学检查 标本采集 直接涂片 革兰染色 分离培养 鉴定 凝固酶 耐热核酸酶 甘露醇 MALDI TOF",
-            ("凝固酶", "耐热核酸酶", "甘露醇", "maldi", "金黄色", "类似葡萄球菌属"),
+            "clinical_lab",
+            "临床与检查",
+            f"{topic_text} 临床表现 诊断 检查 实验 治疗 预防",
+            required_any,
         ),
         StudyQuery(
-            "streptococcus_basic",
-            "链球菌：基本特征与分类",
-            "链球菌 生物学性状 链状排列 革兰阳性 触酶阴性 溶血分类 α溶血 β溶血 γ溶血",
-            ("传统的分类", "根据溶血", "β溶血性链球菌", "γ溶血", "草绿色溶血链球菌"),
-        ),
-        StudyQuery(
-            "streptococcus_virulence_disease",
-            "A群链球菌：致病物质与疾病",
-            "A群链球菌 化脓链球菌 致病物质 M蛋白 SLO SLS 致热外毒素 透明质酸酶 链激酶 链道酶 猩红热 风湿热 急性肾小球肾炎",
-            ("A群链球菌", "化脓链球菌", "m蛋白", "slo", "sls", "致热外毒素", "streptolysin", "pyogenes"),
-        ),
-        StudyQuery(
-            "streptococcus_lab",
-            "链球菌：微生物学检查",
-            "β溶血性链球菌 微生物学检查 标本 直接涂片 分离培养 血琼脂平板 ASO 抗链球菌溶血素O 风湿热",
-            ("链球菌", "aso", "抗链球菌", "β", "溶血"),
-        ),
-        StudyQuery(
-            "pneumococcus",
-            "肺炎链球菌",
-            "肺炎链球菌 生物学性状 荚膜 矛头状 α溶血 自溶 Optochin 胆汁溶菌 菊糖发酵 大叶性肺炎 铁锈色痰",
-            ("肺炎链球菌", "pneumoniae", "optochin", "胆汁", "菊糖", "荚膜", "大叶性肺炎"),
-        ),
-        StudyQuery(
-            "neisseria_overview",
-            "奈瑟菌属概述",
-            "奈瑟菌属 奈瑟菌科 革兰阴性双球菌 无鞭毛 无芽胞 菌毛 氧化酶 触酶 巧克力平板 CO2 脑膜炎奈瑟菌 淋病奈瑟菌",
-            ("奈瑟菌", "neisseria", "革兰阴性双球菌", "脑膜炎奈瑟菌", "淋病奈瑟菌"),
-        ),
-        StudyQuery(
-            "meningococcus_basic",
-            "脑膜炎奈瑟菌：基本特征",
-            "脑膜炎奈瑟菌 生物学性状 肾形 豆形 革兰阴性双球菌 荚膜 菌毛 自溶 抵抗力弱 5% CO2",
-            ("肾形", "豆形", "自溶", "fragile", "5% co2", "5～10%co2"),
-        ),
-        StudyQuery(
-            "meningococcus_pathogenicity",
-            "脑膜炎奈瑟菌：致病性",
-            "脑膜炎奈瑟菌 致病性 荚膜 菌毛 内毒素 流行性脑脊髓膜炎 13 groups A群",
-            ("内毒素", "流行性脑脊髓膜炎", "13 groups", "serotypes", "荚膜和菌毛"),
-        ),
-        StudyQuery(
-            "gonococcus",
-            "淋病奈瑟菌",
-            "淋病奈瑟菌 淋球菌 柱状上皮 菌毛 黏附 吞饮入胞 尿道脓性分泌物 潜伏感染 微生物学检查 抵抗力",
-            ("淋病奈瑟菌", "gonorrhoeae", "淋球菌", "尿道", "宫颈"),
+            "exam_review",
+            "复习与考点",
+            f"{topic_text} 高频考点 记忆 易错点 总结 复习",
+            required_any,
         ),
     ]
+
+
+def extract_study_topics(source_text: str = "", outline: str = "", limit: int = 12) -> list[str]:
+    outline_terms = _topic_candidates(outline)
+    source_terms = _topic_candidates(source_text)
+    ranked_source_terms = [term for term, _count in Counter(source_terms).most_common(limit * 2)]
+    topics = _dedupe_terms([*outline_terms, *ranked_source_terms])
+    return topics[:limit] or list(FALLBACK_TOPICS)
+
+
+def _topic_candidates(text: str) -> list[str]:
+    candidates: list[str] = []
+    for line in text.splitlines():
+        cleaned = _clean_topic_line(line)
+        if cleaned:
+            candidates.extend(_split_topic_terms(cleaned))
+    if not candidates:
+        candidates.extend(_split_topic_terms(text))
+    return [term for term in candidates if _is_topic_term(term)]
+
+
+def _clean_topic_line(line: str) -> str:
+    cleaned = re.sub(r"^\s*(第[一二三四五六七八九十百\d]+[章节篇编]\s*)", "", line.strip())
+    cleaned = re.sub(r"^\s*[\d０-９]+[、.．)]\s*", "", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned)
+    return cleaned.strip(" -—:：；;，,。.")
+
+
+def _split_topic_terms(text: str) -> list[str]:
+    return [
+        part.strip(" -—:：；;，,。.()（）[]【】")
+        for part in re.split(r"[\s,，;；、/|]+", text)
+        if part.strip()
+    ]
+
+
+def _is_topic_term(term: str) -> bool:
+    if term in STOP_TERMS:
+        return False
+    if len(term) < 2 or len(term) > 24:
+        return False
+    if term.isdigit():
+        return False
+    return bool(re.search(r"[A-Za-z\u4e00-\u9fff]", term))
+
+
+def _dedupe_terms(terms: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for term in terms:
+        key = term.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(term)
+    return result
 
 
 def parse_mnemonics(text: str) -> list[dict[str, Any]]:

@@ -18,6 +18,7 @@ The current backend can:
 - require invite-gated email/password registration by default before users submit PDFs
 - store user accounts, reusable invite codes, invite-code uses, and HTTP-only sessions in SQLModel-backed storage
 - attach generated jobs to the owner user and block cross-user job access
+- build RAG study queries from the uploaded PDF text and optional outline
 - retrieve evidence chunks with embedding + BM25/RRF
 - retrieve related knowledge snippets from the current legacy `mnemonics.md` prompt-rendered seed file
 - generate Markdown study material using the selected scenario's soul profile

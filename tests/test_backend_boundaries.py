@@ -15,7 +15,7 @@ class BackendBoundariesTest(unittest.TestCase):
         self.assertTrue(callable(extract_pdf_pages))
         self.assertEqual(RagConfig().chunk_max_chars, 512)
         self.assertEqual(Chunk(id="C001", page=1, text="alpha").id, "C001")
-        self.assertGreaterEqual(len(build_study_queries()), 8)
+        self.assertIn("overview", {query.id for query in build_study_queries()})
         self.assertEqual(parse_mnemonics("")[0:0], [])
 
     def test_pipeline_reexports_public_backend_contracts(self):

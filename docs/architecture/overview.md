@@ -40,7 +40,7 @@ Upload PDF + optional outline + optional scenario/parser profile
 -> scenario and soul profile resolution
 -> Document Parser
 -> chunks with page metadata
--> retrieval query planner
+-> source/outline-driven retrieval query planner
 -> embedding + lexical retrieval
 -> evidence selection
 -> approved knowledge snippet retrieval
@@ -110,6 +110,7 @@ without rewriting retrieval or domain logic.
 The current MVP retrieval approach is:
 
 - page-aware chunking
+- deterministic query planning from the current PDF text and optional outline
 - embedding similarity
 - BM25-style lexical matching
 - reciprocal-rank fusion
@@ -117,6 +118,8 @@ The current MVP retrieval approach is:
 - per-query evidence limits
 
 This lives in `packages/retrieval/` so it can be reused across domains.
+
+The query planner must not default to a fixed lecture topic. The earliest cocci-specific MVP queries have been removed from the default path; subject-specific query lists belong in explicit scenarios or domain profiles, not in the medicine default.
 
 ## Domain Layer
 

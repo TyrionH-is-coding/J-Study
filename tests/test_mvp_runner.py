@@ -177,12 +177,35 @@ content: 一嗅二视三动眼。
         self.assertEqual([chunk.id for chunk in filtered], ["C002"])
 
     def test_study_queries_cover_multiple_learning_modules(self):
-        queries = build_study_queries()
+        queries = build_study_queries(
+            source_text=(
+                "免疫学总论 抗原 抗体 补体 细胞因子 超敏反应 "
+                "主要组织相容性复合体 免疫应答"
+            ),
+            outline="第一章 免疫学总论\n第二章 抗原\n第三章 抗体和补体",
+        )
         ids = {query.id for query in queries}
+        query_text = "\n".join(query.query for query in queries)
 
-        self.assertIn("staphylococcus_lab", ids)
-        self.assertIn("gonococcus", ids)
-        self.assertGreaterEqual(len(queries), 8)
+        self.assertIn("overview", ids)
+        self.assertIn("key_concepts", ids)
+        self.assertIn("mechanisms", ids)
+        self.assertIn("comparisons", ids)
+        self.assertIn("抗原", query_text)
+        self.assertIn("补体", query_text)
+        self.assertNotIn("staphylococcus", query_text.lower())
+        self.assertNotIn("gonococcus", query_text.lower())
+        self.assertNotIn("葡萄球菌", query_text)
+        self.assertGreaterEqual(len(queries), 6)
+
+    def test_empty_study_queries_use_neutral_medicine_fallbacks(self):
+        queries = build_study_queries()
+        query_text = "\n".join(query.query for query in queries)
+
+        self.assertIn("医学", query_text)
+        self.assertNotIn("staphylococcus", query_text.lower())
+        self.assertNotIn("gonococcus", query_text.lower())
+        self.assertNotIn("葡萄球菌", query_text)
 
     def test_reciprocal_rank_fusion_promotes_lexical_match(self):
         chunks = [
@@ -275,7 +298,7 @@ content: 一嗅二视三动眼。
             with patch(
                 "packages.core.jstudy_core.pipeline.build_study_queries",
                 return_value=[StudyQuery("sample", "Sample", "alpha overview")],
-            ), patch("packages.core.jstudy_core.providers.generate_markdown") as generate_markdown:
+            ) as query_builder, patch("packages.core.jstudy_core.providers.generate_markdown") as generate_markdown:
                 generate_markdown.side_effect = lambda messages, api_key, model: (
                     self.assertIn("第一章 细菌总论", messages[1]["content"])
                     or "Fact <!-- evidence: E001 -->"
@@ -315,6 +338,9 @@ content: 一嗅二视三动眼。
             self.assertEqual(trace["scenario"]["resolved_scenario_id"], "medicine-default")
             self.assertEqual(trace["parser_profile"]["resolved_parser_profile_id"], "fast")
             self.assertEqual(trace["parser"]["backend"], "pymupdf")
+            query_builder.assert_called_once()
+            self.assertIn("alpha overview", query_builder.call_args.kwargs["source_text"])
+            self.assertIn(outline.read_text(encoding="utf-8"), query_builder.call_args.kwargs["outline"])
 
     @patch("packages.core.jstudy_core.pipeline.extract_pdf_pages")
     @patch("packages.core.jstudy_core.providers.embed_texts")

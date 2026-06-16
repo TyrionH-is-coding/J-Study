@@ -110,7 +110,11 @@ def run_mvp(
         base_url=embed_base_url,
     )
 
-    study_queries = build_study_queries()
+    outline_text = outline_path.read_text(encoding="utf-8") if outline_path else ""
+    study_queries = build_study_queries(
+        source_text="\n".join(chunk.text for chunk in chunks),
+        outline=outline_text,
+    )
     query_embeddings = providers.embed_texts_cached(
         [study_query.query for study_query in study_queries],
         api_key=resolved_api_key,
@@ -174,7 +178,7 @@ def run_mvp(
         soul_path.read_text(encoding="utf-8"),
         evidence,
         mnemonic_hits,
-        outline=outline_path.read_text(encoding="utf-8") if outline_path else "",
+        outline=outline_text,
     )
     if chat_base_url == SILICONFLOW_BASE_URL:
         markdown = providers.generate_markdown(messages, api_key=resolved_api_key, model=chat_model)
