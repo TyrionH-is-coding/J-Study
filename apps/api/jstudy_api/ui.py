@@ -37,7 +37,7 @@ INDEX_HTML = r"""<!doctype html>
     }
     .workspace {
       display: grid;
-      grid-template-columns: var(--aside-w, 300px) 1fr var(--pdf-w, 360px);
+      grid-template-columns: var(--aside-w, 300px) 5px 1fr 5px var(--pdf-w, 360px);
       height: 100vh;
       overflow: hidden;
     }
