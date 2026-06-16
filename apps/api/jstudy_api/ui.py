@@ -480,24 +480,24 @@ INDEX_HTML = r"""<!doctype html>
     function renderInlineMarkdown(line) {
       // Split by evidence buttons (keep them intact)
       return line
-        .split(/(<button class="evidence-btn"[\\s\\S]*?<\\/button>)/g)
+        .split(/(<button class="evidence-btn"[\s\S]*?<\/button>)/g)
         .map(part => {
           if (part.startsWith("<button")) return part;
           return escapeHtml(part)
-            .replace(/\\*\\*([^*]+)\\*\\*/g, "<strong>$1</strong>")
+            .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
             .replace(/`([^`]+)`/g, "<code>$1</code>");
         })
         .join("");
     }
 
     function isTableLine(line) {
-      return /^\\s*\\|.+\\|\\s*$/.test(line);
+      return /^\s*\|.+\|\s*$/.test(line);
     }
     function isTableSeparator(line) {
-      return /^\\s*\\|?\\s*:?-{2,}:?\\s*(\\|\\s*:?-{2,}:?\\s*)+\\|?\\s*$/.test(line);
+      return /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)+\|?\s*$/.test(line);
     }
     function splitTableRow(line) {
-      return line.trim().replace(/^\\|/, "").replace(/\\|$/, "").split("|").map(cell => cell.trim());
+      return line.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map(cell => cell.trim());
     }
     function renderTableBlock(lines) {
       const rows = lines.filter(l => !isTableSeparator(l)).map(splitTableRow);
@@ -507,18 +507,18 @@ INDEX_HTML = r"""<!doctype html>
       return `<table><thead><tr>${header.map(c => `<th>${renderInlineMarkdown(c)}</th>`).join("")}</tr></thead><tbody>${body.map(r => `<tr>${r.map(c => `<td>${renderInlineMarkdown(c)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
     }
     function renderCodeBlock(lines) {
-      return `<pre><code>${escapeHtml(lines.join("\\n"))}</code></pre>`;
+      return `<pre><code>${escapeHtml(lines.join("\n"))}</code></pre>`;
     }
 
     function renderMarkdown(markdown) {
       // Step 1: Extract LaTeX blocks and replace with placeholders
       const latexPlaceholders = [];
-      let processed = markdown.replace(/\\$\\$([\\s\\S]*?)\\$\\$/g, (_, expr) => {
+      let processed = markdown.replace(/\$\$([\s\S]*?)\$\$/g, (_, expr) => {
         const idx = latexPlaceholders.length;
         latexPlaceholders.push({ expr: expr.trim(), display: true });
         return `\x00LATEX_DISPLAY_${idx}\x00`;
       });
-      processed = processed.replace(/\\$(.+?)\\$/g, (_, expr) => {
+      processed = processed.replace(/\$(.+?)\$/g, (_, expr) => {
         const idx = latexPlaceholders.length;
         latexPlaceholders.push({ expr: expr.trim(), display: false });
         return `\x00LATEX_INLINE_${idx}\x00`;
@@ -526,13 +526,13 @@ INDEX_HTML = r"""<!doctype html>
 
       // Step 2: Insert evidence buttons
       const seenRefs = {};
-      const withButtons = processed.replace(/<!--\\s*evidence:\\s*([^>]+?)\\s*-->/gi, (_, raw) => {
-        const ids = raw.match(/E\\d{3}/g) || [];
+      const withButtons = processed.replace(/<!--\s*evidence:\s*([^>]+?)\s*-->/gi, (_, raw) => {
+        const ids = raw.match(/E\d{3}/g) || [];
         return evidenceButtons(ids, seenRefs);
       });
 
       // Step 3: Parse lines into HTML blocks
-      const lines = withButtons.split(/\\r?\\n/);
+      const lines = withButtons.split(/\r?\n/);
       const blocks = [];
       for (let i = 0; i < lines.length; i++) {
         const line = lines[i];
@@ -561,7 +561,7 @@ INDEX_HTML = r"""<!doctype html>
           blocks.push(renderTableBlock(tableLines));
           continue;
         }
-        const headingMatch = line.match(/^(#{1,6})\\s+(.+)$/);
+        const headingMatch = line.match(/^(#{1,6})\s+(.+)$/);
         if (headingMatch) {
           const level = Math.min(headingMatch[1].length + 1, 6);
           blocks.push(`<h${level}>${renderInlineMarkdown(headingMatch[2])}</h${level}>`);
