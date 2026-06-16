@@ -53,4 +53,10 @@ Engineering/exam-quick 输出对比改前改后：LaTeX 公式密度提升、⭐
 - **证据按钮样式**：更新为蓝紫色系，更适配新主题
 - **PDF 预览面板**：重新命名 class 避免冲突，微调间距
 - **状态栏**：保持 job_id 显示
-- **输出区域**：新增 blockquote / 列表 / 代码块样式
+| **输出区域** | 新增 blockquote / 列表 / 代码块样式 |
+
+## 2026-06-16 — Bug fix: topic 提取停用词 + quality 误判
+
+### 修复
+- **`_is_topic_term()` 英文停用词过滤**: 三个 domain 模块（medicine/general/engineering）均加入约 80 个英文停用词过滤（the, of, a, figure, page 等），防止 PDF 页眉/页脚内容污染检索关键词。该 bug 源自上游 `feature/backend-frontend-mvp` 的 `packages/domains/medicine.py`，仅英文 PDF 复现。
+- **`audit_output_quality()` 移除 "工程" 误判**: `engineering_terms` 从 `["MVP", "根据证据片段", "证据片段", "工程"]` 改为 `["MVP", "根据证据片段", "证据片段"]`。originates from 上游 `feature/backend-frontend-mvp`。工科输出必然包含"工程注意事项"等合法内容，导致所有工科 output quality:fail。
