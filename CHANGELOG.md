@@ -78,3 +78,11 @@ Engineering/exam-quick 输出对比改前改后：LaTeX 公式密度提升、⭐
 
 ### 修复
 - `renderInlineMarkdown` 中的 `escapeHtml` 把 KaTeX 渲染后的 `<span class="katex">` 转成了 `&lt;span&gt;`。现已将 KaTeX HTML 先提取为占位符，完成 escaping 后再恢复。
+
+## 2026-06-16 — 导出 + 质量徽章 + 进度阶段
+
+### 新增
+- **导出 endpoint**: `GET /api/jobs/{id}/export` 返回 .md 文件下载
+- **质量徽章**: 输出顶部显示 ✅ 通过 / ❌ 未通过
+- **进度阶段**: 生成过程中显示"解析课件→检索证据→生成学习资料"三级状态
+- **下载按钮**: PDF 面板头部新增 ⬇ 下载 .md，生成完成后可见
