@@ -659,22 +659,15 @@ INDEX_HTML = r"""<!doctype html>
 
         // Process inline LaTeX inside a paragraph
         let htmlLine = line;
-        let hasLatex = false;
         htmlLine = htmlLine.replace(/\x00LATEX_INLINE_(\d+)\x00/g, (_, idx) => {
-          hasLatex = true;
           const { expr } = latexPlaceholders[parseInt(idx)];
           return renderKatex(expr, false);
         });
         htmlLine = htmlLine.replace(/\x00LATEX_DISPLAY_(\d+)\x00/g, (_, idx) => {
-          hasLatex = true;
           const { expr } = latexPlaceholders[parseInt(idx)];
           return renderKatex(expr, true);
         });
-        if (hasLatex) {
-          blocks.push(htmlLine);
-        } else {
-          blocks.push(`<p>${renderInlineMarkdown(htmlLine)}</p>`);
-        }
+        blocks.push(`<p>${renderInlineMarkdown(htmlLine)}</p>`);
       }
 
       // Step 4: Restore LaTeX placeholders that ended up as standalone blocks
