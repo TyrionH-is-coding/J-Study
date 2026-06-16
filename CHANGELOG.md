@@ -73,3 +73,8 @@ Engineering/exam-quick 输出对比改前改后：LaTeX 公式密度提升、⭐
 
 ### 修复
 - `renderMarkdown` 中，当一行同时包含 `$...$` 和 `**加粗**` 时，`hasLatex` 分支直接推了 KaTeX 渲染结果，跳过了 `renderInlineMarkdown`，导致 `**` 原文显示。现已统一走 `renderInlineMarkdown` 后再渲染 KaTeX。
+
+## 2026-06-16 — 修复：KaTeX HTML 被 escapeHtml 转义
+
+### 修复
+- `renderInlineMarkdown` 中的 `escapeHtml` 把 KaTeX 渲染后的 `<span class="katex">` 转成了 `&lt;span&gt;`。现已将 KaTeX HTML 先提取为占位符，完成 escaping 后再恢复。
