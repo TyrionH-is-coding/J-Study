@@ -238,6 +238,20 @@ INDEX_HTML = r"""<!doctype html>
       font-size: 12px;
       color: var(--text-secondary);
     }
+    .pdf-head-right { display: flex; align-items: center; gap: 10px; }
+    .dl-btn {
+      font-size: 11px; font-weight: 600; color: var(--accent);
+      text-decoration: none; padding: 3px 8px;
+      border: 1px solid var(--accent); border-radius: 6px;
+      transition: background .12s;
+    }
+    .dl-btn:hover { background: var(--accent-soft); }
+    .quality-badge {
+      display: inline-block; font-size: 11px; font-weight: 600;
+      padding: 2px 8px; border-radius: 999px; margin-left: 8px;
+    }
+    .quality-badge.pass { background: #d1fae5; color: #065f46; }
+    .quality-badge.fail { background: #fee2e2; color: #991b1b; }
     .citation-list {
       overflow: auto;
       padding: 10px;
@@ -417,7 +431,10 @@ INDEX_HTML = r"""<!doctype html>
     <section class="pdf-panel">
       <div class="pdf-head">
         <strong>课件依据</strong>
-        <span id="pdfMeta">未选择</span>
+        <div class="pdf-head-right">
+          <span id="pdfMeta">未选择</span>
+          <a class="dl-btn" id="downloadBtn" hidden href="#" download>⬇ 下载 .md</a>
+        </div>
       </div>
       <div class="citation-list" id="evidenceList"><div class="empty">生成后显示 citation 对照</div></div>
       <div class="pdf-pages" id="pdfPages"><div class="empty">生成后显示 PDF 页面预览</div></div>
@@ -440,6 +457,7 @@ INDEX_HTML = r"""<!doctype html>
     const modeInput = document.getElementById("modeInput");
     const parserProfileIdInput = document.getElementById("parserProfileIdInput");
     const modePills = document.getElementById("modePills");
+    const downloadBtn = document.getElementById("downloadBtn");
     let currentJob = "";
     let evidenceLinks = [];
 
@@ -755,10 +773,19 @@ INDEX_HTML = r"""<!doctype html>
       if (opts.scrollCitationList && active) active.scrollIntoView({ block: "nearest" });
     }
 
-    async function poll(jobId) {
+    const PROGRESS_STAGES = ["解析课件…", "检索证据…", "生成学习资料…"];
+
+    async function poll(jobId, pollCount) {
+      pollCount = pollCount || 0;
       const res = await fetch(`/api/jobs/${jobId}`);
       const job = await res.json();
-      statusBox.textContent = `状态：${job.status}  (${jobId})`;
+      // Show progress stages while running/pending
+      if (job.status !== "completed" && job.status !== "failed") {
+        const stage = PROGRESS_STAGES[Math.min(pollCount, PROGRESS_STAGES.length - 1)];
+        statusBox.textContent = `${stage}  (${jobId})`;
+      } else {
+        statusBox.textContent = `状态：${job.status}  (${jobId})`;
+      }
       if (job.status === "completed") {
         const [outRes, evidenceRes, pdfInfoRes] = await Promise.all([
           fetch(job.output_url),
@@ -770,9 +797,21 @@ INDEX_HTML = r"""<!doctype html>
         const pdfInfo = await pdfInfoRes.json();
         evidenceLinks = evidence.evidence_links || [];
         output.innerHTML = renderMarkdown(out.markdown);
+        // Quality badge — insert before first heading or at top
+        if (job.quality && job.quality.status) {
+          const badge = document.createElement("span");
+          badge.className = `quality-badge ${job.quality.status}`;
+          badge.textContent = job.quality.status === "pass" ? "✅ 通过" : "❌ 未通过";
+          const firstH = output.querySelector("h1, h2");
+          if (firstH) firstH.insertAdjacentElement("afterend", badge);
+          else output.insertBefore(badge, output.firstChild);
+        }
         renderEvidencePanel(evidenceLinks);
         renderPdfPages(pdfInfo.page_count || 0);
-        pdfMeta.textContent = job.quality && job.quality.status ? `质量：${job.quality.status}` : "已生成";
+        pdfMeta.textContent = "已生成";
+        // Download button
+        downloadBtn.href = `/api/jobs/${jobId}/export`;
+        downloadBtn.hidden = false;
         run.disabled = false;
         return;
       }
@@ -781,7 +820,7 @@ INDEX_HTML = r"""<!doctype html>
         run.disabled = false;
         return;
       }
-      setTimeout(() => poll(jobId), 1200);
+      setTimeout(() => poll(jobId, pollCount + 1), 1200);
     }
 
     form.addEventListener("submit", async e => {
@@ -791,6 +830,7 @@ INDEX_HTML = r"""<!doctype html>
       output.innerHTML = `<div class="empty">生成中</div>`;
       evidenceList.innerHTML = `<div class="empty">等待引用</div>`;
       pdfPages.innerHTML = `<div class="empty">等待 PDF 预览</div>`;
+      downloadBtn.hidden = true;
       const res = await fetch("/api/generate", { method: "POST", body: new FormData(form) });
       const data = await res.json();
       if (!res.ok) {

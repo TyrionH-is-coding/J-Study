@@ -672,6 +672,21 @@ def create_app(
                 headers=private_cache_headers(),
             )
 
+    @app.get("/api/jobs/{job_id}/export")
+    def job_export(job_id: str, request: Request, response: Response) -> Response:
+        set_private_cache(response)
+        job = job_or_404(job_id, current_user_or_401(request))
+        path = ready_output_path(job, "markdown", "Output is not ready")
+        filename = f"jstudy-{job_id[:8]}.md"
+        return Response(
+            content=path.read_bytes(),
+            media_type="text/markdown; charset=utf-8",
+            headers={
+                **private_cache_headers(),
+                "Content-Disposition": f'attachment; filename="{filename}"',
+            },
+        )
+
     return app
 
 
