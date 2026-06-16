@@ -79,15 +79,18 @@ def run_mvp(
     embedding_cache_path: Path | None = None,
     outline_path: Path | None = None,
     api_key: str | None = None,
+    embed_api_key: str | None = None,
     chat_base_url: str = SILICONFLOW_BASE_URL,
     embed_base_url: str = SILICONFLOW_BASE_URL,
     parser_backend: str = "pymupdf",
+    soul_profile_id: str | None = None,
     routing_metadata: dict[str, Any] | None = None,
     parser_config: dict[str, Any] | None = None,
 ) -> dict[str, Path]:
     rag_config = rag_config or RagConfig()
     embedding_cache_path = embedding_cache_path or output_dir / ".mvp_cache" / "embeddings.json"
     resolved_api_key = api_key or read_api_key(api_key_path)
+    resolved_embed_key = embed_api_key or resolved_api_key
     if parser_backend == "pymupdf":
         pages = extract_pdf_pages(pdf_path)
     elif parser_backend == "mineru":
@@ -104,7 +107,7 @@ def run_mvp(
 
     chunk_embeddings = providers.embed_texts_cached(
         [chunk.text for chunk in chunks],
-        api_key=resolved_api_key,
+        api_key=resolved_embed_key,
         model=embed_model,
         cache_path=embedding_cache_path,
         base_url=embed_base_url,
@@ -117,7 +120,7 @@ def run_mvp(
     )
     query_embeddings = providers.embed_texts_cached(
         [study_query.query for study_query in study_queries],
-        api_key=resolved_api_key,
+        api_key=resolved_embed_key,
         model=embed_model,
         cache_path=embedding_cache_path,
         base_url=embed_base_url,

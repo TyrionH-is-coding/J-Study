@@ -62,7 +62,7 @@ def embed_texts(
     texts: list[str],
     api_key: str,
     model: str = DEFAULT_EMBED_MODEL,
-    batch_size: int = 24,
+    batch_size: int = 10,
     base_url: str = SILICONFLOW_BASE_URL,
 ) -> list[list[float]]:
     embeddings: list[list[float]] = []

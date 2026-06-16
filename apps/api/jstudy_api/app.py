@@ -292,6 +292,7 @@ def create_app(
                 "embedding_cache_path": jobs_root / ".cache" / "embeddings.json",
                 "outline_path": job.outline_path,
                 "api_key": runtime.api_key or None,
+                "embed_api_key": os.getenv("JSTUDY_EMBED_API_KEY", "").strip() or None,
                 "chat_base_url": runtime.chat_base_url,
                 "embed_base_url": runtime.embed_base_url,
                 "parser_backend": job.metadata.get("parser_profile", {}).get("backend", "pymupdf"),
