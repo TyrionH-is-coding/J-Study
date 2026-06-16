@@ -1086,7 +1086,7 @@ INDEX_HTML = r"""<!doctype html>
 
       document.addEventListener("mousemove", e => {
         if (!drag || !drag.v) return;
-        const delta = drag.startY - e.clientY; // up = more citation space
+        const delta = e.clientY - drag.startY; // follow cursor: down = larger citation
         const newH = Math.min(400, Math.max(80, drag.currentH + delta));
         pdfPanel.style.gridTemplateRows = `auto ${newH}px 5px minmax(0, 1fr)`;
       });
