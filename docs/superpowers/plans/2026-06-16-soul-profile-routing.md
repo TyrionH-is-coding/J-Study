@@ -50,7 +50,7 @@
 - [x] Run `python -m unittest tests.test_admin_settings tests.test_scenario_router tests.test_web_mvp.WebMvpTest.test_generate_uses_default_scenario_and_fast_parser_profile tests.test_web_mvp.WebMvpTest.test_generate_uses_selected_scenario_soul_profile -v`.
 - [x] Run `python -m py_compile apps/api/jstudy_api/app.py packages/core/jstudy_core/admin_settings.py packages/core/jstudy_core/scenario_router.py`.
 - [x] Run `git diff --check`.
-- [ ] Commit with `feat: route generation by soul profile`.
+- [x] Commit with `feat: route generation by soul profile`.
 
 ## Self-Review
 
