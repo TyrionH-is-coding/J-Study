@@ -653,8 +653,9 @@ INDEX_HTML = r"""<!doctype html>
         downloadBtn.href = `/api/jobs/${jobId}/export`;
         downloadBtn.hidden = false;
         statusBox.textContent = `已完成  (${jobId})`;
-      } catch {
-        statusBox.innerHTML = `<span class="error">加载失败，请刷新页面重新登录</span>`;
+      } catch (e) {
+        console.error("loadJob error:", e);
+        statusBox.innerHTML = `<span class="error">加载失败: ${escapeHtml(String(e.message || e))}。请刷新页面重新登录</span>`;
       }
     }
 
@@ -705,49 +706,6 @@ INDEX_HTML = r"""<!doctype html>
       }).join("");
     }
 
-    function renderInlineMarkdown(line) {
-      // Split by evidence buttons (keep them intact)
-      return line
-        .split(/(<button class="evidence-btn"[\s\S]*?<\/button>)/g)
-        .map(part => {
-          if (part.startsWith("<button")) return part;
-          // Process LaTeX placeholders inside markdown (e.g. table cells)
-          let processed = escapeHtml(part);
-          processed = processed.replace(/\x00LATEX_INLINE_(\d+)\x00/g, (_, idx) => {
-            const { expr } = latexPlaceholders[parseInt(idx)];
-            return renderKatex(expr, false);
-          });
-          processed = processed.replace(/\x00LATEX_DISPLAY_(\d+)\x00/g, (_, idx) => {
-            const { expr } = latexPlaceholders[parseInt(idx)];
-            return renderKatex(expr, true);
-          });
-          return processed
-            .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
-            .replace(/`([^`]+)`/g, "<code>$1</code>");
-        })
-        .join("");
-    }
-
-    function isTableLine(line) {
-      return /^\s*\|.+\|\s*$/.test(line);
-    }
-    function isTableSeparator(line) {
-      return /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)+\|?\s*$/.test(line);
-    }
-    function splitTableRow(line) {
-      return line.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map(cell => cell.trim());
-    }
-    function renderTableBlock(lines) {
-      const rows = lines.filter(l => !isTableSeparator(l)).map(splitTableRow);
-      if (!rows.length) return "";
-      const header = rows[0];
-      const body = rows.slice(1);
-      return `<table><thead><tr>${header.map(c => `<th>${renderInlineMarkdown(c)}</th>`).join("")}</tr></thead><tbody>${body.map(r => `<tr>${r.map(c => `<td>${renderInlineMarkdown(c)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
-    }
-    function renderCodeBlock(lines) {
-      return `<pre><code>${escapeHtml(lines.join("\n"))}</code></pre>`;
-    }
-
     function renderMarkdown(markdown) {
       // Step 1: Extract LaTeX blocks and replace with placeholders
       const latexPlaceholders = [];
@@ -761,6 +719,49 @@ INDEX_HTML = r"""<!doctype html>
         latexPlaceholders.push({ expr: expr.trim(), display: false });
         return `\x00LATEX_INLINE_${idx}\x00`;
       });
+
+      // --- Inner helpers (closure over latexPlaceholders) ---
+
+      function renderInlineMarkdown(line) {
+        return line
+          .split(/(<button class="evidence-btn"[\s\S]*?<\/button>)/g)
+          .map(part => {
+            if (part.startsWith("<button")) return part;
+            let processed = escapeHtml(part);
+            // Replace LaTeX placeholders with KaTeX HTML
+            processed = processed.replace(/\x00LATEX_INLINE_(\d+)\x00/g, (_, idx) => {
+              const { expr } = latexPlaceholders[parseInt(idx)];
+              return renderKatex(expr, false);
+            });
+            processed = processed.replace(/\x00LATEX_DISPLAY_(\d+)\x00/g, (_, idx) => {
+              const { expr } = latexPlaceholders[parseInt(idx)];
+              return renderKatex(expr, true);
+            });
+            return processed
+              .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+              .replace(/`([^`]+)`/g, "<code>$1</code>");
+          })
+          .join("");
+      }
+
+      function isTableLine(line) { return /^\s*\|.+\|\s*$/.test(line); }
+      function isTableSeparator(line) {
+        return /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)+\|?\s*$/.test(line);
+      }
+      function splitTableRow(line) {
+        return line.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map(c => c.trim());
+      }
+      function renderTableBlock(lines) {
+        const rows = lines.filter(l => !isTableSeparator(l)).map(splitTableRow);
+        if (!rows.length) return "";
+        const h = rows[0], b = rows.slice(1);
+        return `<table><thead><tr>${h.map(c => `<th>${renderInlineMarkdown(c)}</th>`).join("")}</tr></thead><tbody>${b.map(r => `<tr>${r.map(c => `<td>${renderInlineMarkdown(c)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
+      }
+      function renderCodeBlock(lines) {
+        return `<pre><code>${escapeHtml(lines.join("\n"))}</code></pre>`;
+      }
+
+      // --- End inner helpers ---
 
       // Step 2: Insert evidence buttons
       const seenRefs = {};
@@ -954,7 +955,8 @@ INDEX_HTML = r"""<!doctype html>
         loadHistory();
         return;
         } catch (e) {
-          statusBox.innerHTML = `<span class="error">渲染失败: ${escapeHtml(e.message || "未知错误")}</span>`;
+          console.error("poll render error:", e);
+          statusBox.innerHTML = `<span class="error">渲染失败: ${escapeHtml(e.message || String(e))}</span>`;
           run.disabled = false;
           return;
         }
