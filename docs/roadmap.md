@@ -133,6 +133,27 @@ Acceptance:
 - single-server deployments can opt into finished-job cleanup without deleting queued or running jobs
 - low-quality output is flagged before user trust is damaged
 
+## Phase 4.5: Service Mode Model
+
+Goal: define the product and backend boundary for the three generation modes before expanding upload flows.
+
+Deliverables:
+
+- explicit `single_courseware`, `batch_courseware`, and `course_outline` service modes
+- frontend upload entry points that can explain the three modes without mixing them with subject scenario or parser choice
+- backend request contract that records service mode separately from `scenario_id` and `parser_profile_id`
+- package-output contract for multi-section material
+- section-level evidence, source-file metadata, and quality status model
+- full-export contract that can assemble all sections into one complete document
+
+Acceptance:
+
+- Single Courseware Mode remains the default MVP path and produces one generated material output
+- Batch Courseware Mode is designed as a chapter/topic-browsable material package, not just several independent single-PDF jobs
+- Course Outline Mode is designed as an outline-driven material package whose section order follows the uploaded outline
+- Batch Courseware Mode and Course Outline Mode both support web browsing by section and full-document export
+- service mode selection does not change the selected subject scenario or parser profile
+
 ## Phase 5: Multi-Discipline Domain Packs
 
 Goal: prove that medicine is a first domain, not a hard-coded product boundary, while keeping J-Study more vertical than a general DeepTutor-style assistant.
@@ -152,6 +173,49 @@ Acceptance:
 - medicine-specific prompts and rules live under `packages/domains/medicine`
 - a new subject can start with a blank hidden soul profile, then become visible only after the profile has usable content
 - service delivery is not blocked by fully populated soul libraries
+
+## Phase 5.25: Batch Courseware Mode
+
+Goal: let users upload multiple related courseware PDFs and receive one navigable study-material package.
+
+Deliverables:
+
+- multi-PDF upload API and frontend flow
+- source-file metadata in chunks, evidence, and citation links
+- section planning from file order, detected headings, or inferred topics
+- cross-file retrieval and evidence aggregation
+- duplicate-topic handling across uploaded PDFs
+- package reader with section navigation and source preview
+- full-document export assembled from package sections
+
+Acceptance:
+
+- user can upload multiple PDFs in one job
+- generated output is browsable by chapter or topic in the web app
+- each section can cite evidence from one or more source PDFs
+- user can export the whole package as one complete material file
+- the system does not lose source-file identity when rendering citation jumps
+
+## Phase 5.4: Course Outline Mode
+
+Goal: turn a full course outline plus all courseware into a course-level material package.
+
+Deliverables:
+
+- outline upload and parsing workflow
+- outline-node section plan
+- retrieval across all uploaded courseware per outline node
+- evidence coverage report per outline node
+- section-by-section web browsing
+- full course-material export
+
+Acceptance:
+
+- user can upload a course outline and multiple courseware PDFs
+- output order follows the uploaded outline
+- each outline node shows whether evidence is sufficient, weak, or missing
+- generated sections can cite evidence from any uploaded courseware
+- user can browse the course package by section and export the complete course material
 
 ## Phase 5.5: Knowledge Snippet Feedback Hook
 

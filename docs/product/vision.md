@@ -32,6 +32,21 @@ J-Study is intentionally more vertical than DeepTutor. DeepTutor can remain a br
 
 The MVP supports one courseware PDF plus an optional outline. It extracts text, retrieves evidence, generates Markdown study material, and maps evidence comments to original PDF pages.
 
+## Service Modes
+
+J-Study should support three service modes. They should share the same source-grounded generation philosophy, but they should not be treated as the same backend workflow.
+
+1. Single Courseware Mode
+   One courseware PDF produces one structured study material output. This is the current MVP path and remains the first priority because it validates parsing, retrieval, citations, generation quality, auth, and deployment with the smallest surface area.
+
+2. Batch Courseware Mode
+   Multiple courseware PDFs are uploaded together and become one study-material package. The package should be browsable by chapter or topic in the web app and exportable as one complete document. Unlike the current MVP, this mode needs source-file metadata, cross-file evidence aggregation, duplicate-topic handling, and a package output model instead of assuming one markdown file per job.
+
+3. Course Outline Mode
+   The user uploads a course outline plus all courseware for a full course. The outline becomes the organizing contract: the system should split the course into outline nodes, retrieve evidence across all uploaded courseware for each node, show the result as a chapter-by-chapter course package in the web app, and allow exporting the whole package as complete course material. Missing or weak evidence should be visible per outline node.
+
+Batch Courseware Mode and Course Outline Mode should converge on the same user-facing output model: a navigable material package with section-level evidence and full-document export. Their main difference is how the section plan is created.
+
 The MVP does not yet include:
 
 - persistent job database

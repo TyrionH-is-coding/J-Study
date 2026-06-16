@@ -50,6 +50,28 @@ Upload PDF + optional outline + optional scenario/parser profile
 -> frontend reader with source-page citation jumps
 ```
 
+## Service Mode Architecture
+
+The platform should distinguish service mode from subject scenario and parser profile.
+
+- `single_courseware`: one PDF, optional outline, one generated material output. This is the current MVP implementation.
+- `batch_courseware`: multiple PDFs, optional user notes or loose outline, one material package. The web app should browse the package by chapter or topic and should also export the complete package as one document.
+- `course_outline`: course outline plus all courseware for a full course, one material package. The outline is the section plan, and each outline node should carry its own retrieval evidence, source references, quality status, and generated section output.
+
+Batch Courseware Mode and Course Outline Mode should share the same package-output contract:
+
+```text
+material_package
+-> sections[]
+   -> section title and order
+   -> source files and pages used as evidence
+   -> generated markdown for this section
+   -> evidence links and quality report for this section
+-> full export assembled from sections
+```
+
+The difference is planning. Batch Courseware Mode can derive sections from uploaded file order, detected headings, or inferred topics. Course Outline Mode must follow the uploaded outline first and should mark outline nodes with insufficient evidence instead of silently inventing content.
+
 ## Platform Layer
 
 The platform layer should own common product behavior:
@@ -62,6 +84,8 @@ The platform layer should own common product behavior:
 - retrieval execution
 - evidence link contracts
 - output storage
+- service mode routing
+- material package and section-output contracts
 - API response shape
 - deployment and runtime configuration
 
