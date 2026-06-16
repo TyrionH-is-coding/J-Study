@@ -18,7 +18,7 @@ The backend gets a new JSON-backed settings layer:
 
 - `model_catalog.json`: model services and search profiles, grouped as `llm`, `embedding`, and `search`.
 - `runtime.json`: RAG, parser, job, and upload settings.
-- `content_pack.json`: pointers to prompt and knowledge snippet sources, plus future subject-pack metadata.
+- `content_pack.json`: pointers to scenarios, soul profiles, prompt paths, and knowledge snippet sources, plus future subject-pack metadata.
 - `mnemonics.json`: compatibility filename for structured knowledge snippet items; Markdown remains a prompt-rendering format.
 
 `RuntimeSettings.from_env()` continues to support deployment environment overrides, but defaults to the JSON settings when present. The API reads settings per request so applying a new configuration does not require editing source files.
@@ -40,7 +40,7 @@ One backend-served page with three sections:
 
 - Model, RAG, and Web Search: chat model, embedding model, endpoint/API key, RAG chunking/top-k, web-search provider/API key/max results.
 - Document Parsing: parser backend (`pymupdf` now, `mineru` reserved), OCR/table/formula options.
-- Content Pack: `soul.md`, knowledge snippet source, subject, and content-pack name.
+- Content Pack: scenario defaults, soul profile paths, knowledge snippet source, subject, and content-pack name.
 
 The page should be utilitarian and dense, matching the MVP's backend UI rather than a marketing page.
 

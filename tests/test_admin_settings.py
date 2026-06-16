@@ -41,6 +41,22 @@ class AdminSettingsTest(unittest.TestCase):
         self.assertIn("medicine-default", scenario_ids)
         self.assertIn("general-default", scenario_ids)
 
+    def test_content_pack_defaults_include_soul_profiles(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            service = AdminSettingsService(Path(tmp) / "settings")
+
+            payload = service.load_content_pack()
+
+        profiles = {item["id"]: item for item in payload["soul_profiles"]}
+        self.assertEqual(profiles["medicine-default"]["soul_path"], "soul.md")
+        self.assertEqual(profiles["general-blank"]["soul_path"], "")
+        self.assertEqual(profiles["engineering-blank"]["soul_path"], "")
+        self.assertEqual(profiles["law-blank"]["soul_path"], "")
+        scenarios = {item["id"]: item for item in payload["scenarios"]}
+        self.assertFalse(scenarios["general-default"]["enabled"])
+        self.assertFalse(scenarios["engineering-default"]["enabled"])
+        self.assertFalse(scenarios["law-default"]["enabled"])
+
     def test_runtime_defaults_include_parser_profiles(self):
         with tempfile.TemporaryDirectory() as tmp:
             service = AdminSettingsService(Path(tmp) / "settings")

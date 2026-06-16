@@ -75,7 +75,7 @@ Domain code should provide subject behavior:
 
 Medicine is the first domain pack, not the product boundary.
 
-`scenario_id` is the user-facing learning scene. It should resolve content-pack, prompt-profile, RAG-profile, and domain-rule choices. Do not hardcode new subject behavior into the medicine pack when it belongs in a scenario or future domain pack.
+`scenario_id` is the user-facing learning scene. It should resolve content-pack, prompt-profile, soul-profile, RAG-profile, and domain-rule choices. Do not hardcode new subject behavior into the medicine pack when it belongs in a scenario or future domain pack.
 
 `parser_profile_id` is the user-facing parsing experience. It should resolve parser backend and visibility/admin rules. Do not couple a subject scenario to a parser profile.
 

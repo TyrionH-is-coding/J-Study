@@ -677,6 +677,67 @@ class WebMvpTest(unittest.TestCase):
         self.assertEqual(captured["routing_metadata"]["scenario"]["resolved_scenario_id"], "medicine-default")
         self.assertEqual(captured["routing_metadata"]["parser_profile"]["resolved_parser_profile_id"], "fast")
 
+    def test_generate_uses_selected_scenario_soul_profile(self):
+        captured = {}
+
+        def fake_runner(**kwargs):
+            captured.update(kwargs)
+            output_dir = kwargs["output_dir"]
+            output_prefix = kwargs["output_prefix"]
+            output_dir.mkdir(parents=True, exist_ok=True)
+            markdown = output_dir / f"{output_prefix}-output.md"
+            evidence = output_dir / f"{output_prefix}-evidence.json"
+            evidence_links = output_dir / f"{output_prefix}-evidence_links.json"
+            quality = output_dir / f"{output_prefix}-quality.json"
+            trace = output_dir / f"{output_prefix}-retrieval_trace.json"
+            chunks = output_dir / f"{output_prefix}-chunks.json"
+            markdown.write_text("Fact\n", encoding="utf-8")
+            evidence.write_text("[]", encoding="utf-8")
+            evidence_links.write_text("[]", encoding="utf-8")
+            quality.write_text(json.dumps({"status": "pass"}), encoding="utf-8")
+            trace.write_text("{}", encoding="utf-8")
+            chunks.write_text("[]", encoding="utf-8")
+            return {
+                "markdown": markdown,
+                "evidence": evidence,
+                "evidence_links": evidence_links,
+                "quality": quality,
+                "trace": trace,
+                "chunks": chunks,
+            }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            service = AdminSettingsService(root / "data" / "settings")
+            payload = service.load_all()
+            general = next(item for item in payload["content_pack"]["scenarios"] if item["id"] == "general-default")
+            general["enabled"] = True
+            profile = next(
+                item for item in payload["content_pack"]["soul_profiles"] if item["id"] == "general-blank"
+            )
+            profile["soul_path"] = "souls/general.md"
+            service.save_all(payload)
+            settings = RuntimeSettings.from_env(root, jobs_root=root / "jobs")
+            settings.soul_path.write_text("medicine soul", encoding="utf-8")
+            settings.mnemonics_path.write_text("mnemonics", encoding="utf-8")
+            general_soul = root / "souls" / "general.md"
+            general_soul.parent.mkdir(parents=True, exist_ok=True)
+            general_soul.write_text("general soul", encoding="utf-8")
+            settings.api_key_path.write_text("key", encoding="utf-8")
+            client = TestClient(create_app(runner=fake_runner, settings=settings))
+            self.register_user(client)
+
+            response = client.post(
+                "/api/generate",
+                data={"scenario_id": "general-default"},
+                files={"pdf": ("lecture.pdf", self.make_pdf_bytes(), "application/pdf")},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(captured["soul_path"], general_soul)
+        self.assertEqual(captured["routing_metadata"]["scenario"]["resolved_scenario_id"], "general-default")
+        self.assertEqual(captured["routing_metadata"]["scenario"]["soul_profile_id"], "general-blank")
+
     def test_generate_rejects_hidden_quality_parser_for_public_user(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

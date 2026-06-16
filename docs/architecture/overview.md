@@ -35,6 +35,7 @@ The first backend reorganization steps are implemented. Further steps should spl
 
 ```text
 Upload PDF + optional outline + optional scenario/parser profile
+-> scenario and soul profile resolution
 -> Document Parser
 -> chunks with page metadata
 -> retrieval query planner
@@ -120,14 +121,14 @@ Domain packs should define subject-specific behavior. The first pack is `medicin
 Expected domain-pack responsibilities:
 
 - query planning
-- prompt template
+- soul profile and prompt template
 - output style rules
 - knowledge snippet and terminology sources
 - evidence filtering rules
 - quality audit rules
 - future question-generation policy
 
-The public `scenario_id` selects the learning scene, such as `medicine-default` or `general-default`. A scenario points at a content pack, prompt profile, RAG profile, and domain rules. This keeps subject routing independent from parser choice.
+The public `scenario_id` selects the learning scene, such as `medicine-default` or `general-default`. A scenario points at a content pack, prompt profile, RAG profile, and domain rules. The prompt profile resolves to a soul profile, and the soul profile supplies the subject-specific `soul_path` used by generation. This keeps subject routing independent from parser choice.
 
 The preferred model is hybrid:
 
@@ -171,7 +172,20 @@ Future components can include Redis, Postgres, object storage, and a separate wo
 
 Runtime settings are centralized in `packages/core/jstudy_core/settings.py`. `SILICONFLOW_API_KEY` is the primary API key source; `SILICONFLOW_API_KEY_FILE` is the file fallback. `JSTUDY_JOBS_DIR`, `JSTUDY_SOUL_PATH`, `JSTUDY_MNEMONICS_PATH`, `JSTUDY_MAX_PDF_BYTES`, `JSTUDY_JOB_RETENTION_HOURS`, `SILICONFLOW_CHAT_MODEL`, and `SILICONFLOW_EMBED_MODEL` control deploy-time paths, upload limits, optional cleanup, and model choices. `JSTUDY_MNEMONICS_PATH` is the current compatibility name for the prompt-rendered knowledge snippet file used by the MVP pipeline.
 
-Operator-editable settings are persisted under `JSTUDY_SETTINGS_DIR`, defaulting to `data/settings`. The current files are `model_catalog.json` for LLM, embedding, and web-search profiles; `runtime.json` for RAG, parser, parser profiles, upload, and cleanup settings; `content_pack.json` for subject-pack paths and scenarios; and `mnemonics.json` as the compatibility filename for structured knowledge snippet items. Environment variables remain deployment overrides and take precedence where they overlap with admin settings.
+Operator-editable settings are persisted under `JSTUDY_SETTINGS_DIR`, defaulting to `data/settings`. The current files are `model_catalog.json` for LLM, embedding, and web-search profiles; `runtime.json` for RAG, parser, parser profiles, upload, and cleanup settings; `content_pack.json` for subject-pack paths, scenarios, and soul profiles; and `mnemonics.json` as the compatibility filename for structured knowledge snippet items. Environment variables remain deployment overrides and take precedence where they overlap with admin settings.
+
+## Soul Profile Library
+
+The root `soul.md` is the current medicine default, not the long-term global template. `content_pack.json` owns a lightweight soul profile library. A scenario's `prompt_profile` selects a soul profile; that soul profile provides the `soul_path` used for the generation job.
+
+The default library contains:
+
+- `medicine-default`: active, points to `soul.md`
+- `general-blank`: placeholder, empty path, scenario disabled
+- `engineering-blank`: placeholder, empty path, scenario disabled
+- `law-blank`: placeholder, empty path, scenario disabled
+
+Users should choose the scenario on the upload page. Admins should control visibility by enabling or disabling scenario entries. A blank placeholder must receive a real `soul_path` before the scenario is enabled; the backend does not silently fall back from an explicitly blank soul profile to the medicine soul.
 
 ## Knowledge Snippet Library
 

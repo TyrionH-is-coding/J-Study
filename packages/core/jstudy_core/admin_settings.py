@@ -158,7 +158,64 @@ def _content_pack_default() -> dict[str, Any]:
                 "mnemonics_path": "mnemonics.md",
                 "mnemonics_json_path": f"{DEFAULT_SETTINGS_DIR_NAME}/mnemonics.json",
                 "enabled": True,
+            },
+            {
+                "id": "general-default",
+                "name": "General Blank",
+                "subject": "general",
+                "soul_path": "",
+                "mnemonics_path": "",
+                "mnemonics_json_path": "",
+                "enabled": True,
+            },
+            {
+                "id": "engineering-default",
+                "name": "Engineering Blank",
+                "subject": "engineering",
+                "soul_path": "",
+                "mnemonics_path": "",
+                "mnemonics_json_path": "",
+                "enabled": True,
+            },
+            {
+                "id": "law-default",
+                "name": "Law Blank",
+                "subject": "law",
+                "soul_path": "",
+                "mnemonics_path": "",
+                "mnemonics_json_path": "",
+                "enabled": True,
             }
+        ],
+        "soul_profiles": [
+            {
+                "id": "medicine-default",
+                "name": "Medicine Default",
+                "subject": "medicine",
+                "soul_path": "soul.md",
+                "notes": "Current medicine courseware generation rules.",
+            },
+            {
+                "id": "general-blank",
+                "name": "General Blank",
+                "subject": "general",
+                "soul_path": "",
+                "notes": "Reserved for a future general-purpose profile.",
+            },
+            {
+                "id": "engineering-blank",
+                "name": "Engineering Blank",
+                "subject": "engineering",
+                "soul_path": "",
+                "notes": "Reserved for a future engineering profile.",
+            },
+            {
+                "id": "law-blank",
+                "name": "Law Blank",
+                "subject": "law",
+                "soul_path": "",
+                "notes": "Reserved for a future law profile.",
+            },
         ],
         "scenarios": [
             {
@@ -175,9 +232,29 @@ def _content_pack_default() -> dict[str, Any]:
                 "id": "general-default",
                 "display_name": "General",
                 "subject": "general",
-                "enabled": True,
-                "content_pack_id": "medicine-default",
-                "prompt_profile": "general-default",
+                "enabled": False,
+                "content_pack_id": "general-default",
+                "prompt_profile": "general-blank",
+                "rag_profile": "default",
+                "domain_rules": [],
+            },
+            {
+                "id": "engineering-default",
+                "display_name": "Engineering",
+                "subject": "engineering",
+                "enabled": False,
+                "content_pack_id": "engineering-default",
+                "prompt_profile": "engineering-blank",
+                "rag_profile": "default",
+                "domain_rules": [],
+            },
+            {
+                "id": "law-default",
+                "display_name": "Law",
+                "subject": "law",
+                "enabled": False,
+                "content_pack_id": "law-default",
+                "prompt_profile": "law-blank",
                 "rag_profile": "default",
                 "domain_rules": [],
             },
@@ -424,15 +501,21 @@ def _normalize_content_pack(settings: dict[str, Any]) -> dict[str, Any]:
     for index, pack in enumerate(packs):
         if not isinstance(pack, dict):
             continue
+        raw_soul_path = pack.get("soul_path")
+        raw_mnemonics_path = pack.get("mnemonics_path")
+        raw_mnemonics_json_path = pack.get("mnemonics_json_path")
         normalized_packs.append(
             {
                 "id": _string(pack.get("id")) or f"content-pack-{index + 1}",
                 "name": _string(pack.get("name")) or "Content Pack",
                 "subject": _string(pack.get("subject")) or "medicine",
-                "soul_path": _string(pack.get("soul_path")) or "soul.md",
-                "mnemonics_path": _string(pack.get("mnemonics_path")) or "mnemonics.md",
-                "mnemonics_json_path": _string(pack.get("mnemonics_json_path"))
-                or f"{DEFAULT_SETTINGS_DIR_NAME}/mnemonics.json",
+                "soul_path": "soul.md" if raw_soul_path is None else _string(raw_soul_path),
+                "mnemonics_path": "mnemonics.md"
+                if raw_mnemonics_path is None
+                else _string(raw_mnemonics_path),
+                "mnemonics_json_path": f"{DEFAULT_SETTINGS_DIR_NAME}/mnemonics.json"
+                if raw_mnemonics_json_path is None
+                else _string(raw_mnemonics_json_path),
                 "enabled": _bool(pack.get("enabled"), True),
             }
         )
@@ -442,6 +525,7 @@ def _normalize_content_pack(settings: dict[str, Any]) -> dict[str, Any]:
     if active_id not in {pack["id"] for pack in normalized_packs}:
         active_id = normalized_packs[0]["id"]
     scenarios = _normalize_scenarios(content.get("scenarios"), default["scenarios"])
+    soul_profiles = _normalize_soul_profiles(content.get("soul_profiles"), default["soul_profiles"])
     default_scenario_id = _string(content.get("default_scenario_id")) or default["default_scenario_id"]
     scenario_ids = {scenario["id"] for scenario in scenarios if scenario["enabled"]}
     if default_scenario_id not in scenario_ids:
@@ -451,8 +535,29 @@ def _normalize_content_pack(settings: dict[str, Any]) -> dict[str, Any]:
         "active_pack_id": active_id,
         "default_scenario_id": default_scenario_id,
         "packs": normalized_packs,
+        "soul_profiles": soul_profiles,
         "scenarios": scenarios,
     }
+
+
+def _normalize_soul_profiles(settings: Any, default: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    raw_profiles = settings if isinstance(settings, list) and settings else default
+    profiles = []
+    for index, profile in enumerate(raw_profiles):
+        if not isinstance(profile, dict):
+            continue
+        profile_id = _string(profile.get("id")) or f"soul-profile-{index + 1}"
+        raw_soul_path = profile.get("soul_path")
+        profiles.append(
+            {
+                "id": profile_id,
+                "name": _string(profile.get("name")) or profile_id,
+                "subject": _string(profile.get("subject")) or "general",
+                "soul_path": "soul.md" if raw_soul_path is None else _string(raw_soul_path),
+                "notes": _string(profile.get("notes")),
+            }
+        )
+    return profiles or default
 
 
 def _normalize_scenarios(settings: Any, default: list[dict[str, Any]]) -> list[dict[str, Any]]:

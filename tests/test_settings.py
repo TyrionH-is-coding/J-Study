@@ -118,6 +118,9 @@ class SettingsTest(unittest.TestCase):
             root = Path(tmp)
             service = AdminSettingsService(root / "data" / "settings")
             content = service.load_content_pack()
+            for scenario in content["scenarios"]:
+                if scenario["id"] == "general-default":
+                    scenario["enabled"] = True
             content["default_scenario_id"] = "general-default"
             service.save_content_pack(content)
 

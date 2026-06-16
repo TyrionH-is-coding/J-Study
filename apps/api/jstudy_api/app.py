@@ -78,6 +78,14 @@ def safe_upload_name(filename: str, default: str) -> str:
     return name
 
 
+def project_path(project_root: Path, value: Any) -> Path | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    path = Path(text)
+    return path if path.is_absolute() else project_root / path
+
+
 async def save_pdf_upload(upload: UploadFile, target: Path, max_bytes: int) -> None:
     data = await upload.read()
     if len(data) > max_bytes:
@@ -237,14 +245,44 @@ def create_app(
             raise HTTPException(status_code=404, detail=detail)
         return path
 
+    def generation_file_or_503(path: Path, label: str) -> Path:
+        if not path.is_file():
+            raise HTTPException(status_code=503, detail=f"{label} file not found: {path}")
+        return path
+
+    def selected_content_paths(scenario: Any) -> dict[str, str]:
+        soul_path = None
+        if scenario.scenario_id == runtime.default_scenario_id:
+            soul_path = runtime.soul_path
+        if soul_path is None:
+            soul_path = project_path(runtime.project_root, scenario.soul_profile.get("soul_path"))
+        if soul_path is None:
+            raise HTTPException(
+                status_code=503,
+                detail=f"Soul profile has no soul_path: {scenario.soul_profile.get('id', '')}",
+            )
+        mnemonics_path = None
+        if scenario.scenario_id == runtime.default_scenario_id:
+            mnemonics_path = runtime.mnemonics_path
+        if mnemonics_path is None:
+            mnemonics_path = (
+                project_path(runtime.project_root, scenario.content_pack.get("mnemonics_path"))
+                or runtime.mnemonics_path
+            )
+        return {
+            "soul_path": str(generation_file_or_503(soul_path, "Soul profile")),
+            "mnemonics_path": str(generation_file_or_503(mnemonics_path, "Knowledge snippet")),
+        }
+
     def run_job(job_id: str) -> None:
         job = jobs.require(job_id)
         jobs.mark_running(job_id)
         try:
+            content_paths = job.metadata.get("content_paths", {})
             runner_kwargs = {
                 "pdf_path": job.pdf_path,
-                "soul_path": runtime.soul_path,
-                "mnemonics_path": runtime.mnemonics_path,
+                "soul_path": Path(str(content_paths.get("soul_path") or runtime.soul_path)),
+                "mnemonics_path": Path(str(content_paths.get("mnemonics_path") or runtime.mnemonics_path)),
                 "api_key_path": runtime.api_key_path,
                 "output_dir": job.output_dir,
                 "chat_model": runtime.chat_model,
@@ -509,6 +547,7 @@ def create_app(
             outline_path = input_dir / outline_name
             await save_upload(outline, outline_path)
 
+        content_paths = selected_content_paths(scenario)
         jobs.create(
             job_id=job_id,
             pdf_path=pdf_path,
@@ -518,6 +557,7 @@ def create_app(
                 "owner_user_id": current_user.id,
                 "scenario": scenario.trace_metadata(),
                 "parser_profile": parser_profile.trace_metadata(),
+                "content_paths": content_paths,
             },
         )
         background_tasks.add_task(run_job, job_id)

@@ -18,7 +18,7 @@ The current backend can:
 - attach generated jobs to the owner user and block cross-user job access
 - retrieve evidence chunks with embedding + BM25/RRF
 - retrieve related knowledge snippets from the current legacy `mnemonics.md` prompt-rendered seed file
-- generate Markdown study material using `soul.md`
+- generate Markdown study material using the selected scenario's soul profile
 - emit evidence links so the UI can jump from "依据 E001" to the original PDF page
 
 This is still a single-machine MVP. It does not yet include object storage, a production task queue, database-backed job records, or a separate frontend app.
@@ -47,7 +47,7 @@ packages/retrieval/     Chunking, BM25/RRF, retrieval adapter
 packages/domains/       Medicine domain pack and future subject packs
 web_mvp.py              Compatibility shim for the old Uvicorn entrypoint
 mvp_runner.py           Compatibility shim for the old CLI entrypoint
-soul.md                 Medicine output style and study-material template
+soul.md                 Medicine default soul profile and study-material rules
 mnemonics.md            Legacy prompt-rendered knowledge snippet seed file
 data/settings/          Runtime admin settings, model catalog, and structured knowledge snippets (created at runtime)
 rag-config.example.json Example RAG settings
@@ -98,7 +98,7 @@ $env:SILICONFLOW_API_KEY="your-key"
 For deployment, start from [.env.example](.env.example) and keep real secrets out of Git.
 Operators can use `/admin/settings` to edit JSON-backed runtime settings instead of editing files by hand. Set `JSTUDY_ADMIN_TOKEN` in deployment; then open `/admin/settings?admin_token=...` or send `Authorization: Bearer ...`.
 The admin settings directory defaults to `data/settings` and can be moved with `JSTUDY_SETTINGS_DIR`.
-`JSTUDY_JOBS_DIR`, `JSTUDY_SOUL_PATH`, and `JSTUDY_MNEMONICS_PATH` can be used to move runtime data and domain templates outside the repository in Docker or on a server. `JSTUDY_MNEMONICS_PATH` is the current compatibility name for the prompt-rendered knowledge snippet file.
+`JSTUDY_JOBS_DIR`, `JSTUDY_SOUL_PATH`, and `JSTUDY_MNEMONICS_PATH` can be used to move runtime data and domain templates outside the repository in Docker or on a server. `JSTUDY_SOUL_PATH` is the compatibility fallback for the default active pack; selected scenarios should normally resolve their own soul profile path from `content_pack.json`. `JSTUDY_MNEMONICS_PATH` is the current compatibility name for the prompt-rendered knowledge snippet file.
 `JSTUDY_MAX_PDF_BYTES` controls the upload limit for courseware PDFs; the default is 50 MB.
 `JSTUDY_JOB_RETENTION_HOURS` is optional. The application default is `0`, which disables cleanup, but public pilot deployments should set `72` or `168` so uploaded PDFs and generated artifacts do not accumulate indefinitely.
 `DATABASE_URL` controls auth persistence. It defaults to a local SQLite file in development; Docker Compose uses Postgres.
@@ -120,7 +120,7 @@ GET /api/readiness
 Use `/api/readiness?probe_provider=true` during deployment to run a live SiliconFlow chat and embedding connectivity probe.
 `POST /api/generate` returns `503` with the readiness payload when required runtime configuration is missing.
 `GET /api/options` returns public scenarios and parser profiles for the upload form.
-`POST /api/generate` accepts optional `scenario_id` and `parser_profile_id` form fields. Missing values resolve to the admin-configured defaults.
+`POST /api/generate` accepts optional `scenario_id` and `parser_profile_id` form fields. Missing values resolve to the admin-configured defaults. `scenario_id` resolves `content_pack_id`, `prompt_profile`, and the matching `soul_profile`, so different subjects can use different soul files without changing code.
 `parser_profile_id=fast` maps to PyMuPDF. The reserved `quality` profile maps to MinerU, is hidden from normal users at first, and should be enabled only after MinerU is configured.
 Job status is persisted in `JSTUDY_JOBS_DIR/jobs.json`; jobs that were queued or running during a server restart are marked failed because the MVP has no separate worker queue yet.
 Completed jobs expose retrieval diagnostics at `/api/jobs/{job_id}/trace`.
@@ -149,7 +149,9 @@ PATCH /api/admin/invite-codes/{invite_id}
 GET /api/admin/invite-codes/{invite_id}/uses
 ```
 
-The first admin settings version stores model catalog, RAG settings, web-search settings, parser settings, parser-profile visibility, content-pack scenarios and paths, and the current compatibility file `mnemonics.json`. Structured knowledge snippet JSON is rendered back to Markdown for the existing prompt flow.
+The first admin settings version stores model catalog, RAG settings, web-search settings, parser settings, parser-profile visibility, content-pack scenarios, soul profiles, content paths, and the current compatibility file `mnemonics.json`. Structured knowledge snippet JSON is rendered back to Markdown for the existing prompt flow.
+
+The default soul library includes the active `medicine-default` profile plus disabled blank placeholders for general, engineering, and law scenarios. Users choose scenarios from the upload page; admins control which scenarios are visible by enabling or disabling scenario entries. Blank placeholder profiles must receive a real `soul_path` before the scenario is exposed.
 
 Knowledge snippets are the long-term replacement for the narrower memory-aid library. The safe product direction is a feedback loop: users can later select and like high-quality generated fragments, the backend stores those fragments as admin-visible candidates, semantic deduplication clusters similar fragments, and only reviewed snippets can enter the approved library. Approved snippets may improve structure, wording, and recall, but they must not become independent fact sources unless the current upload also provides supporting evidence.
 
