@@ -285,6 +285,12 @@ INDEX_HTML = r"""<!doctype html>
         <input name="outline" type="file" accept=".md,.txt,.pdf" />
         <label>Scenario</label>
         <select name="scenario_id" id="scenarioSelect"></select>
+        <label>生成模式</label>
+        <select name="mode" id="modeSelect">
+          <option value="">总结（默认）</option>
+          <option value="exam-quick">考前速记</option>
+          <option value="rewrite">改写重述</option>
+        </select>
         <label id="parserProfileLabel">Parser profile</label>
         <select name="parser_profile_id" id="parserProfileSelect"></select>
         <button class="run" id="run" type="submit">生成学习资料</button>

@@ -509,6 +509,7 @@ def create_app(
         outline: UploadFile | None = File(None),
         scenario_id: str = Form(""),
         parser_profile_id: str = Form(""),
+        mode: str = Form(""),
     ) -> dict[str, Any]:
         set_no_store(response)
         current_user = current_user_or_401(request)
@@ -548,7 +549,23 @@ def create_app(
             outline_path = input_dir / outline_name
             await save_upload(outline, outline_path)
 
+        # mode → soul_path override (resolve BEFORE selected_content_paths)
+        MODE_SOUL_MAP = {
+            "exam-quick": "soul-exam-quick.md",
+            "rewrite": "soul-rewrite.md",
+        }
+        clean_mode = (mode or "").strip()
+        mode_soul_file = MODE_SOUL_MAP.get(clean_mode)
+        if mode_soul_file:
+            # Inject mode soul into scenario so selected_content_paths finds it
+            mode_soul_path = str(
+                project_path(runtime.project_root, mode_soul_file)
+                or runtime.project_root / mode_soul_file
+            )
+            scenario.soul_profile["soul_path"] = mode_soul_path
+
         content_paths = selected_content_paths(scenario)
+
         jobs.create(
             job_id=job_id,
             pdf_path=pdf_path,
@@ -559,6 +576,7 @@ def create_app(
                 "scenario": scenario.trace_metadata(),
                 "parser_profile": parser_profile.trace_metadata(),
                 "content_paths": content_paths,
+                "mode": clean_mode,
             },
         )
         background_tasks.add_task(run_job, job_id)
