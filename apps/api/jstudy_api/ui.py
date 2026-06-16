@@ -1043,7 +1043,10 @@ INDEX_HTML = r"""<!doctype html>
       document.addEventListener("mousemove", e => {
         if (!drag) return;
         const delta = e.clientX - drag.startX;
-        const newW = Math.min(drag.maxW, Math.max(drag.minW, drag.current + delta));
+        // Left handle: drag right = wider sidebar (+delta)
+        // Right handle: drag right = narrower PDF (-delta)
+        const sign = drag.target === "aside" ? 1 : -1;
+        const newW = Math.min(drag.maxW, Math.max(drag.minW, drag.current + sign * delta));
         const workspace = document.querySelector(".workspace");
         if (drag.target === "aside") {
           workspace.style.setProperty("--aside-w", newW + "px");
