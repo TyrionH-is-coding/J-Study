@@ -33,3 +33,14 @@
 | `packages/domains/medicine.py` | build_generation_prompt 接受 mode 参数 |
 | `apps/api/jstudy_api/app.py` | run_job 传 generation_mode |
 | `data/settings/content_pack.json` | 新增 General/Engineering 场景 |
+| `apps/api/jstudy_api/app.py` | 移除旧 mode → soul_path 映射，改为 scenario-aware 嵌入 soul |
+| `apps/api/jstudy_api/ui.py` | 状态栏显示 job_id，方便调试定位 |
+
+## 2026-06-16 — Phase 2 patch: mode 路由修复 + job_id 显示
+
+### 修复
+- **mode 路由改为 scenario-aware**: 移除 mode→单独 soul 文件的硬编码映射，mode 仅控制 soul 文本中的 `{mode}` 占位符。各 scenario 使用自身 soul 文件的嵌入模式章节
+- **前端状态栏显示 job_id**: `状态：completed (b853fddac4cd)` 格式，方便调试和对比
+
+### 验证效果
+Engineering/exam-quick 输出对比改前改后：LaTeX 公式密度提升、⭐⭐⭐ 被 🔑 替换、陷阱从段落式改为"出错原因+正确做法+示例"结构、新增符号速查表 — soul-engineering.md 规则生效。

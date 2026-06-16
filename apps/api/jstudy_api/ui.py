@@ -570,7 +570,7 @@ INDEX_HTML = r"""<!doctype html>
     async function poll(jobId) {
       const res = await fetch(`/api/jobs/${jobId}`);
       const job = await res.json();
-      statusBox.textContent = `状态：${job.status}`;
+      statusBox.textContent = `状态：${job.status}  (${jobId})`;
       if (job.status === "completed") {
         const [outRes, evidenceRes, pdfInfoRes] = await Promise.all([
           fetch(job.output_url),
