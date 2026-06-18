@@ -370,7 +370,7 @@ def run_mvp(
             section_chunks = retrieve_chunks(
                 section_title, chunks, chunk_embeddings,
                 api_key=resolved_embed_key, model=embed_model,
-                top_k=rag_config.evidence_per_query or 8,
+                top_k=rag_config.per_query_limit or 8,
             )
             section_chunk_ids = {c.id for c in section_chunks}
             section_evidence = [
