@@ -176,6 +176,16 @@ def infer_sections_from_chunks(
                 base_url=chat_base_url,
                 max_tokens=400,
             ).strip()
+        # DeepSeek V4 Flash reasoning mode can consume all max_tokens with
+        # internal reasoning, leaving empty output. Retry with higher limit.
+        if not raw:
+            raw = providers.generate_markdown(
+                messages,
+                api_key=api_key,
+                model=chat_model,
+                base_url=chat_base_url,
+                max_tokens=2000,
+            ).strip()
         # Strip markdown code block if present
         if raw.startswith("```"):
             raw = re.sub(r"^```(?:json)?\s*", "", raw, count=1)
