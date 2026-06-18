@@ -1059,7 +1059,7 @@ INDEX_HTML = r"""<!doctype html>
         downloadBtn.href = `/api/jobs/${jobId}/export`;
         downloadBtn.hidden = false;
         run.disabled = false;
-        loadHistory();
+        await loadHistory();
         showFeedbackArea(jobId);
         return;
         } catch (e) {
@@ -1122,7 +1122,11 @@ INDEX_HTML = r"""<!doctype html>
       }
       feedbackArea.style.display = "block";
       selectedRating = null;
-      document.querySelectorAll(".fb-btn").forEach(b => b.classList.remove("selected"));
+      document.querySelectorAll(".fb-btn").forEach(b => {
+        b.classList.remove("selected");
+        b.style.display = "";
+      });
+      document.querySelector(".fb-label").textContent = "这个结果对你有帮助吗？";
       document.querySelector(".fb-comment-wrap").style.display = "none";
       document.querySelector(".fb-thanks").style.display = "none";
       document.querySelector(".fb-comment-wrap textarea").value = "";

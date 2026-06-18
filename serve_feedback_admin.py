@@ -94,7 +94,7 @@ async function load() {
     // render rows
     const search = document.getElementById('filterSearch').value.toLowerCase();
     const rows = allEntries.filter(e => !search || (e.comment || '').toLowerCase().includes(search)).map(e => {
-      const time = e.created_at ? e.created_at.replace('T',' ').slice(0,16) : '-';
+      const time = e.created_at ? toBeijingTime(e.created_at) : '-';
       const rating = e.rating === 'up' ? '<span class="rating-up">👍 有帮助</span>' : '<span class="rating-down">👎 不太行</span>';
       return `<tr>
         <td style="white-space:nowrap">${time}</td>
@@ -110,6 +110,12 @@ async function load() {
   } catch(e) { document.getElementById('tableBody').innerHTML = '<tr><td class="empty" colspan="7">请求失败: ' + esc(e.message) + '</td></tr>'; }
 }
 function esc(s) { const d=document.createElement('div'); d.textContent=s||''; return d.innerHTML; }
+function toBeijingTime(iso) {
+  try {
+    const d = new Date(iso);
+    return d.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false }).replace(/\//g, '-');
+  } catch { return iso ? iso.replace('T',' ').slice(0,16) : '-'; }
+}
 document.getElementById('filterRating').onchange = load;
 document.getElementById('filterScenario').onchange = load;
 document.getElementById('filterSearch').oninput = load;

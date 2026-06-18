@@ -1,5 +1,12 @@
 # J-Study Changelog
 
+## 2026-06-18 — 修复: 反馈端点 500（missing import json）+ widget 重置
+
+### 修复
+- `app.py`: 新增 `import json`（此前遗漏，导致 `json.dumps()` 抛出 `NameError`）
+- `app.py`: 反馈端点 `submit_feedback` 加 try-except 兜底 + `scenario` 字段安全解析
+- `ui.py`: `showFeedbackArea()` 重置按钮显示状态和 label 文字
+
 ## 2026-06-18 — 新增: 用户反馈系统
 
 ### 新增
