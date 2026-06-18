@@ -72,8 +72,9 @@ def retrieve_chunks(
     api_key: str,
     model: str = DEFAULT_EMBED_MODEL,
     top_k: int = 18,
+    base_url: str | None = None,
 ) -> list[Chunk]:
-    query_embedding = providers.embed_texts([query], api_key=api_key, model=model)[0]
+    query_embedding = providers.embed_texts([query], api_key=api_key, model=model, base_url=base_url or SILICONFLOW_BASE_URL)[0]
     scored = [
         replace(
             chunk,
@@ -371,6 +372,7 @@ def run_mvp(
                 section_title, chunks, chunk_embeddings,
                 api_key=resolved_embed_key, model=embed_model,
                 top_k=rag_config.top_k_candidates,
+                base_url=embed_base_url,
             )
             section_chunk_ids = {c.id for c in section_chunks}
             section_evidence = [
