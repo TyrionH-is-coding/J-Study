@@ -1,5 +1,43 @@
 # J-Study Changelog
 
+## 2026-06-18 — LLM 推断大纲：无 outline 时自动分章生成
+
+### 新增
+- `pipeline.py`: 新增 `infer_sections_from_chunks()` — 无用户 outline 时，用一次极低成本 LLM 调用（max_tokens=400）从课件文本推断章节列表
+- 无 outline 路径现在自动触发 LLM 推断：>=2 章节 → 分章生成；<2 章节或 LLM 失败 → 回退单次生成（零变化）
+- trace 新增 `generation_path` 字段：`"single-pass"` / `"sectional-outline"` / `"sectional-inferred"`
+- trace 新增 `sections` 字段：章节标题列表（分章路径）或空数组（单次路径）
+- `result-sections.json` 始终写入：分章时包含章节元数据，单次时为空数组 `[]`
+
+### 阈值设计
+- 不分硬编码章节数阈值。LLM prompt 中明确指令："如果内容没有清晰的章节或主题划分，返回空数组 []"
+- 短章节也被保留："如果一个章节标题在课文中明显存在但该章节内容仅很短，仍然保留并返回"
+- 视觉验证：可通过 `GET /api/jobs/{id}/trace` 看到 `generation_path` + `sections` 字段，或查看 `result-sections.json`
+
+### 修复
+- 测试 `test_run_mvp_uses_runtime_api_key_and_base_urls`: `generate_markdown` 调用从 1 次调整为 2 次（首次是 LLM 推断章节，第二次是主生成）
+
+## 2026-06-18 — Sectional Generation: outline-driven分片生成
+
+### 新功能
+- `pipeline.py`: 新增 outline-driven 章节级分片生成路径。有 outline 时自动解析章节列表，每章独立做 evidence 检索 + 聚焦 prompt 生成，最后合并。无 outline 时回退单次生成。
+- `parse_outline_sections()`: 解析 markdown 标题和中文编号为章节列表
+- per-section 输出: `output/sections/{i}-{slug}/markdown.md` + `evidence.json` 独立保存
+- 合并输出包含目录和逐节内容，`result-sections.json` 记录章节元数据
+
+### 变更
+- `storage.py`: 无变更（节输出利用子目录，不改变 OutputPaths 接口）
+- `providers.py`: `generate_markdown()` 新增 `max_tokens` 参数（默认 6000，章节生成用 4000）
+- `medicine.py`, `general.py`, `engineering.py`: `build_generation_prompt()` 新增 `section_title` 参数 + `_section_block()` 辅助函数
+- `citations.py`: 无变更（全局证据 ID E001-E999 跨节唯一，合并后 `build_evidence_links` 正常工作）
+- `pipeline.py`: 新增 `StudyQuery`、`build_study_queries`、`extract_evidence_refs` 等 facade 层 re-export
+
+### 修复
+- `test_mvp_runner.py`: mock 目标从 `pipeline.build_study_queries` 改为 `medicine.build_study_queries`（动态路由重构后的正确路径）
+
+### 新增测试
+- `tests/test_parse_outline_sections.py`: 7 个单元测试覆盖 markdown 标题、中文编号、混合格式、空 outline 等场景
+
 ## 2026-06-18 — 修复: 反馈端点 500（missing import json）+ widget 重置
 
 ### 修复

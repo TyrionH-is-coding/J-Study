@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, replace
 from pathlib import Path
+import json
 import re
 from typing import Any
 
@@ -115,6 +116,76 @@ def parse_outline_sections(outline_text: str) -> list[dict[str, Any]]:
     return sections
 
 
+SOURCE_TEXT_TRUNCATION = 15000
+
+
+def infer_sections_from_chunks(
+    chunks: list[Chunk],
+    api_key: str,
+    chat_model: str = DEFAULT_CHAT_MODEL,
+    chat_base_url: str = SILICONFLOW_BASE_URL,
+) -> list[dict[str, Any]]:
+    """Use one cheap LLM call to infer chapter sections from chunk text when no outline is provided.
+
+    Returns [{title, level}] where level default to 1.
+    Returns empty list when the content has no clear chapter divisions.
+    Returns empty list when the LLM call fails (graceful degradation to single-pass).
+    """
+    source_text = "\n".join(chunk.text for chunk in chunks)
+    truncated = source_text[:SOURCE_TEXT_TRUNCATION]
+
+    prompt = f"""你是一个课件分析助手。下面是一份课件的文本内容开头部分。
+
+请识别这份课件的主要教学内容章节，返回纯 JSON 数组。
+
+规则：
+- 只提取真正的教学章节标题，如"第一章 细菌总论"、"固有免疫系统"、"抗体结构与功能"
+- 忽略：课程介绍、教学安排、考核方式、参考书目、目录索引、学习目标等元信息段落
+- 如果内容没有清晰的章节或主题划分（全文是一个连续的整体），返回空数组 []
+- 如果一个章节标题在课文中明显存在但该章节内容仅很短，仍然保留并返回
+- 不要编造不存在的章节
+- 最多返回 8 个章节
+- 只返回 JSON 数组，不要其他文字，不要 markdown 代码块包裹
+
+课件文本开头部分：
+
+{truncated}"""
+
+    messages = [
+        {"role": "system", "content": "你是一个严谨的课件分析助手，只从文本中提取章节。返回纯 JSON。"},
+        {"role": "user", "content": prompt},
+    ]
+
+    try:
+        raw = providers.generate_markdown(
+            messages,
+            api_key=api_key,
+            model=chat_model,
+            base_url=chat_base_url,
+            max_tokens=400,
+        )
+        raw = raw.strip()
+        # Strip markdown code block if present
+        if raw.startswith("```"):
+            raw = re.sub(r"^```(?:json)?\s*", "", raw, count=1)
+            raw = re.sub(r"\s*```$", "", raw, count=1)
+            raw = raw.strip()
+        titles = json.loads(raw)
+        if not isinstance(titles, list):
+            return []
+        # Clean and validate
+        result: list[dict[str, Any]] = []
+        for title in titles:
+            title_str = str(title).strip()
+            if len(title_str) < 2 or len(title_str) > 80:
+                continue
+            result.append({"title": title_str, "level": 1})
+        return result
+    except (json.JSONDecodeError, RuntimeError, KeyError, TypeError, ValueError):
+        return []
+
+
+
 def run_mvp(
     pdf_path: Path,
     soul_path: Path,
@@ -198,6 +269,39 @@ def run_mvp(
     output_dir.mkdir(parents=True, exist_ok=True)
     output_paths = build_output_paths(output_dir, output_prefix)
 
+    # --- Section planning: determine generation path ---
+    sections: list[dict[str, Any]] = []
+    section_titles: list[str] = []
+    generation_path = "single-pass"
+
+    if outline_text:
+        sections = parse_outline_sections(outline_text)
+        if len(sections) >= 2:
+            generation_path = "sectional-outline"
+            section_titles = [s["title"] for s in sections]
+    else:
+        inferred = infer_sections_from_chunks(
+            chunks, resolved_api_key,
+            chat_model=chat_model, chat_base_url=chat_base_url,
+        )
+        if len(inferred) >= 2:
+            sections = inferred
+            generation_path = "sectional-inferred"
+            section_titles = [s["title"] for s in sections]
+
+    sections_meta: list[dict[str, Any]] = []
+    if sections:
+        sections_meta = [
+            {
+                "index": i,
+                "title": s["title"],
+                "level": s.get("level", 1),
+                "slug": re.sub(r"[^\w\u4e00-\u9fff]+", "-", s["title"]).strip("-")[:30],
+            }
+            for i, s in enumerate(sections)
+        ]
+    write_json(output_dir / "result-sections.json", sections_meta)
+
     write_json(
         output_paths.chunks,
         [
@@ -227,15 +331,16 @@ def run_mvp(
             "mnemonic_hits": mnemonic_hits,
             "generation_mode": generation_mode or "summary",
             "domain": _resolve_domain(routing_metadata).__name__,
+            "generation_path": generation_path,
+            "sections": section_titles,
         },
     )
     write_json(output_paths.evidence, evidence)
 
-    # --- Outline-driven sectional generation or single-pass fallback ---
-    sections = parse_outline_sections(outline_text) if outline_text else []
+    # --- Generation: outline-driven, LLM-inferred, or single-pass ---
     soul_text = soul_path.read_text(encoding="utf-8")
 
-    if len(sections) >= 2:
+    if len(sections) >= 2 and generation_path in ("sectional-outline", "sectional-inferred"):
         section_outputs: list[dict[str, Any]] = []
 
         for i, section in enumerate(sections):
@@ -291,20 +396,8 @@ def run_mvp(
             merged_parts.append("---")
 
         merged_md = "\n".join(merged_parts)
-
-        # Save section index metadata
-        sections_meta = [
-            {
-                "index": i,
-                "title": s["title"],
-                "level": s.get("level", 1),
-                "slug": re.sub(r"[^\w\u4e00-\u9fff]+", "-", s["title"]).strip("-")[:30],
-            }
-            for i, s in enumerate(sections)
-        ]
-        write_json(output_dir / "result-sections.json", sections_meta)
     else:
-        # --- Single-pass generation (original path, no outline or <2 sections) ---
+        # --- Single-pass generation (original path) ---
         messages = domain.build_generation_prompt(
             soul_text, evidence, mnemonic_hits,
             outline=outline_text, mode=generation_mode or "",

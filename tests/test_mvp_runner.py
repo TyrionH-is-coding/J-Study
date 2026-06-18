@@ -395,7 +395,8 @@ content: 一嗅二视三动眼。
         self.assertTrue(embed_calls)
         self.assertTrue(all(call[1] == "runtime-key" for call in embed_calls))
         self.assertTrue(all(call[3] == "https://embed.example/v1" for call in embed_calls))
-        generate_markdown.assert_called_once()
+        # Called once for section inference (returns non-JSON → empty → single-pass) + once for actual generation
+        self.assertEqual(generate_markdown.call_count, 2)
         self.assertEqual(generate_markdown.call_args.kwargs["api_key"], "runtime-key")
         self.assertEqual(generate_markdown.call_args.kwargs["base_url"], "https://chat.example/v1")
 

@@ -38,21 +38,14 @@ markdown = providers.generate_markdown(messages, ...)              # 一次生�
 ```
 输入：PDF + outline (可选)
   │
-  ├── [无 outline] → 当前单次生成 (回退路径)
+  ├── [有 outline]
+  │     ├── 解析 outline → 章节列表
+  │     └── 逐节生成 + 合并
   │
-  └── [有 outline]
-        │
-        ├── 解析 outline → 得到章节列表 [ch1, ch2, ..., chN]
-        │
-        ├── 对每个章节 ch_i:
-        │     ├── 选择 ch_i 相关的证据 chunks (按查询相关性过滤)
-        │     ├── 构建聚焦 prompt (ch_i 标题 + 相关证据 + soul 规则)
-        │     └── LLM 生成 ch_i 内容
-        │
-        └── 合并所有章节 → 生成完整 markdown
-              ├── 交叉引用验证 (E001 等)
-              ├── quality audit
-              └── evidence_links
+  └── [无 outline]
+        ├── LLM 从课件文本推断章节（一次小调用, max_tokens=400）
+        ├── ≥2 章节 → 逐节生成 + 合并（LLM 推断路径）
+        └── <2 章节 → 当前单次生成（回退路径）
 ```
 
 ### 需要改的文件
