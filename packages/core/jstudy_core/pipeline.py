@@ -165,6 +165,17 @@ def infer_sections_from_chunks(
             max_tokens=400,
         )
         raw = raw.strip()
+        # Retry once if API returned empty (rate limit / transient failure)
+        if not raw:
+            import time
+            time.sleep(3)
+            raw = providers.generate_markdown(
+                messages,
+                api_key=api_key,
+                model=chat_model,
+                base_url=chat_base_url,
+                max_tokens=400,
+            ).strip()
         # Strip markdown code block if present
         if raw.startswith("```"):
             raw = re.sub(r"^```(?:json)?\s*", "", raw, count=1)
