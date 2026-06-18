@@ -226,6 +226,27 @@ INDEX_HTML = r"""<!doctype html>
       font-size: 13px;
     }
 
+    /* Feedback widget */
+    #feedbackArea { display: none; margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--border-light); max-width: 820px; }
+    .fb-label { font-size: 13px; color: var(--text-secondary); margin-bottom: 8px; }
+    .fb-btns { display: flex; gap: 10px; margin-bottom: 10px; }
+    .fb-btn {
+      border: 1px solid var(--border); border-radius: 8px; background: var(--surface);
+      padding: 6px 16px; font-size: 13px; font-weight: 500; cursor: pointer;
+      font-family: inherit; transition: all .12s; color: var(--text-secondary);
+    }
+    .fb-btn:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+    .fb-btn.selected { background: var(--accent); color: #fff; border-color: var(--accent); }
+    .fb-comment-wrap { display: none; margin-top: 8px; }
+    .fb-comment-wrap textarea {
+      width: 100%; padding: 8px 10px; border: 1px solid var(--border);
+      border-radius: 6px; font-size: 13px; font-family: inherit;
+      resize: vertical; min-height: 48px; box-sizing: border-box;
+    }
+    .fb-comment-wrap textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+    .fb-submit { margin-top: 6px; }
+    .fb-thanks { display: none; font-size: 13px; color: var(--text-muted); margin-top: 6px; }
+
     /* Evidence buttons */
     .evidence-btn {
       display: inline-flex;
@@ -497,6 +518,18 @@ INDEX_HTML = r"""<!doctype html>
     <div class="resize-handle" data-target="aside" data-min="220" data-max="500"></div>
     <main>
       <article class="output" id="output"><div class="empty">生成后显示学习资料</div></article>
+      <div id="feedbackArea">
+        <div class="fb-label">这个结果对你有帮助吗？</div>
+        <div class="fb-btns">
+          <button class="fb-btn" data-rating="up" type="button">👍 有帮助</button>
+          <button class="fb-btn" data-rating="down" type="button">👎 不太行</button>
+        </div>
+        <div class="fb-comment-wrap">
+          <textarea rows="2" placeholder="有什么建议？（可选）"></textarea>
+          <button class="btn-primary fb-submit" type="button">提交反馈</button>
+        </div>
+        <div class="fb-thanks">感谢反馈 🙏</div>
+      </div>
     </main>
     <div class="resize-handle" data-target="pdf" data-min="260" data-max="700"></div>
     <section class="pdf-panel">
@@ -1027,6 +1060,7 @@ INDEX_HTML = r"""<!doctype html>
         downloadBtn.hidden = false;
         run.disabled = false;
         loadHistory();
+        showFeedbackArea(jobId);
         return;
         } catch (e) {
           console.error("poll render error:", e);
@@ -1074,6 +1108,50 @@ INDEX_HTML = r"""<!doctype html>
       if (!btn || !currentJob) return;
       const link = findEvidenceLink(btn.dataset.ref, btn.dataset.occurrence);
       showEvidenceLink(link, { scrollCitationList: true });
+    });
+
+    // --- Feedback widget ---
+    const feedbackArea = document.getElementById("feedbackArea");
+    let selectedRating = null;
+
+    function showFeedbackArea(jobId) {
+      if (!feedbackArea) return;
+      if (localStorage.getItem(`fb_${jobId}`)) {
+        feedbackArea.style.display = "none";
+        return;
+      }
+      feedbackArea.style.display = "block";
+      selectedRating = null;
+      document.querySelectorAll(".fb-btn").forEach(b => b.classList.remove("selected"));
+      document.querySelector(".fb-comment-wrap").style.display = "none";
+      document.querySelector(".fb-thanks").style.display = "none";
+      document.querySelector(".fb-comment-wrap textarea").value = "";
+    }
+
+    feedbackArea.addEventListener("click", e => {
+      const btn = e.target.closest(".fb-btn");
+      if (btn) {
+        document.querySelectorAll(".fb-btn").forEach(b => b.classList.remove("selected"));
+        btn.classList.add("selected");
+        selectedRating = btn.dataset.rating;
+        document.querySelector(".fb-comment-wrap").style.display = "block";
+      }
+      if (e.target.closest(".fb-submit")) {
+        const jobId = currentJob;
+        if (!jobId || !selectedRating) return;
+        const comment = document.querySelector(".fb-comment-wrap textarea").value.trim();
+        fetch(`/api/jobs/${jobId}/feedback`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ rating: selectedRating, comment: comment }),
+        }).catch(() => {}).finally(() => {
+          document.querySelector(".fb-comment-wrap").style.display = "none";
+          document.querySelector(".fb-thanks").style.display = "block";
+          document.querySelectorAll(".fb-btn").forEach(b => b.style.display = "none");
+          document.querySelector(".fb-label").textContent = "已收到反馈";
+          try { localStorage.setItem(`fb_${jobId}`, "1"); } catch(e) {}
+        });
+      }
     });
 
     // --- Column resize ---

@@ -722,6 +722,37 @@ def create_app(
             },
         )
 
+    @app.post("/api/jobs/{job_id}/feedback")
+    def submit_feedback(
+        job_id: str,
+        request: Request,
+        response: Response,
+        payload: dict[str, Any],
+    ) -> dict[str, str]:
+        set_no_store(response)
+        current_user = current_user_or_401(request)
+        job = job_or_404(job_id, current_user)
+        rating = str(payload.get("rating") or "").strip()
+        if rating not in ("up", "down"):
+            raise HTTPException(status_code=400, detail="rating must be 'up' or 'down'")
+        comment = str(payload.get("comment") or "").strip()[:500]
+        fb_dir = jobs_root / "feedback"
+        fb_dir.mkdir(parents=True, exist_ok=True)
+        feedback = {
+            "user_id": current_user.id,
+            "user_email": current_user.email,
+            "job_id": job_id,
+            "rating": rating,
+            "comment": comment,
+            "scenario_id": job.metadata.get("scenario", {}).get("requested_scenario_id", ""),
+            "mode": job.metadata.get("mode", ""),
+            "build_commit": job.metadata.get("build_commit", ""),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+        fb_path = fb_dir / f"feedback_{job_id}_{uuid4().hex[:8]}.json"
+        fb_path.write_text(json.dumps(feedback, ensure_ascii=False, indent=2))
+        return {"status": "ok"}
+
     return app
 
 

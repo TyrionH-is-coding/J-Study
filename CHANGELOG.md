@@ -1,5 +1,17 @@
 # J-Study Changelog
 
+## 2026-06-18 — 新增: 用户反馈系统
+
+### 新增
+- `app.py`: 新增 `POST /api/jobs/{job_id}/feedback` 端点，接收 `rating`(up/down) + 可选 `comment`
+- `ui.py`: 生成完成后在输出底部显示反馈 widget（👍/👎 按钮 + 评论框），localStorage 防重复提交
+- `serve_feedback_admin.py`: 独立反馈管理站（`:8888`），统计头栏 + 筛选 + 表格显示全部反馈日志
+
+### 架构
+- 反馈存储路径: `web_jobs/feedback/feedback_{job_id}_{uuid}.json`
+- 每条含: user_id, user_email, job_id, rating, comment, scenario_id, mode, build_commit, created_at
+- 管理站使用相同 `JSTUDY_ADMIN_TOKEN` 鉴权（可配合 Cloudflare Access）
+
 ## 2026-06-17 — 修复: PDF 引用文本乱码
 
 ### 修复
