@@ -1078,22 +1078,29 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     form.addEventListener("submit", async e => {
-      e.preventDefault();
-      run.disabled = true;
-      statusBox.textContent = "上传中…";
-      output.innerHTML = `<div class="empty">生成中</div>`;
-      evidenceList.innerHTML = `<div class="empty">等待引用</div>`;
-      pdfPages.innerHTML = `<div class="empty">等待 PDF 预览</div>`;
-      downloadBtn.hidden = true;
-      const res = await fetch("/api/generate", { method: "POST", body: new FormData(form) });
-      const data = await res.json();
-      if (!res.ok) {
-        statusBox.innerHTML = `<span class="error">${escapeHtml(String(data.detail || "请求失败"))}</span>`;
+      try {
+        e.preventDefault();
+        run.disabled = true;
+        statusBox.textContent = "上传中…";
+        output.innerHTML = `<div class="empty">生成中</div>`;
+        evidenceList.innerHTML = `<div class="empty">等待引用</div>`;
+        pdfPages.innerHTML = `<div class="empty">等待 PDF 预览</div>`;
+        downloadBtn.hidden = true;
+        const res = await fetch("/api/generate", { method: "POST", body: new FormData(form) });
+        const data = await res.json();
+        if (!res.ok) {
+          const detail = data && data.detail;
+          const msg = typeof detail === "string" ? detail : (data && data.status ? `服务暂不可用 (${data.status})` : "请求失败");
+          statusBox.innerHTML = `<span class="error">${escapeHtml(msg)}</span>`;
+          run.disabled = false;
+          return;
+        }
+        currentJob = data.job_id;
+        poll(currentJob);
+      } catch (e) {
+        statusBox.innerHTML = `<span class="error">${escapeHtml(e.message || "请求失败")}</span>`;
         run.disabled = false;
-        return;
       }
-      currentJob = data.job_id;
-      poll(currentJob);
     });
 
     output.addEventListener("click", e => {
