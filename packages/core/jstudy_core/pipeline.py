@@ -118,6 +118,7 @@ def parse_outline_sections(outline_text: str) -> list[dict[str, Any]]:
 
 
 SOURCE_TEXT_TRUNCATION = 50000
+SOURCE_TEXT_PER_FILE = 15000
 
 
 def infer_sections_from_chunks(
@@ -132,8 +133,24 @@ def infer_sections_from_chunks(
     Returns empty list when the content has no clear chapter divisions.
     Returns empty list when the LLM call fails (graceful degradation to single-pass).
     """
-    source_text = "\n".join(chunk.text for chunk in chunks)
-    truncated = source_text[:SOURCE_TEXT_TRUNCATION]
+    # Sample first SOURCE_TEXT_PER_FILE chars from each source file
+    # so multi-file uploads show all chapter titles, not just the first file's.
+    file_groups: dict[str, list[str]] = {}
+    for chunk in chunks:
+        src = getattr(chunk, "source_file", "") or ""
+        if src not in file_groups:
+            file_groups[src] = []
+        file_groups[src].append(chunk.text)
+    sampled_parts: list[str] = []
+    total_chars = 0
+    for src, texts in file_groups.items():
+        file_text = "\n".join(texts)
+        take = min(SOURCE_TEXT_PER_FILE, len(file_text))
+        sampled_parts.append(file_text[:take])
+        total_chars += take
+        if total_chars >= SOURCE_TEXT_TRUNCATION:
+            break
+    truncated = "\n".join(sampled_parts)[:SOURCE_TEXT_TRUNCATION]
 
     prompt = f"""你是一个课件分析助手。下面是一份课件的文本内容开头部分。
 
