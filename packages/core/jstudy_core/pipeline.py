@@ -117,7 +117,7 @@ def parse_outline_sections(outline_text: str) -> list[dict[str, Any]]:
     return sections
 
 
-SOURCE_TEXT_TRUNCATION = 15000
+SOURCE_TEXT_TRUNCATION = 50000
 
 
 def infer_sections_from_chunks(
