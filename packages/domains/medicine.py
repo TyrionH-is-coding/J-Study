@@ -210,12 +210,27 @@ def retrieve_mnemonics(
     return sorted(scored, key=lambda row: (-int(row["score"]), str(row["id"])))[:limit]
 
 
+def _section_block(section_title: str) -> str:
+    """Return a focused section-generation instruction when section_title is non-empty."""
+    if not section_title:
+        return ""
+    return f"""
+
+## 你的分工
+
+你现在正在生成学习资料的「{section_title}」部分。
+请只专注于这个章节的内容，使用下面的证据。
+不要写全书总结，不要写"上一篇/下一篇"，不要写过渡段到其他章节。
+"""
+
+
 def build_generation_prompt(
     soul: str,
     evidence: list[dict[str, Any]],
     mnemonics: list[dict[str, Any]],
     outline: str = "",
     mode: str = "",
+    section_title: str = "",
 ) -> list[dict[str, str]]:
     mode_name = mode or "summary"
     mode_labels = {
@@ -270,7 +285,7 @@ def build_generation_prompt(
 {mnemonic_text}
 
 请基于以上内容生成一份单课件 MVP 学习资料。
-
+{_section_block(section_title)}
 硬性要求：
 1. 使用“课件严格模式”。
 2. 输出 Markdown。

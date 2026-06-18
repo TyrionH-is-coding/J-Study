@@ -296,7 +296,7 @@ content: 一嗅二视三动眼。
             outline.write_text("第一章 细菌总论", encoding="utf-8")
 
             with patch(
-                "packages.core.jstudy_core.pipeline.build_study_queries",
+                "packages.domains.medicine.build_study_queries",
                 return_value=[StudyQuery("sample", "Sample", "alpha overview")],
             ) as query_builder, patch("packages.core.jstudy_core.providers.generate_markdown") as generate_markdown:
                 generate_markdown.side_effect = lambda messages, api_key, model: (
@@ -372,7 +372,7 @@ content: 一嗅二视三动眼。
             api_key.write_text("file-key", encoding="utf-8")
 
             with patch(
-                "packages.core.jstudy_core.pipeline.build_study_queries",
+                "packages.domains.medicine.build_study_queries",
                 return_value=[StudyQuery("sample", "Sample", "alpha overview")],
             ), patch("packages.core.jstudy_core.providers.generate_markdown") as generate_markdown:
                 generate_markdown.return_value = "Fact <!-- evidence: E001 -->"

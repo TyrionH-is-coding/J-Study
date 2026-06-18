@@ -162,6 +162,7 @@ def generate_markdown(
     api_key: str,
     model: str = DEFAULT_CHAT_MODEL,
     base_url: str = SILICONFLOW_BASE_URL,
+    max_tokens: int = 6000,
 ) -> str:
     response = siliconflow_post(
         "chat/completions",
@@ -169,7 +170,7 @@ def generate_markdown(
             "model": model,
             "messages": messages,
             "temperature": 0.15,
-            "max_tokens": 6000,
+            "max_tokens": max_tokens,
         },
         api_key,
         timeout=240,

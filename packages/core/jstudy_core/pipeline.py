@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, replace
 from pathlib import Path
+import re
 from typing import Any
 
 from packages.core.jstudy_core import citations
@@ -11,6 +12,15 @@ from packages.core.jstudy_core.storage import build_output_paths, write_json
 from packages.domains import medicine as domain_medicine
 from packages.domains import general as domain_general
 from packages.domains import engineering as domain_engineering
+from packages.domains.medicine import (
+    StudyQuery,
+    audit_output_quality,
+    build_generation_prompt,
+    build_study_queries,
+    extract_evidence_refs,
+    parse_mnemonics,
+    retrieve_mnemonics,
+)
 from packages.parsers.mineru_parser import extract_pdf_pages_with_mineru
 from packages.parsers.pymupdf_parser import extract_pdf_pages
 from packages.retrieval.hybrid import (
@@ -72,6 +82,37 @@ def retrieve_chunks(
         for index, (chunk, embedding) in enumerate(zip(chunks, chunk_embeddings))
     ]
     return sorted(scored, key=lambda chunk: chunk.score, reverse=True)[:top_k]
+
+
+def parse_outline_sections(outline_text: str) -> list[dict[str, Any]]:
+    """Parse markdown outline into a list of section headings.
+
+    Returns [{title, level}] where level is the heading depth (1=#, 2=##, etc.).
+    Falls back to numbered lines (\"1. Topic\", \"一、Topic\") when no markdown headers found.
+    Returns empty list when no sections can be parsed.
+    """
+    sections: list[dict[str, Any]] = []
+    for line in outline_text.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped.startswith("#"):
+            level = 0
+            for ch in stripped:
+                if ch == "#":
+                    level += 1
+                else:
+                    break
+            title = stripped[level:].strip()
+            if title:
+                sections.append({"title": title, "level": level})
+        # Fallback: numbered list items as level-1 headings
+        elif re.match(r"^\d+[.．、)]\s", stripped) or re.match(
+            r"^[一二三四五六七八九十百]+[.、]", stripped
+        ):
+            sections.append({"title": stripped, "level": 1})
+
+    return sections
 
 
 def run_mvp(
@@ -190,24 +231,96 @@ def run_mvp(
     )
     write_json(output_paths.evidence, evidence)
 
-    messages = domain.build_generation_prompt(
-        soul_path.read_text(encoding="utf-8"),
-        evidence,
-        mnemonic_hits,
-        outline=outline_text,
-        mode=generation_mode or "",
-    )
-    if chat_base_url == SILICONFLOW_BASE_URL:
-        markdown = providers.generate_markdown(messages, api_key=resolved_api_key, model=chat_model)
+    # --- Outline-driven sectional generation or single-pass fallback ---
+    sections = parse_outline_sections(outline_text) if outline_text else []
+    soul_text = soul_path.read_text(encoding="utf-8")
+
+    if len(sections) >= 2:
+        section_outputs: list[dict[str, Any]] = []
+
+        for i, section in enumerate(sections):
+            section_title = section["title"]
+            # Per-section evidence: retrieve top-K chunks focused on this section title
+            section_chunks = retrieve_chunks(
+                section_title, chunks, chunk_embeddings,
+                api_key=resolved_embed_key, model=embed_model,
+                top_k=rag_config.evidence_per_query or 8,
+            )
+            section_chunk_ids = {c.id for c in section_chunks}
+            section_evidence = [
+                item for item in evidence if item["chunk_id"] in section_chunk_ids
+            ]
+            # Fallback: if no direct evidence match, use first 3 global evidence items
+            if not section_evidence:
+                section_evidence = evidence[:3]
+
+            section_messages = domain.build_generation_prompt(
+                soul_text, section_evidence, mnemonic_hits,
+                outline=outline_text, mode=generation_mode or "",
+                section_title=section_title,
+            )
+            section_md = providers.generate_markdown(
+                section_messages,
+                api_key=resolved_api_key, model=chat_model,
+                base_url=chat_base_url, max_tokens=4000,
+            )
+
+            slug = re.sub(r"[^\w\u4e00-\u9fff]+", "-", section_title).strip("-")[:30]
+            section_dir = output_dir / "sections" / f"{i:02d}-{slug}"
+            section_dir.mkdir(parents=True, exist_ok=True)
+            (section_dir / "markdown.md").write_text(section_md + "\n", encoding="utf-8")
+            write_json(section_dir / "evidence.json", section_evidence)
+
+            section_outputs.append({
+                "title": section_title,
+                "level": section.get("level", 1),
+                "markdown": section_md,
+            })
+
+        # Merge: table of contents + concatenated sections
+        merged_parts: list[str] = ["# 目录\n"]
+        for i, sec in enumerate(section_outputs):
+            merged_parts.append(f"- [{sec['title']}](#{sec['title']})")
+        merged_parts.append("")
+        merged_parts.append("---\n")
+        for sec in section_outputs:
+            heading_level = min(sec["level"], 2)
+            merged_parts.append(f"{'#' * heading_level} {sec['title']}\n")
+            merged_parts.append(sec["markdown"])
+            merged_parts.append("")
+            merged_parts.append("---")
+
+        merged_md = "\n".join(merged_parts)
+
+        # Save section index metadata
+        sections_meta = [
+            {
+                "index": i,
+                "title": s["title"],
+                "level": s.get("level", 1),
+                "slug": re.sub(r"[^\w\u4e00-\u9fff]+", "-", s["title"]).strip("-")[:30],
+            }
+            for i, s in enumerate(sections)
+        ]
+        write_json(output_dir / "result-sections.json", sections_meta)
     else:
-        markdown = providers.generate_markdown(
-            messages,
-            api_key=resolved_api_key,
-            model=chat_model,
-            base_url=chat_base_url,
+        # --- Single-pass generation (original path, no outline or <2 sections) ---
+        messages = domain.build_generation_prompt(
+            soul_text, evidence, mnemonic_hits,
+            outline=outline_text, mode=generation_mode or "",
         )
-    output_paths.markdown.write_text(markdown + "\n", encoding="utf-8")
-    write_json(output_paths.evidence_links, citations.build_evidence_links(markdown, evidence))
-    write_json(output_paths.quality, domain.audit_output_quality(markdown, evidence))
+        if chat_base_url == SILICONFLOW_BASE_URL:
+            merged_md = providers.generate_markdown(messages, api_key=resolved_api_key, model=chat_model)
+        else:
+            merged_md = providers.generate_markdown(
+                messages,
+                api_key=resolved_api_key,
+                model=chat_model,
+                base_url=chat_base_url,
+            )
+
+    output_paths.markdown.write_text(merged_md + "\n", encoding="utf-8")
+    write_json(output_paths.evidence_links, citations.build_evidence_links(merged_md, evidence))
+    write_json(output_paths.quality, domain.audit_output_quality(merged_md, evidence))
 
     return output_paths.as_dict()
