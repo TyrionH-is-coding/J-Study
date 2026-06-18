@@ -498,7 +498,7 @@ INDEX_HTML = r"""<!doctype html>
           <div class="mode-pill" data-mode="rewrite">改写重述</div>
         </div>
         <label>课件 PDF</label>
-        <input name="pdf" type="file" accept="application/pdf" required />
+        <input name="pdf" type="file" accept="application/pdf" required multiple />
         <label>课程大纲</label>
         <input name="outline" type="file" accept=".md,.txt,.pdf" />
         <input type="hidden" name="scenario_id" id="scenarioIdInput" value="" />

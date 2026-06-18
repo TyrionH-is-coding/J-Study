@@ -80,12 +80,13 @@ def clean_quote(text: str, max_length: int = 500) -> str:
     return cleaned[:max_length]
 
 
-def build_evidence_items(chunks: list[Chunk], source_file: str) -> list[dict[str, Any]]:
+def build_evidence_items(chunks: list[Chunk], source_file: str = "") -> list[dict[str, Any]]:
     evidence = []
     for idx, chunk in enumerate(chunks, start=1):
+        src = chunk.source_file or source_file or "unknown.pdf"
         item = {
             "id": f"E{idx:03d}",
-            "source_file": source_file,
+            "source_file": src,
             "page": chunk.page,
             "chunk_id": chunk.id,
             "score": round(chunk.score, 4),

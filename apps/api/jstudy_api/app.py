@@ -282,7 +282,7 @@ def create_app(
         try:
             content_paths = job.metadata.get("content_paths", {})
             runner_kwargs = {
-                "pdf_path": job.pdf_path,
+                "pdf_paths": job.pdf_paths or [job.pdf_path] if job.pdf_path else [],
                 "soul_path": Path(str(content_paths.get("soul_path") or runtime.soul_path)),
                 "mnemonics_path": Path(str(content_paths.get("mnemonics_path") or runtime.mnemonics_path)),
                 "api_key_path": runtime.api_key_path,
@@ -508,7 +508,7 @@ def create_app(
         background_tasks: BackgroundTasks,
         response: Response,
         request: Request,
-        pdf: UploadFile = File(...),
+        pdf: list[UploadFile] = File(...),
         outline: UploadFile | None = File(None),
         scenario_id: str = Form(""),
         parser_profile_id: str = Form(""),
@@ -540,11 +540,17 @@ def create_app(
         job_id = uuid4().hex[:12]
         job_dir = jobs_root / job_id
         input_dir = job_dir / "input"
-        pdf_name = safe_upload_name(pdf.filename or "", "courseware.pdf")
-        if Path(pdf_name).suffix.lower() != ".pdf":
-            raise HTTPException(status_code=400, detail="Uploaded file must be a PDF")
-        pdf_path = input_dir / pdf_name
-        await save_pdf_upload(pdf, pdf_path, runtime.max_pdf_bytes)
+        pdf_paths: list[Path] = []
+        for pdf_file in pdf:
+            pdf_name = safe_upload_name(pdf_file.filename or "", "courseware.pdf")
+            if Path(pdf_name).suffix.lower() != ".pdf":
+                raise HTTPException(status_code=400, detail="All uploads must be PDF files")
+            pdf_path = input_dir / pdf_name
+            await save_pdf_upload(pdf_file, pdf_path, runtime.max_pdf_bytes)
+            pdf_paths.append(pdf_path)
+
+        if not pdf_paths:
+            raise HTTPException(status_code=400, detail="At least one PDF file is required")
 
         outline_path = None
         if outline is not None and outline.filename:
@@ -568,7 +574,7 @@ def create_app(
 
         jobs.create(
             job_id=job_id,
-            pdf_path=pdf_path,
+            pdf_paths=pdf_paths,
             outline_path=outline_path,
             output_dir=job_dir / "output",
             metadata={
@@ -678,13 +684,15 @@ def create_app(
             if owner != current_user.id:
                 continue
             scenario = record.metadata.get("scenario", {})
-            pdf_path = record.pdf_path
+            pdf_paths = record.pdf_paths or ([record.pdf_path] if record.pdf_path else [])
+            pdf_names = [p.name for p in pdf_paths if p]
             result.append({
                 "job_id": record.job_id,
                 "status": record.status,
                 "scenario_id": scenario.get("requested_scenario_id", ""),
                 "mode": record.metadata.get("mode", ""),
-                "pdf_name": pdf_path.name if pdf_path else "",
+                "pdf_name": pdf_names[0] if pdf_names else "",
+                "pdf_names": pdf_names,
                 "created_at": record.created_at,
                 "quality": record.quality.get("status", ""),
                 "build_commit": record.metadata.get("build_commit", ""),

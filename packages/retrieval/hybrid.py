@@ -15,6 +15,7 @@ class Chunk:
     id: str
     page: int
     text: str
+    source_file: str = ""
     score: float = 0.0
     embedding_index: int | None = None
     query_id: str | None = None
@@ -60,6 +61,7 @@ def chunk_pages(
     pages: list[dict[str, Any]],
     max_chars: int = 512,
     overlap: int = 50,
+    source_file: str = "",
 ) -> list[Chunk]:
     chunks: list[Chunk] = []
 
@@ -79,6 +81,7 @@ def chunk_pages(
                         id=f"C{len(chunks) + 1:03d}",
                         page=page_no,
                         text=chunk_text,
+                        source_file=source_file,
                         embedding_index=len(chunks),
                     )
                 )

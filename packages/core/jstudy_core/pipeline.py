@@ -209,7 +209,7 @@ def infer_sections_from_chunks(
 
 
 def run_mvp(
-    pdf_path: Path,
+    pdf_paths: list[Path],
     soul_path: Path,
     mnemonics_path: Path,
     api_key_path: Path,
@@ -236,19 +236,28 @@ def run_mvp(
     resolved_embed_key = embed_api_key or resolved_api_key
     domain = _resolve_domain(routing_metadata)
 
-    if parser_backend == "pymupdf":
-        pages = extract_pdf_pages(pdf_path)
-    elif parser_backend == "mineru":
-        pages = extract_pdf_pages_with_mineru(pdf_path, parser_config or {})
-    else:
-        raise RuntimeError(f"Unknown parser backend: {parser_backend}")
-    chunks = chunk_pages(
-        pages,
-        max_chars=rag_config.chunk_max_chars,
-        overlap=rag_config.chunk_overlap,
-    )
-    if not chunks:
+    if not pdf_paths:
+        raise RuntimeError("No PDF files provided")
+
+    all_chunks: list[Chunk] = []
+    for pdf_path in pdf_paths:
+        if parser_backend == "pymupdf":
+            pages = extract_pdf_pages(pdf_path)
+        elif parser_backend == "mineru":
+            pages = extract_pdf_pages_with_mineru(pdf_path, parser_config or {})
+        else:
+            raise RuntimeError(f"Unknown parser backend: {parser_backend}")
+        file_chunks = chunk_pages(
+            pages,
+            max_chars=rag_config.chunk_max_chars,
+            overlap=rag_config.chunk_overlap,
+            source_file=pdf_path.name,
+        )
+        all_chunks.extend(file_chunks)
+
+    if not all_chunks:
         raise RuntimeError("No text chunks extracted from PDF")
+    chunks = all_chunks
 
     chunk_embeddings = providers.embed_texts_cached(
         [chunk.text for chunk in chunks],
@@ -279,7 +288,7 @@ def run_mvp(
         rag_config,
     )
 
-    evidence = citations.build_evidence_items(selected_chunks, pdf_path.name)
+    evidence = citations.build_evidence_items(selected_chunks, "")
     mnemonics = domain.parse_mnemonics(mnemonics_path.read_text(encoding="utf-8"))
     retrieval_query = "\n".join(study_query.query for study_query in study_queries)
     mnemonic_hits = domain.retrieve_mnemonics(
@@ -337,7 +346,7 @@ def run_mvp(
     write_json(
         output_paths.trace,
         {
-            "pdf": str(pdf_path),
+            "pdf": [str(p) for p in pdf_paths],
             "chat_model": chat_model,
             "embed_model": embed_model,
             "scenario": (routing_metadata or {}).get("scenario", {}),

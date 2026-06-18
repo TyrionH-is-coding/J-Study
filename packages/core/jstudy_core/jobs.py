@@ -29,8 +29,9 @@ def parse_datetime(value: str) -> datetime | None:
 class JobRecord:
     job_id: str
     status: str
-    pdf_path: Path
     output_dir: Path
+    pdf_paths: list[Path] | None = None
+    pdf_path: Path | None = None
     outline_path: Path | None = None
     outputs: dict[str, Path] = field(default_factory=dict)
     quality: dict[str, Any] = field(default_factory=dict)
@@ -43,7 +44,8 @@ class JobRecord:
         return {
             "job_id": self.job_id,
             "status": self.status,
-            "pdf_path": str(self.pdf_path),
+            "pdf_paths": [str(p) for p in (self.pdf_paths or [])],
+            "pdf_path": str(self.pdf_path) if self.pdf_path else None,
             "output_dir": str(self.output_dir),
             "outline_path": str(self.outline_path) if self.outline_path else None,
             "outputs": {key: str(path) for key, path in self.outputs.items()},
@@ -59,10 +61,15 @@ class JobRecord:
         outline_path = payload.get("outline_path")
         now = utc_now_iso()
         created_at = str(payload.get("created_at") or now)
+        raw_paths = payload.get("pdf_paths", [])
+        if not raw_paths:
+            single = payload.get("pdf_path")
+            raw_paths = [single] if single else []
         return cls(
             job_id=payload["job_id"],
             status=payload["status"],
-            pdf_path=Path(payload["pdf_path"]),
+            pdf_paths=[Path(p) for p in raw_paths],
+            pdf_path=Path(raw_paths[0]) if raw_paths else None,
             output_dir=Path(payload["output_dir"]),
             outline_path=Path(outline_path) if outline_path else None,
             outputs={key: Path(path) for key, path in payload.get("outputs", {}).items()},
@@ -83,7 +90,7 @@ class JobStore:
     def create(
         self,
         job_id: str,
-        pdf_path: Path,
+        pdf_paths: list[Path],
         output_dir: Path,
         outline_path: Path | None = None,
         metadata: dict[str, Any] | None = None,
@@ -91,7 +98,8 @@ class JobStore:
         record = JobRecord(
             job_id=job_id,
             status="queued",
-            pdf_path=pdf_path,
+            pdf_paths=pdf_paths,
+            pdf_path=pdf_paths[0] if pdf_paths else None,
             outline_path=outline_path,
             output_dir=output_dir,
             metadata=metadata or {},

@@ -305,7 +305,7 @@ content: 一嗅二视三动眼。
                 )
 
                 outputs = run_mvp(
-                    pdf_path=pdf,
+                    pdf_paths=[pdf],
                     soul_path=soul,
                     mnemonics_path=mnemonics,
                     api_key_path=api_key,
@@ -378,7 +378,7 @@ content: 一嗅二视三动眼。
                 generate_markdown.return_value = "Fact <!-- evidence: E001 -->"
 
                 run_mvp(
-                    pdf_path=pdf,
+                    pdf_paths=[pdf],
                     soul_path=soul,
                     mnemonics_path=mnemonics,
                     api_key_path=api_key,
