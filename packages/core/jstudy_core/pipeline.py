@@ -337,6 +337,16 @@ def run_mvp(
             generation_path = "sectional-inferred"
             section_titles = [s["title"] for s in sections]
 
+    # Scale evidence pool with file count so multi-file jobs get proportional coverage
+    file_count = len(pdf_paths)
+    section_count = max(len(sections), 1)
+    scaled_per_query = max(
+        rag_config.per_query_limit,
+        rag_config.per_query_limit * max(file_count, section_count),
+    )
+    scaled_top_k = max(rag_config.top_k_candidates, rag_config.top_k_candidates * max(file_count, section_count) // 2)
+    rag_config = replace(rag_config, per_query_limit=min(scaled_per_query, 12), top_k_candidates=min(scaled_top_k, 40))
+
     sections_meta: list[dict[str, Any]] = []
     if sections:
         sections_meta = [
