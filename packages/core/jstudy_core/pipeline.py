@@ -270,6 +270,10 @@ def run_mvp(
             overlap=rag_config.chunk_overlap,
             source_file=pdf_path.name,
         )
+        # Assign globally unique chunk IDs to avoid cross-file collisions
+        id_offset = len(all_chunks) + 1
+        for i, c in enumerate(file_chunks):
+            object.__setattr__(c, "id", f"C{id_offset + i:03d}")
         all_chunks.extend(file_chunks)
 
     if not all_chunks:
