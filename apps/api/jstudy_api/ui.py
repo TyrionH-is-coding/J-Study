@@ -1018,6 +1018,7 @@ INDEX_HTML = r"""<!doctype html>
       ).join('');
       bar.querySelectorAll('.pdf-file-tab').forEach(function(btn) {
         btn.onclick = function() {
+          if (btn.dataset.source === currentSourceFile) return;
           currentSourceFile = btn.dataset.source;
           renderPdfTabs();
           renderPdfPagesForFile(currentSourceFile);
