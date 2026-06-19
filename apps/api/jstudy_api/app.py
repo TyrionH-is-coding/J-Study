@@ -252,6 +252,16 @@ def create_app(
             raise HTTPException(status_code=503, detail=f"{label} file not found: {path}")
         return path
 
+    def _resolve_pdf_path(job: JobRecord, source_file: str = "") -> Path | None:
+        """Resolve a PDF path by source_file name, or return the first PDF."""
+        paths = job.pdf_paths or ([job.pdf_path] if job.pdf_path else [])
+        if source_file:
+            for p in paths:
+                if p and p.name == source_file:
+                    return p
+            return None
+        return paths[0] if paths else job.pdf_path
+
     def selected_content_paths(scenario: Any) -> dict[str, str]:
         soul_path = None
         if scenario.scenario_id == runtime.default_scenario_id:
@@ -646,8 +656,9 @@ def create_app(
     @app.get("/api/jobs/{job_id}/pdf")
     def job_pdf(job_id: str, request: Request) -> FileResponse:
         job = job_or_404(job_id, current_user_or_401(request))
-        path = job.pdf_path
-        if not path.exists():
+        source = (request.query_params.get("source_file") or "").strip()
+        path = _resolve_pdf_path(job, source)
+        if not path or not path.exists():
             raise HTTPException(status_code=404, detail="PDF not found")
         return FileResponse(
             path,
@@ -660,8 +671,9 @@ def create_app(
     def job_pdf_info(job_id: str, request: Request, response: Response) -> dict[str, Any]:
         set_private_cache(response)
         job = job_or_404(job_id, current_user_or_401(request))
-        path = job.pdf_path
-        if not path.exists():
+        source = (request.query_params.get("source_file") or "").strip()
+        path = _resolve_pdf_path(job, source)
+        if not path or not path.exists():
             raise HTTPException(status_code=404, detail="PDF not found")
         with fitz.open(str(path)) as doc:
             pages = [
@@ -672,7 +684,26 @@ def create_app(
                 }
                 for index, page in enumerate(doc)
             ]
-        return {"page_count": len(pages), "pages": pages}
+        return {"source_file": path.name, "page_count": len(pages), "pages": pages}
+
+    @app.get("/api/jobs/{job_id}/pdfs")
+    def list_job_pdfs(job_id: str, request: Request, response: Response) -> dict[str, Any]:
+        set_private_cache(response)
+        job = job_or_404(job_id, current_user_or_401(request))
+        paths = job.pdf_paths or ([job.pdf_path] if job.pdf_path else [])
+        pdfs = []
+        for p in paths:
+            if not p or not p.exists():
+                continue
+            try:
+                with fitz.open(str(p)) as doc:
+                    pdfs.append({
+                        "source_file": p.name,
+                        "page_count": len(doc),
+                    })
+            except Exception:
+                pdfs.append({"source_file": p.name, "page_count": 0})
+        return {"pdfs": pdfs, "total_files": len(pdfs)}
 
     @app.get("/api/jobs")
     def list_user_jobs(request: Request, response: Response) -> list[dict[str, Any]]:
@@ -702,8 +733,9 @@ def create_app(
     @app.get("/api/jobs/{job_id}/pdf-page/{page_no}.png")
     def job_pdf_page_png(job_id: str, page_no: int, request: Request) -> Response:
         job = job_or_404(job_id, current_user_or_401(request))
-        path = job.pdf_path
-        if not path.exists():
+        source = (request.query_params.get("source_file") or "").strip()
+        path = _resolve_pdf_path(job, source)
+        if not path or not path.exists():
             raise HTTPException(status_code=404, detail="PDF not found")
         with fitz.open(str(path)) as doc:
             if page_no < 1 or page_no > len(doc):

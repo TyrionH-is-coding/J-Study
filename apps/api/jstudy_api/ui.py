@@ -97,6 +97,7 @@ INDEX_HTML = r"""<!doctype html>
       margin-top: 14px;
       margin-bottom: 4px;
     }
+    .input-hint { font-size: 11px; color: var(--text-muted); margin: 2px 0 10px 0; }
     input[type="file"],
     input[type="email"],
     input[type="password"],
@@ -499,6 +500,7 @@ INDEX_HTML = r"""<!doctype html>
         </div>
         <label>课件 PDF</label>
         <input name="pdf" type="file" accept="application/pdf" required multiple />
+        <div class="input-hint">格式: PDF · 单文件上限 50MB · 多文件总数无上限（建议 ≤10 个）</div>
         <label>课程大纲</label>
         <input name="outline" type="file" accept=".md,.txt,.pdf" />
         <input type="hidden" name="scenario_id" id="scenarioIdInput" value="" />
@@ -569,6 +571,8 @@ INDEX_HTML = r"""<!doctype html>
     const historyList = document.getElementById("historyList");
     let currentJob = "";
     let evidenceLinks = [];
+    let currentPdfFiles = [];
+    let currentSourceFile = "";
 
     function escapeHtml(value) {
       return value.replace(/[&<>"']/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
@@ -683,16 +687,18 @@ INDEX_HTML = r"""<!doctype html>
       pdfPages.innerHTML = `<div class="empty">加载 PDF</div>`;
       downloadBtn.hidden = true;
       try {
-        const [outRes, evidenceRes, pdfInfoRes] = await Promise.all([
+        const [outRes, evidenceRes, pdfInfoRes, pdfsRes] = await Promise.all([
           fetch(`/api/jobs/${jobId}/output`),
           fetch(`/api/jobs/${jobId}/evidence`),
-          fetch(`/api/jobs/${jobId}/pdf-info`)
+          fetch(`/api/jobs/${jobId}/pdf-info`),
+          fetch(`/api/jobs/${jobId}/pdfs`)
         ]);
-        if (outRes.status === 401) { statusBox.innerHTML = `<span class="error">会话已过期，请刷新页面重新登录</span>`; return; }
-        if (!outRes.ok) { statusBox.innerHTML = `<span class="error">输出不存在或已清理</span>`; return; }
+        if (outRes.status === 401) { statusBox.innerHTML = '<span class="error">会话已过期，请刷新页面重新登录</span>'; return; }
+        if (!outRes.ok) { statusBox.innerHTML = '<span class="error">输出不存在或已清理</span>'; return; }
         const out = await outRes.json();
         const evidence = await evidenceRes.json();
         const pdfInfo = await pdfInfoRes.json();
+        var pdfsData = pdfsRes.ok ? await pdfsRes.json() : { pdfs: [{ source_file: pdfInfo.source_file || '', page_count: pdfInfo.page_count || 0 }] };
         evidenceLinks = evidence.evidence_links || [];
         output.innerHTML = renderMarkdown(out.markdown);
         // Quality badge
@@ -709,8 +715,8 @@ INDEX_HTML = r"""<!doctype html>
           }
         }
         renderEvidencePanel(evidenceLinks);
-        renderPdfPages(pdfInfo.page_count || 0);
-        pdfMeta.textContent = "已生成";
+        renderPdfPages(pdfsData.pdfs || []);
+        pdfMeta.textContent = '已生成';
         downloadBtn.href = `/api/jobs/${jobId}/export`;
         downloadBtn.hidden = false;
         statusBox.textContent = `已完成  (${jobId})`;
@@ -980,18 +986,59 @@ INDEX_HTML = r"""<!doctype html>
       }).join("");
     }
 
-    function renderPdfPages(pageCount) {
-      if (!pageCount) {
-        pdfPages.innerHTML = `<div class="empty">无法读取 PDF 页面</div>`;
+    function renderPdfPages(pdfFiles) {
+      if (!pdfFiles || !pdfFiles.length) {
+        pdfPages.innerHTML = '<div class="empty">无法读取 PDF 页面</div>';
         return;
       }
-      pdfPages.innerHTML = Array.from({ length: pageCount }, (_, i) => {
-        const page = i + 1;
-        return `<figure class="pdf-page" data-page="${page}">
-          <figcaption class="pdf-page-label">Page ${page}</figcaption>
-          <img loading="lazy" src="/api/jobs/${currentJob}/pdf-page/${page}.png" alt="PDF page ${page}">
-        </figure>`;
-      }).join("");
+      currentPdfFiles = pdfFiles;
+      const valid = pdfFiles.some(f => f.source_file === currentSourceFile);
+      if (!valid) currentSourceFile = pdfFiles[0].source_file;
+      renderPdfTabs();
+      renderPdfPagesForFile(currentSourceFile);
+    }
+
+    function renderPdfTabs() {
+      let bar = document.getElementById('pdfFileTabs');
+      if (!bar) {
+        bar = document.createElement('div');
+        bar.id = 'pdfFileTabs';
+        bar.style.cssText = 'display:flex;gap:4px;margin-bottom:8px;flex-wrap:wrap';
+        pdfPages.parentNode.insertBefore(bar, pdfPages);
+      }
+      bar.innerHTML = currentPdfFiles.map(f =>
+        '<button class="pdf-file-tab ' + (f.source_file === currentSourceFile ? 'active' : '') + '"'
+        + ' data-source="' + f.source_file + '"'
+        + ' style="padding:4px 10px;border:1px solid var(--border);border-radius:4px;font-size:12px;cursor:pointer;'
+        + 'background:' + (f.source_file === currentSourceFile ? 'var(--accent)' : 'var(--surface)') + ';'
+        + 'color:' + (f.source_file === currentSourceFile ? '#fff' : 'var(--text)') + '">'
+        + escapeHtml(f.source_file) + ' (' + f.page_count + 'p)</button>'
+      ).join('');
+      bar.querySelectorAll('.pdf-file-tab').forEach(function(btn) {
+        btn.onclick = function() {
+          currentSourceFile = btn.dataset.source;
+          renderPdfTabs();
+          renderPdfPagesForFile(currentSourceFile);
+        };
+      });
+    }
+
+    function renderPdfPagesForFile(sourceFile) {
+      var file = currentPdfFiles.find(function(f) { return f.source_file === sourceFile; });
+      if (!file) { pdfPages.innerHTML = '<div class="empty">文件未找到</div>'; return; }
+      var pageCount = file.page_count;
+      if (!pageCount) {
+        pdfPages.innerHTML = '<div class="empty">无法读取 PDF 页面</div>';
+        return;
+      }
+      pdfPages.innerHTML = Array.from({ length: pageCount }, function(_, i) {
+        var page = i + 1;
+        return '<figure class="pdf-page" data-page="' + page + '">'
+          + '<figcaption class="pdf-page-label">Page ' + page + '</figcaption>'
+          + '<img loading="lazy" src="/api/jobs/' + currentJob + '/pdf-page/' + page + '.png?source_file=' + encodeURIComponent(sourceFile) + '" alt="PDF page ' + page + '">'
+          + '</figure>';
+      }).join('');
+      pdfMeta.textContent = escapeHtml(sourceFile) + ': ' + pageCount + ' 页';
     }
 
     function scrollPdfPageIntoView(page) {
@@ -1005,10 +1052,18 @@ INDEX_HTML = r"""<!doctype html>
       pdfPages.scrollTo({ top: Math.max(0, top), behavior: "smooth" });
     }
 
-    function showEvidenceLink(link, opts = {}) {
+    function showEvidenceLink(link, opts) {
+      opts = opts || {};
       if (!link || !currentJob) return;
-      const page = link.target && link.target.page ? link.target.page : 1;
-      pdfMeta.textContent = `${link.ref_id} / page ${page}`;
+      var page = link.target && link.target.page ? link.target.page : 1;
+      var sourceFile = link.target && link.target.source_file ? link.target.source_file : '';
+      // Auto-switch to the correct PDF
+      if (sourceFile && sourceFile !== currentSourceFile && currentPdfFiles.some(function(f) { return f.source_file === sourceFile; })) {
+        currentSourceFile = sourceFile;
+        renderPdfTabs();
+        renderPdfPagesForFile(sourceFile);
+      }
+      pdfMeta.textContent = (sourceFile ? escapeHtml(sourceFile) + ' / ' : '') + 'page ' + page;
       scrollPdfPageIntoView(page);
       document.querySelectorAll(".citation-item.active").forEach(el => el.classList.remove("active"));
       const sel = `.citation-item[data-ref="${link.ref_id}"][data-occurrence="${link.occurrence || 1}"]`;
@@ -1032,15 +1087,17 @@ INDEX_HTML = r"""<!doctype html>
       }
       if (job.status === "completed") {
         try {
-          const [outRes, evidenceRes, pdfInfoRes] = await Promise.all([
+          const [outRes, evidenceRes, pdfInfoRes, pdfsRes] = await Promise.all([
             fetch(job.output_url),
             fetch(job.evidence_url),
-            fetch(job.pdf_info_url)
+            fetch(job.pdf_info_url),
+            fetch('/api/jobs/' + jobId + '/pdfs')
           ]);
-          if (!outRes.ok) { statusBox.innerHTML = `<span class="error">获取输出失败 (${outRes.status})</span>`; run.disabled = false; return; }
+          if (!outRes.ok) { statusBox.innerHTML = '<span class="error">获取输出失败 (' + outRes.status + ')</span>'; run.disabled = false; return; }
           const out = await outRes.json();
           const evidence = await evidenceRes.json();
           const pdfInfo = await pdfInfoRes.json();
+          var pdfsData = pdfsRes.ok ? await pdfsRes.json() : { pdfs: [{ source_file: pdfInfo.source_file || '', page_count: pdfInfo.page_count || 0 }] };
           evidenceLinks = evidence.evidence_links || [];
           output.innerHTML = renderMarkdown(out.markdown);
         // Quality badge — insert before first heading or at top
@@ -1053,8 +1110,8 @@ INDEX_HTML = r"""<!doctype html>
           else output.insertBefore(badge, output.firstChild);
         }
         renderEvidencePanel(evidenceLinks);
-        renderPdfPages(pdfInfo.page_count || 0);
-        pdfMeta.textContent = "已生成";
+        renderPdfPages(pdfsData.pdfs || []);
+        pdfMeta.textContent = '已生成';
         // Download button
         downloadBtn.href = `/api/jobs/${jobId}/export`;
         downloadBtn.hidden = false;

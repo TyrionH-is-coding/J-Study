@@ -12,7 +12,7 @@ class JobStoreTest(unittest.TestCase):
 
         record = store.create(
             job_id="job-1",
-            pdf_path=Path("input/lecture.pdf"),
+            pdf_paths=[Path("input/lecture.pdf")],
             output_dir=Path("output"),
             outline_path=Path("input/outline.md"),
         )
@@ -41,7 +41,7 @@ class JobStoreTest(unittest.TestCase):
         store = JobStore()
         store.create(
             job_id="job-2",
-            pdf_path=Path("input/lecture.pdf"),
+            pdf_paths=[Path("input/lecture.pdf")],
             output_dir=Path("output"),
         )
 
@@ -57,7 +57,7 @@ class JobStoreTest(unittest.TestCase):
             store = JobStore(store_path=store_path)
             store.create(
                 job_id="job-3",
-                pdf_path=Path("input/lecture.pdf"),
+                pdf_paths=[Path("input/lecture.pdf")],
                 output_dir=Path("output"),
                 outline_path=Path("input/outline.md"),
             )
@@ -84,7 +84,7 @@ class JobStoreTest(unittest.TestCase):
             store = JobStore(store_path=store_path)
             store.create(
                 job_id="job-routing",
-                pdf_path=Path("input/lecture.pdf"),
+                pdf_paths=[Path("input/lecture.pdf")],
                 output_dir=Path("output"),
                 metadata={
                     "scenario": {"resolved_scenario_id": "medicine-default"},
@@ -103,7 +103,7 @@ class JobStoreTest(unittest.TestCase):
             store = JobStore(store_path=store_path)
             store.create(
                 job_id="job-4",
-                pdf_path=Path("input/lecture.pdf"),
+                pdf_paths=[Path("input/lecture.pdf")],
                 output_dir=Path("output"),
             )
             store.mark_running("job-4")
@@ -125,7 +125,7 @@ class JobStoreTest(unittest.TestCase):
             old_dir.joinpath("output", "result.md").write_text("old", encoding="utf-8")
             store.create(
                 job_id="old-job",
-                pdf_path=old_dir / "input" / "lecture.pdf",
+                pdf_paths=[old_dir / "input" / "lecture.pdf"],
                 output_dir=old_dir / "output",
             )
             store.mark_completed("old-job", outputs={}, quality={"status": "pass"})
@@ -135,7 +135,7 @@ class JobStoreTest(unittest.TestCase):
             fresh_dir.joinpath("output").mkdir(parents=True)
             store.create(
                 job_id="fresh-job",
-                pdf_path=fresh_dir / "input" / "lecture.pdf",
+                pdf_paths=[fresh_dir / "input" / "lecture.pdf"],
                 output_dir=fresh_dir / "output",
             )
             store.mark_completed("fresh-job", outputs={}, quality={"status": "pass"})
@@ -144,7 +144,7 @@ class JobStoreTest(unittest.TestCase):
             running_dir.joinpath("output").mkdir(parents=True)
             store.create(
                 job_id="running-job",
-                pdf_path=running_dir / "input" / "lecture.pdf",
+                pdf_paths=[running_dir / "input" / "lecture.pdf"],
                 output_dir=running_dir / "output",
             )
             store.mark_running("running-job")
