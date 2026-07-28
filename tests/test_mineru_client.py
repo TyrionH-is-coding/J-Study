@@ -7,6 +7,7 @@ from pathlib import Path
 
 import httpx
 
+from packages.core.jstudy_core.documents.models import ParsedDocument, ParsedPage
 from packages.core.jstudy_core.documents.mineru_client import (
     MinerUClientConfig,
     MinerUInput,
@@ -14,6 +15,10 @@ from packages.core.jstudy_core.documents.mineru_client import (
     MinerUProtocolError,
     MinerUProviderError,
     MinerUTimeoutError,
+)
+from packages.parsers.mineru_parser import (
+    MinerUAdapterConfigurationError,
+    extract_pdf_pages_with_mineru,
 )
 
 
@@ -318,5 +323,55 @@ class MinerUClientTest(unittest.TestCase):
                 client.extract(self.inputs(Path(tmp), count=1))
 
         self.assertEqual(poll_calls, 3)
+
+
+class MinerUCompatibilityAdapterTest(unittest.TestCase):
+    def document(self) -> ParsedDocument:
+        return ParsedDocument(
+            contract_version="1",
+            source_id="S001",
+            source_file="lecture.pdf",
+            source_sha256="sha256",
+            parser_name="mineru",
+            parser_version="v4",
+            parser_model="vlm",
+            page_count=2,
+            pages=[
+                ParsedPage(
+                    page_number=1, text="Page one", markdown="Page one", blocks=[]
+                ),
+                ParsedPage(page_number=2, text="  ", markdown="", blocks=[]),
+            ],
+            warnings=[],
+            provider_trace_id="trace",
+        )
+
+    def test_requires_explicit_document_parser(self):
+        with self.assertRaises(MinerUAdapterConfigurationError):
+            extract_pdf_pages_with_mineru(Path("lecture.pdf"))
+
+    def test_adapts_injected_document_parser_to_legacy_pages(self):
+        calls = []
+
+        def parser(path: Path, config: dict):
+            calls.append((path, config))
+            return self.document()
+
+        result = extract_pdf_pages_with_mineru(
+            Path("lecture.pdf"),
+            {"language": "ch"},
+            document_parser=parser,
+        )
+        self.assertEqual(result, [{"page": 1, "text": "Page one"}])
+        self.assertEqual(calls, [(Path("lecture.pdf"), {"language": "ch"})])
+
+    def test_rejects_invalid_document_parser_result(self):
+        with self.assertRaises(MinerUAdapterConfigurationError):
+            extract_pdf_pages_with_mineru(
+                Path("lecture.pdf"),
+                document_parser=lambda _path, _config: [],
+            )
+
+
 if __name__ == "__main__":
     unittest.main()
