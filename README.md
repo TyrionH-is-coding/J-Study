@@ -6,11 +6,27 @@ The product goal is not limited to medicine. The platform should eventually supp
 
 Compared with DeepTutor's broader general-purpose direction, J-Study should build vertical depth through curated soul profiles and a reviewed knowledge snippet library. These libraries can start small while the backend, frontend, and deployment path are made reliable.
 
+## Approved Refactor Direction
+
+The bullets under `Current MVP` describe the implementation that exists today,
+not the final parser architecture. The approved 2026-07-28 target is:
+
+- MinerU Precision Extract cloud API for all product text/structure extraction
+- no user-facing parser selection
+- PyMuPDF retained only for PDF validation, metadata, and page preview rendering
+- Tencent Cloud for Next.js, FastAPI, PostgreSQL, worker, and persistent storage
+- the spare computer reserved as a future optional MinerU worker
+
+The controlling design and migration gates are in:
+
+- `docs/architecture/refactor-blueprint.md`
+
 ## Current MVP
 
 The current backend can:
 
 - accept one courseware PDF and an optional outline
+- accept `service_mode=course_outline` with a required outline and one or more repeated `pdfs` uploads
 - expose public `scenario_id` and `parser_profile_id` options for the temporary upload UI
 - extract page text with PyMuPDF
 - use the `fast` parser profile as the public PyMuPDF path by default
@@ -22,7 +38,7 @@ The current backend can:
 - retrieve evidence chunks with embedding + BM25/RRF
 - retrieve related knowledge snippets from the current legacy `mnemonics.md` prompt-rendered seed file
 - generate Markdown study material using the selected scenario's soul profile
-- emit evidence links so the UI can jump from "依据 E001" to the original PDF page
+- emit evidence links so the UI can jump from evidence ids to the correct source PDF page
 
 This is still a single-machine MVP. It does not yet include object storage, a production task queue, database-backed job records, or a separate frontend app.
 
@@ -124,10 +140,10 @@ GET /api/readiness
 Use `/api/readiness?probe_provider=true` during deployment to run a live SiliconFlow chat and embedding connectivity probe.
 `POST /api/generate` returns `503` with the readiness payload when required runtime configuration is missing.
 `GET /api/options` returns public scenarios and parser profiles for the upload form.
-`POST /api/generate` accepts optional `scenario_id` and `parser_profile_id` form fields. Missing values resolve to the admin-configured defaults. `scenario_id` resolves `content_pack_id`, `prompt_profile`, and the matching `soul_profile`, so different subjects can use different soul files without changing code.
+`POST /api/generate` accepts optional `scenario_id`, `parser_profile_id`, `mode`, and `service_mode` form fields. Missing scenario and parser values resolve to the admin-configured defaults. Empty `service_mode` or `single_courseware` keeps the existing `pdf=<one PDF>` path. `service_mode=course_outline` requires `outline=<.md/.txt/.pdf>` and at least one repeated `pdfs=<PDF>` upload. `mode` is stored as generation metadata for frontend experiments, but it does not replace service mode, subject scenario, or parser profile behavior. `scenario_id` resolves `content_pack_id`, `prompt_profile`, and the matching `soul_profile`, so different subjects can use different soul files without changing code.
 `parser_profile_id=fast` maps to PyMuPDF. The reserved `quality` profile maps to MinerU, is hidden from normal users at first, and should be enabled only after MinerU is configured.
 Job status is persisted in `JSTUDY_JOBS_DIR/jobs.json`; jobs that were queued or running during a server restart are marked failed because the MVP has no separate worker queue yet.
-Completed jobs expose retrieval diagnostics at `/api/jobs/{job_id}/trace`.
+Completed jobs expose retrieval diagnostics at `/api/jobs/{job_id}/trace`, material-package metadata at `/api/jobs/{job_id}/package`, and a Markdown attachment at `/api/jobs/{job_id}/export`. Source previews are available through the legacy first-source endpoints `/api/jobs/{job_id}/pdf-info` and `/api/jobs/{job_id}/pdf-page/{page}.png`, plus source-specific endpoints `/api/jobs/{job_id}/pdfs`, `/api/jobs/{job_id}/pdfs/{source_id}/pdf-info`, and `/api/jobs/{job_id}/pdfs/{source_id}/pdf-page/{page}.png`.
 
 User auth:
 

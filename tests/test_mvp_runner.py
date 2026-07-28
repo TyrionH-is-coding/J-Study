@@ -27,8 +27,10 @@ from packages.core.jstudy_core.pipeline import (  # noqa: E402
     reciprocal_rank_fusion,
     is_low_value_chunk,
     parse_mnemonics,
+    parse_outline_sections,
     read_api_key,
     retrieve_mnemonics,
+    run_course_outline,
     run_mvp,
     select_evidence_chunks,
     siliconflow_post,
@@ -104,6 +106,39 @@ content: 一嗅二视三动眼。
             path.write_text(json.dumps(evidence, ensure_ascii=False), encoding="utf-8")
             loaded = json.loads(path.read_text(encoding="utf-8"))
             self.assertEqual(loaded[1]["id"], "E002")
+
+    def test_chunk_and_evidence_items_preserve_source_identity(self):
+        chunks = chunk_pages(
+            [{"page": 2, "text": "alpha source two content with enough detail for a citation target"}],
+            max_chars=80,
+            overlap=0,
+            source_id="S002",
+            source_file="lecture-02.pdf",
+        )
+
+        evidence = build_evidence_items(chunks, "")
+        links = build_evidence_links("Fact <!-- evidence: E001 -->", evidence)
+
+        self.assertEqual(chunks[0].id, "S002-C001")
+        self.assertEqual(chunks[0].source_id, "S002")
+        self.assertEqual(chunks[0].source_file, "lecture-02.pdf")
+        self.assertEqual(evidence[0]["source_id"], "S002")
+        self.assertEqual(evidence[0]["source_file"], "lecture-02.pdf")
+        self.assertEqual(links[0]["target"]["source_id"], "S002")
+        self.assertEqual(links[0]["target"]["source_file"], "lecture-02.pdf")
+    def test_build_evidence_items_cleans_pdf_artifact_quotes(self):
+        chunks = [
+            Chunk(
+                id="C001",
+                page=3,
+                text="正常内容 \uE000\uE001\n++++ + + + +\nMRSA 相关内容",
+                score=0.91,
+            )
+        ]
+
+        evidence = build_evidence_items(chunks, "lecture.pdf")
+
+        self.assertEqual(evidence[0]["excerpt"], "正常内容 MRSA 相关内容")
 
     def test_prompt_requires_visible_mnemonic_source(self):
         messages = build_generation_prompt(
@@ -329,15 +364,22 @@ content: 一嗅二视三动眼。
             quality = json.loads(outputs["quality"].read_text(encoding="utf-8"))
             evidence_links = json.loads(outputs["evidence_links"].read_text(encoding="utf-8"))
             trace = json.loads(outputs["trace"].read_text(encoding="utf-8"))
+            package = json.loads(outputs["package"].read_text(encoding="utf-8"))
 
             self.assertTrue(outputs["markdown"].exists())
             self.assertTrue(outputs["evidence"].exists())
+            self.assertTrue(outputs["package"].exists())
             self.assertTrue(cache.exists())
             self.assertEqual(quality["status"], "pass")
             self.assertEqual(evidence_links[0]["target"]["page"], 1)
             self.assertEqual(trace["scenario"]["resolved_scenario_id"], "medicine-default")
             self.assertEqual(trace["parser_profile"]["resolved_parser_profile_id"], "fast")
             self.assertEqual(trace["parser"]["backend"], "pymupdf")
+            self.assertEqual(package["type"], "material_package")
+            self.assertEqual(package["service_mode"], "single_courseware")
+            self.assertEqual(package["sections"][0]["title"], "完整资料")
+            self.assertEqual(package["sections"][0]["artifact_urls"]["markdown"], "case-output.md")
+            self.assertEqual(package["source_files"][0]["file_name"], "lecture.pdf")
             query_builder.assert_called_once()
             self.assertIn("alpha overview", query_builder.call_args.kwargs["source_text"])
             self.assertIn(outline.read_text(encoding="utf-8"), query_builder.call_args.kwargs["outline"])
@@ -478,18 +520,103 @@ content: 一嗅二视三动眼。
     def test_build_evidence_links_maps_markdown_refs_to_pdf_targets(self):
         markdown = "Fact A <!-- evidence: E002 E001 -->\n\nFact B <!-- evidence: E001 -->"
         evidence = [
-            {"id": "E001", "source_file": "lecture.pdf", "page": 3, "chunk_id": "C001", "excerpt": "alpha"},
-            {"id": "E002", "source_file": "lecture.pdf", "page": 7, "chunk_id": "C002", "excerpt": "beta"},
+            {
+                "id": "E001",
+                "source_id": "S001",
+                "source_file": "lecture.pdf",
+                "page": 3,
+                "chunk_id": "C001",
+                "excerpt": "alpha",
+            },
+            {
+                "id": "E002",
+                "source_id": "S002",
+                "source_file": "lecture-02.pdf",
+                "page": 7,
+                "chunk_id": "C002",
+                "excerpt": "beta",
+            },
         ]
 
         links = build_evidence_links(markdown, evidence)
 
         self.assertEqual([link["ref_id"] for link in links], ["E002", "E001", "E001"])
-        self.assertEqual(links[0]["target"]["source_file"], "lecture.pdf")
+        self.assertEqual(links[0]["target"]["source_id"], "S002")
+        self.assertEqual(links[0]["target"]["source_file"], "lecture-02.pdf")
         self.assertEqual(links[0]["target"]["page"], 7)
         self.assertEqual(links[0]["target"]["quote"], "beta")
         self.assertEqual(links[2]["occurrence"], 2)
 
+    def test_parse_outline_sections_extracts_headings_and_numbered_lines(self):
+        sections = parse_outline_sections(
+            "# Course\n\n## Unit One\nDetails\n\n1. Unit Two\n2) Unit Three",
+            limit=3,
+        )
+
+        self.assertEqual([section["id"] for section in sections], ["section-001", "section-002", "section-003"])
+        self.assertEqual([section["title"] for section in sections], ["Course", "Unit One", "Unit Two"])
+        self.assertEqual([section["order"] for section in sections], [1, 2, 3])
+
+    @patch("packages.core.jstudy_core.pipeline.extract_pdf_pages")
+    @patch("packages.core.jstudy_core.providers.embed_texts")
+    def test_run_course_outline_writes_multi_source_material_package(self, embed_texts, extract_pdf_pages):
+        def fake_pages(pdf_path):
+            return [
+                {
+                    "page": 1,
+                    "text": f"{Path(pdf_path).stem} alpha beta content with enough detail for evidence retrieval.",
+                }
+            ]
+
+        extract_pdf_pages.side_effect = fake_pages
+        embed_texts.side_effect = lambda texts, api_key, model, **kwargs: [[1.0, 0.0] for _ in texts]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            outline = root / "outline.md"
+            pdf_one = root / "lecture-01.pdf"
+            pdf_two = root / "lecture-02.pdf"
+            soul = root / "soul.md"
+            mnemonics = root / "mnemonics.md"
+            api_key = root / "api-key.txt"
+            output_dir = root / "out"
+            cache = root / "cache" / "embeddings.json"
+            outline.write_text("# Unit One\n\n## Unit Two\n", encoding="utf-8")
+            pdf_one.write_bytes(b"%PDF-1.4\n")
+            pdf_two.write_bytes(b"%PDF-1.4\n")
+            soul.write_text("rules", encoding="utf-8")
+            mnemonics.write_text("", encoding="utf-8")
+            api_key.write_text("key", encoding="utf-8")
+
+            with patch("packages.core.jstudy_core.providers.generate_markdown") as generate_markdown:
+                generate_markdown.return_value = "Generated fact <!-- evidence: E001 -->"
+                outputs = run_course_outline(
+                    outline_path=outline,
+                    pdf_paths=[pdf_one, pdf_two],
+                    soul_path=soul,
+                    mnemonics_path=mnemonics,
+                    api_key_path=api_key,
+                    output_dir=output_dir,
+                    chat_model="chat",
+                    embed_model="embed",
+                    output_prefix="course",
+                    rag_config=RagConfig(top_k_candidates=2, per_query_limit=1),
+                    embedding_cache_path=cache,
+                    parser_backend="pymupdf",
+                    generation_mode="metadata-only",
+                )
+
+            package = json.loads(outputs["package"].read_text(encoding="utf-8"))
+            evidence = json.loads(outputs["evidence"].read_text(encoding="utf-8"))
+            links = json.loads(outputs["evidence_links"].read_text(encoding="utf-8"))
+
+        self.assertEqual(package["service_mode"], "course_outline")
+        self.assertEqual(package["generation_mode"], "metadata-only")
+        self.assertEqual([item["source_id"] for item in package["source_files"]], ["S001", "S002"])
+        self.assertEqual([section["title"] for section in package["sections"]], ["Unit One", "Unit Two"])
+        self.assertEqual(package["sections"][0]["artifact_filenames"]["markdown"], "course-output.md")
+        self.assertIn(evidence[0]["source_id"], {"S001", "S002"})
+        self.assertIn("source_id", links[0]["target"])
     def test_select_evidence_chunks_is_stable_regression_sample(self):
         sample = json.loads(
             (ROOT / "tests" / "fixtures" / "cocci_regression_sample.json").read_text(encoding="utf-8")

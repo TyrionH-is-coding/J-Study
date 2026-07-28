@@ -23,7 +23,10 @@ J-Study is intentionally more vertical than DeepTutor. DeepTutor can remain a br
    The frontend should use a selected shadcn/ui template as the layout foundation. We can adjust color, typography, texture, state, and domain-specific components, but should not redesign the whole layout during the MVP.
 
 5. Deployable beats theoretical.
-   The product must run reliably before adding heavy infrastructure. Database-backed jobs, queues, object storage, and MinerU can be introduced when their value is proven by usage.
+   The product must run reliably before adding speculative infrastructure.
+   MinerU cloud parsing and database-backed job state are now approved
+   foundations; Redis, object storage, and self-hosted parsing remain
+   measurement-driven additions.
 
 6. Vertical quality compounds through curated libraries.
    The platform should make it easy to route by subject and scenario, but quality will come from manually refined soul profiles and reviewed knowledge snippets. Do not dilute the product into a fully generic assistant before the vertical libraries have depth.
@@ -86,7 +89,9 @@ Question generation is a future product pillar. The likely path is:
 4. generate new questions with similar structure
 5. provide answer explanations tied to courseware evidence
 
-This is one reason the architecture should reserve a heavier document parsing path such as MinerU, while keeping PyMuPDF as the lightweight MVP default.
+This is why the product standardizes content extraction on MinerU. PyMuPDF
+remains an internal validation and page-rendering utility, while users see one
+consistent parsing experience.
 
 ## Knowledge Snippet Feedback Loop
 

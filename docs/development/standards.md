@@ -63,6 +63,25 @@ apps/web: frontend tests, typecheck, lint, build
 deploy: docker compose -f deploy/docker-compose/api.compose.yml config
 ```
 
+## Windows Encoding
+
+Use a UTF-8 PowerShell session before local development commands, especially when reading or writing Chinese paths, Markdown, JSON, or generated reports:
+
+```powershell
+. .\scripts\Enter-JStudyDev.ps1
+```
+
+This sets the current console and Python subprocess I/O to UTF-8 and provides two helper functions:
+
+```powershell
+Get-Utf8Text -LiteralPath "docs\product\vision.md"
+Set-Utf8NoBomText -LiteralPath "tmp\example.md" -Value "# 标题`n"
+```
+
+Do not treat mojibake in the terminal as proof that a file is corrupted. Re-check with explicit UTF-8 reads, JSON parsing, tests, or API responses before editing content.
+
+When a command involves Chinese paths, prefer `-LiteralPath` and avoid fragile inline quoting. For scripts that pass paths into Python or another shell, put the path in an environment variable first instead of embedding it in a complex one-liner.
+
 ## Project Boundaries
 
 Platform code should provide generic capabilities:
@@ -92,7 +111,9 @@ Medicine is the first domain pack, not the product boundary.
 
 `scenario_id` is the user-facing learning scene. It should resolve content-pack, prompt-profile, soul-profile, RAG-profile, and domain-rule choices. Do not hardcode new subject behavior into the medicine pack when it belongs in a scenario or future domain pack.
 
-`parser_profile_id` is the user-facing parsing experience. It should resolve parser backend and visibility/admin rules. Do not couple a subject scenario to a parser profile.
+Parser selection is not a user-facing product choice. The platform uses MinerU
+for content extraction, while admins control provider credentials and runtime
+limits. Do not couple a subject scenario to parser infrastructure.
 
 Current backend module ownership:
 
@@ -110,22 +131,29 @@ packages/domains          Subject-specific behavior
 
 ## Parser Standards
 
-All parsers should return page-aware text. Future parsers can return richer layout data, but page number must remain available for citation.
+All product text and structure extraction uses MinerU and must pass through the
+versioned normalized document contract before retrieval. The contract keeps
+stable `source_id`, one-based source pages, ordered blocks, parser metadata, and
+warnings.
 
-Default MVP parser:
+PyMuPDF is an internal utility only:
 
-```text
-PyMuPDF
-```
+- PDF validation
+- SHA256 and metadata
+- page count
+- source-preview PNG rendering
+- MinerU page-reference validation
 
-Future optional parser:
+Do not:
 
-```text
-MinerU
-```
+- expose parser selection to users
+- use PyMuPDF-extracted text as a silent MinerU fallback
+- pass raw MinerU dictionaries into retrieval or generation
+- use filenames as source identity
+- build automatic PDF difficulty scoring
 
-Do not make MinerU required for the first lightweight deployment.
-Do not add automatic PDF difficulty scoring until there is evidence it is reliable. The current product choice is explicit user/admin selection: `fast` uses PyMuPDF; `quality` is reserved for MinerU and hidden until configured.
+Follow `docs/architecture/refactor-blueprint.md` for the migration and deletion
+gates.
 
 ## Frontend Standards
 

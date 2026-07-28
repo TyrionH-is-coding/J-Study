@@ -14,6 +14,7 @@ class OutputPaths:
     evidence_links: Path
     markdown: Path
     quality: Path
+    package: Path
 
     def as_dict(self) -> dict[str, Path]:
         return {
@@ -23,6 +24,7 @@ class OutputPaths:
             "evidence_links": self.evidence_links,
             "markdown": self.markdown,
             "quality": self.quality,
+            "package": self.package,
         }
 
 
@@ -34,6 +36,7 @@ def build_output_paths(output_dir: Path, output_prefix: str) -> OutputPaths:
         evidence_links=output_dir / f"{output_prefix}-evidence_links.json",
         markdown=output_dir / f"{output_prefix}-output.md",
         quality=output_dir / f"{output_prefix}-quality.json",
+        package=output_dir / f"{output_prefix}-package.json",
     )
 
 

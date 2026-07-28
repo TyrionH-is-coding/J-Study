@@ -28,7 +28,8 @@ Deliverables:
 - move FastAPI code to `apps/api` - done
 - move generation pipeline behind `packages/core` - done
 - split parser, retrieval, and medicine domain logic into dedicated modules - done
-- keep PyMuPDF as default parser - done
+- keep PyMuPDF as the initial MVP parser - done historically; superseded by
+  the 2026-07-28 MinerU migration decision
 - keep existing tests passing - done
 - add explicit dependency file - done
 - split runtime settings and job lifecycle - done
@@ -43,6 +44,38 @@ Acceptance:
 - `python -m unittest discover -s tests -v` passes
 - old root-level scripts are documented as compatibility shims
 - runtime settings can come from environment variables before server deployment - done for API key, model names, jobs directory, and template paths
+
+## Phase 1R: Contract-First Platform Refactor
+
+Goal: preserve the validated MVP while replacing temporary parser, job, and
+module boundaries with production-oriented contracts.
+
+Deliverables:
+
+- verified Git checkpoint for tasks 0002-0004
+- normalized MinerU document contract
+- MinerU Precision Extract cloud client
+- safe result download and ZIP normalization
+- PyMuPDF limited to PDF validation and source preview utilities
+- explicit job state machine
+- PostgreSQL job/source/section/artifact persistence
+- separate API and worker processes
+- typed FastAPI schemas and OpenAPI/frontend contract validation
+- removal of public parser choice
+
+Acceptance:
+
+- every refactor phase keeps backend and frontend regression suites passing
+- Course Outline Mode works through MinerU end to end
+- job ownership, progress, and artifacts survive process restart
+- no raw MinerU provider structure leaks into retrieval or frontend code
+- no user-facing parser profile remains
+- the checkpoint SHA and deletion gates are recorded
+
+Implementation order is controlled by:
+
+- `docs/architecture/refactor-blueprint.md`
+- `multi-agent/jstudy-product-build/task_cards/0005-refactor-checkpoint-mineru-foundation.md`
 
 ## Phase 1.5: User Auth and Invite Gate
 
@@ -66,26 +99,28 @@ Acceptance:
 - admin invite management remains protected by `JSTUDY_ADMIN_TOKEN`
 - auth behavior is covered by automated tests before server deployment
 
-## Phase 2: Frontend MVP
+## Phase 2: Frontend MVP - Course Outline foundation done
 
 Goal: replace the temporary built-in HTML with a real frontend.
 
 Deliverables:
 
-- `apps/web` with Next.js
-- selected shadcn/ui template
-- login and registration pages
-- upload page
-- job progress state
-- generated Markdown reader
-- source PDF preview panel
-- evidence button to page jump
+- `apps/web` with Next.js App Router, TypeScript, Tailwind, shadcn/ui, and TanStack Query - done
+- approved Clinical Workbench visual baseline - done
+- login, registration, cookie session guard, and logout - done
+- mode selector exposing only Course Outline Mode - done
+- outline plus repeated PDF upload page - done
+- queued, running, completed, and failed job states - done
+- sectioned generated Markdown reader - done
+- source-specific PDF page preview panel - done
+- evidence button to `source_id + page` jump inside the preview - done
+- temporary backend UI has a small frontend-ready reader bridge: job id visibility, Markdown download link, quality badge, KaTeX rendering, and citation-to-source-preview jump
 
 Acceptance:
 
 - unauthenticated users see the login/register flow
-- user can upload a PDF from the frontend
-- user can choose an exposed scenario before upload
+- user can upload an outline with one or more PDFs from the frontend
+- blank General, Engineering, and Law scenarios remain hidden; scenario selection is not exposed in the first Course Outline UI
 - generated output displays cleanly
 - clicking "依据 E001" scrolls only the source preview area
 - frontend and backend run locally together
@@ -119,6 +154,8 @@ Deliverables:
 
 - stronger quality report - done for evidence-id validation, unused-evidence warnings, implementation wording checks, and section citation coverage
 - parser/retrieval trace review tools - done for retrieval trace API
+- Markdown export endpoint - done for completed single-courseware jobs
+- single-courseware material-package metadata wrapper - done as a compatibility foundation, not full multi-section generation
 - better failed-job errors - done with exception type in job status
 - upload limits - done for courseware PDF type and size
 - cache controls - done for dynamic API status responses and private generated artifacts
@@ -139,11 +176,14 @@ Goal: define the product and backend boundary for the three generation modes bef
 
 Deliverables:
 
-- explicit `single_courseware`, `batch_courseware`, and `course_outline` service modes
-- frontend upload entry points that can explain the three modes without mixing them with subject scenario or parser choice
-- backend request contract that records service mode separately from `scenario_id` and `parser_profile_id`
-- package-output contract for multi-section material
-- section-level evidence, source-file metadata, and quality status model
+- explicit `single_courseware`, `batch_courseware`, and `course_outline` service modes - backend contract done for `single_courseware` and `course_outline`
+- frontend upload entry points that explain the three modes without mixing them
+  with subject scenario or internal parser infrastructure
+- backend request contract that records service mode separately from
+  `scenario_id` - currently done for `course_outline`; legacy
+  `parser_profile_id` is scheduled for removal
+- package-output contract for multi-section material - backend foundation done for `course_outline`
+- section-level evidence, source-file metadata, and quality status model - backend foundation done for `course_outline`
 - full-export contract that can assemble all sections into one complete document
 
 Acceptance:
@@ -180,12 +220,12 @@ Goal: let users upload multiple related courseware PDFs and receive one navigabl
 
 Deliverables:
 
-- multi-PDF upload API and frontend flow
-- source-file metadata in chunks, evidence, and citation links
+- multi-PDF upload API and frontend flow - Course Outline path done; Batch Courseware remains pending
+- source-file metadata in chunks, evidence, and citation links - done
 - section planning from file order, detected headings, or inferred topics
 - cross-file retrieval and evidence aggregation
 - duplicate-topic handling across uploaded PDFs
-- package reader with section navigation and source preview
+- package reader with section navigation and source preview - shared Course Outline reader foundation done; Batch planning remains pending
 - full-document export assembled from package sections
 
 Acceptance:
@@ -202,12 +242,12 @@ Goal: turn a full course outline plus all courseware into a course-level materia
 
 Deliverables:
 
-- outline upload and parsing workflow
-- outline-node section plan
-- retrieval across all uploaded courseware per outline node
-- evidence coverage report per outline node
-- section-by-section web browsing
-- full course-material export
+- outline upload and deterministic parsing workflow - backend done
+- outline-node section plan - backend done
+- retrieval across all uploaded courseware per outline node - backend first version done
+- evidence coverage report per outline node - package status first version done
+- section-by-section web browsing - done in `apps/web`
+- full course-material Markdown export - backend first version done
 
 Acceptance:
 
@@ -258,21 +298,21 @@ Acceptance:
 - system can generate new questions in the style of uploaded past papers
 - answers and explanations cite courseware evidence when possible
 
-## Phase 7: Heavier Parsing and Production Services
+## Phase 7: Scale-Driven Production Services
 
 Goal: add infrastructure only when product usage justifies it.
 
 Possible deliverables:
 
-- MinerU parser implementation
-- parser selection policy
-- background worker
 - Redis queue
-- Postgres job store
-- object storage
+- Tencent COS or equivalent object storage
+- spare-computer or dedicated self-hosted MinerU worker
+- multi-worker routing and cost controls
 - advanced user roles and permissions
 
 Acceptance:
 
-- heavier parsing improves retrieval quality on real complex PDFs
-- infrastructure reduces operational risk rather than adding complexity for its own sake
+- added infrastructure is justified by measured queue, storage, availability, or
+  provider-cost pressure
+- self-hosted parsing matches the normalized MinerU contract and does not change
+  product behavior

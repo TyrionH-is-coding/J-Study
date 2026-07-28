@@ -20,6 +20,8 @@ class Chunk:
     query_id: str | None = None
     query_title: str | None = None
     retrieval_method: str | None = None
+    source_id: str = ""
+    source_file: str = ""
 
 
 @dataclass(frozen=True)
@@ -60,6 +62,8 @@ def chunk_pages(
     pages: list[dict[str, Any]],
     max_chars: int = 512,
     overlap: int = 50,
+    source_id: str = "",
+    source_file: str = "",
 ) -> list[Chunk]:
     chunks: list[Chunk] = []
 
@@ -74,12 +78,18 @@ def chunk_pages(
             end = min(start + max_chars, len(text))
             chunk_text = text[start:end].strip()
             if chunk_text:
+                chunk_number = len(chunks) + 1
+                chunk_id = f"C{chunk_number:03d}"
+                if source_id:
+                    chunk_id = f"{source_id}-{chunk_id}"
                 chunks.append(
                     Chunk(
-                        id=f"C{len(chunks) + 1:03d}",
+                        id=chunk_id,
                         page=page_no,
                         text=chunk_text,
                         embedding_index=len(chunks),
+                        source_id=source_id,
+                        source_file=source_file,
                     )
                 )
             if end == len(text):
@@ -319,7 +329,9 @@ class DeepTutorRagAdapter:
             {
                 "title": self.source_file or f"Document {index}",
                 "content": chunk.text[:200],
-                "source": self.source_file,
+                "source": chunk.source_file or self.source_file,
+                "source_id": chunk.source_id,
+                "source_file": chunk.source_file or self.source_file,
                 "page": chunk.page,
                 "chunk_id": chunk.id,
                 "score": round(chunk.score, 4),

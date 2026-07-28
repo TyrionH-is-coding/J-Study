@@ -32,6 +32,7 @@ class JobRecord:
     pdf_path: Path
     output_dir: Path
     outline_path: Path | None = None
+    pdf_paths: list[Path] = field(default_factory=list)
     outputs: dict[str, Path] = field(default_factory=dict)
     quality: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -46,6 +47,7 @@ class JobRecord:
             "pdf_path": str(self.pdf_path),
             "output_dir": str(self.output_dir),
             "outline_path": str(self.outline_path) if self.outline_path else None,
+            "pdf_paths": [str(path) for path in (self.pdf_paths or [self.pdf_path])],
             "outputs": {key: str(path) for key, path in self.outputs.items()},
             "quality": self.quality,
             "metadata": self.metadata,
@@ -59,12 +61,18 @@ class JobRecord:
         outline_path = payload.get("outline_path")
         now = utc_now_iso()
         created_at = str(payload.get("created_at") or now)
+        raw_pdf_paths = payload.get("pdf_paths") or []
+        pdf_paths = [Path(path) for path in raw_pdf_paths]
+        pdf_path = Path(payload.get("pdf_path") or pdf_paths[0])
+        if not pdf_paths:
+            pdf_paths = [pdf_path]
         return cls(
             job_id=payload["job_id"],
             status=payload["status"],
-            pdf_path=Path(payload["pdf_path"]),
+            pdf_path=pdf_path,
             output_dir=Path(payload["output_dir"]),
             outline_path=Path(outline_path) if outline_path else None,
+            pdf_paths=pdf_paths,
             outputs={key: Path(path) for key, path in payload.get("outputs", {}).items()},
             quality=payload.get("quality", {}),
             metadata=payload.get("metadata", {}),
@@ -86,6 +94,7 @@ class JobStore:
         pdf_path: Path,
         output_dir: Path,
         outline_path: Path | None = None,
+        pdf_paths: list[Path] | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> JobRecord:
         record = JobRecord(
@@ -93,6 +102,7 @@ class JobStore:
             status="queued",
             pdf_path=pdf_path,
             outline_path=outline_path,
+            pdf_paths=pdf_paths or [pdf_path],
             output_dir=output_dir,
             metadata=metadata or {},
         )

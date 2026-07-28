@@ -35,7 +35,7 @@ from packages.core.jstudy_core.parser_profile_router import (
     public_parser_profiles,
     resolve_parser_profile,
 )
-from packages.core.jstudy_core.pipeline import run_mvp
+from packages.core.jstudy_core.pipeline import run_course_outline, run_mvp
 from packages.core.jstudy_core.scenario_router import ScenarioRoutingError, resolve_scenario
 from packages.core.jstudy_core.settings import RuntimeSettings
 from packages.core.jstudy_core.storage import read_json
@@ -49,6 +49,7 @@ ROOT = PROJECT_ROOT
 NO_STORE_CACHE_CONTROL = "no-store"
 PRIVATE_CACHE_CONTROL = "private, max-age=0, must-revalidate"
 ADMIN_TOKEN_ENV = "JSTUDY_ADMIN_TOKEN"
+ALLOWED_SERVICE_MODES = {"single_courseware", "course_outline"}
 
 
 def private_cache_headers() -> dict[str, str]:
@@ -95,6 +96,80 @@ async def save_pdf_upload(upload: UploadFile, target: Path, max_bytes: int) -> N
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_bytes(data)
 
+
+def normalize_service_mode(value: str) -> str:
+    service_mode = (value or "").strip() or "single_courseware"
+    if service_mode not in ALLOWED_SERVICE_MODES:
+        raise HTTPException(status_code=400, detail=f"Unsupported service_mode: {service_mode}")
+    return service_mode
+
+
+def source_id_for_upload(index: int) -> str:
+    return f"S{index + 1:03d}"
+
+
+def pdf_page_count(path: Path) -> int:
+    with fitz.open(str(path)) as doc:
+        return len(doc)
+
+
+def build_source_files(pdf_paths: list[Path]) -> list[dict[str, Any]]:
+    return [
+        {
+            "source_id": source_id_for_upload(index),
+            "file_name": path.name,
+            "page_count": pdf_page_count(path),
+        }
+        for index, path in enumerate(pdf_paths)
+    ]
+
+
+def source_file_record(job: JobRecord, source_id: str) -> dict[str, Any]:
+    for item in job.metadata.get("source_files", []):
+        if str(item.get("source_id")) == source_id:
+            return item
+    raise HTTPException(status_code=404, detail="Source PDF not found")
+
+
+def source_pdf_path(job: JobRecord, source_id: str) -> Path:
+    source_file_record(job, source_id)
+    for index, path in enumerate(job.pdf_paths or [job.pdf_path]):
+        if source_id_for_upload(index) == source_id:
+            return path
+    raise HTTPException(status_code=404, detail="Source PDF not found")
+
+
+def pdf_info_payload(path: Path, source_id: str = "") -> dict[str, Any]:
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="PDF not found")
+    with fitz.open(str(path)) as doc:
+        pages = [
+            {
+                "page": index + 1,
+                "width": round(page.rect.width, 2),
+                "height": round(page.rect.height, 2),
+            }
+            for index, page in enumerate(doc)
+        ]
+    payload = {"page_count": len(pages), "pages": pages}
+    if source_id:
+        payload["source_id"] = source_id
+    return payload
+
+
+def pdf_page_png_response(path: Path, page_no: int) -> Response:
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="PDF not found")
+    with fitz.open(str(path)) as doc:
+        if page_no < 1 or page_no > len(doc):
+            raise HTTPException(status_code=404, detail="PDF page not found")
+        page = doc.load_page(page_no - 1)
+        pixmap = page.get_pixmap(matrix=fitz.Matrix(1.6, 1.6), alpha=False)
+        return Response(
+            content=pixmap.tobytes("png"),
+            media_type="image/png",
+            headers=private_cache_headers(),
+        )
 
 def format_job_error(exc: Exception) -> str:
     message = str(exc).strip()
@@ -279,8 +354,11 @@ def create_app(
         jobs.mark_running(job_id)
         try:
             content_paths = job.metadata.get("content_paths", {})
+            service_mode = str(job.metadata.get("service_mode") or "single_courseware")
+            selected_runner = run_course_outline if service_mode == "course_outline" and runner is run_mvp else runner
             runner_kwargs = {
                 "pdf_path": job.pdf_path,
+                "pdf_paths": job.pdf_paths or [job.pdf_path],
                 "soul_path": Path(str(content_paths.get("soul_path") or runtime.soul_path)),
                 "mnemonics_path": Path(str(content_paths.get("mnemonics_path") or runtime.mnemonics_path)),
                 "api_key_path": runtime.api_key_path,
@@ -297,9 +375,12 @@ def create_app(
                 "parser_backend": job.metadata.get("parser_profile", {}).get("backend", "pymupdf"),
                 "routing_metadata": job.metadata,
                 "parser_config": runtime.parser_config,
+                "generation_mode": job.metadata.get("mode", ""),
+                "service_mode": service_mode,
+                "source_files": job.metadata.get("source_files", []),
             }
-            outputs = runner(
-                **filter_runner_kwargs(runner, runner_kwargs)
+            outputs = selected_runner(
+                **filter_runner_kwargs(selected_runner, runner_kwargs)
             )
             quality_path = outputs.get("quality")
             quality = read_json(quality_path) if quality_path and quality_path.exists() else {}
@@ -504,13 +585,17 @@ def create_app(
         background_tasks: BackgroundTasks,
         response: Response,
         request: Request,
-        pdf: UploadFile = File(...),
+        pdf: UploadFile | None = File(None),
         outline: UploadFile | None = File(None),
+        pdfs: list[UploadFile] | None = File(None),
+        service_mode: str = Form(""),
         scenario_id: str = Form(""),
         parser_profile_id: str = Form(""),
+        mode: str = Form(""),
     ) -> dict[str, Any]:
         set_no_store(response)
         current_user = current_user_or_401(request)
+        resolved_service_mode = normalize_service_mode(service_mode)
         readiness = runtime.readiness()
         if readiness["status"] != "ready":
             raise HTTPException(status_code=503, detail=readiness)
@@ -535,22 +620,51 @@ def create_app(
         job_id = uuid4().hex[:12]
         job_dir = jobs_root / job_id
         input_dir = job_dir / "input"
-        pdf_name = safe_upload_name(pdf.filename or "", "courseware.pdf")
-        if Path(pdf_name).suffix.lower() != ".pdf":
-            raise HTTPException(status_code=400, detail="Uploaded file must be a PDF")
-        pdf_path = input_dir / pdf_name
-        await save_pdf_upload(pdf, pdf_path, runtime.max_pdf_bytes)
+        pdf_paths: list[Path] = []
+
+        if resolved_service_mode == "course_outline":
+            if outline is None or not outline.filename:
+                raise HTTPException(status_code=400, detail="course_outline requires outline")
+            course_pdfs = [item for item in (pdfs or []) if item is not None and item.filename]
+            if not course_pdfs:
+                raise HTTPException(status_code=400, detail="course_outline requires at least one pdfs upload")
+            for index, upload in enumerate(course_pdfs):
+                pdf_name = safe_upload_name(upload.filename or "courseware.pdf", f"courseware-{index + 1}.pdf")
+                if Path(pdf_name).suffix.lower() != ".pdf":
+                    raise HTTPException(status_code=400, detail="Uploaded file must be a PDF")
+                pdf_path = input_dir / pdf_name
+                if pdf_path.exists():
+                    pdf_path = input_dir / f"{source_id_for_upload(index)}-{pdf_name}"
+                await save_pdf_upload(upload, pdf_path, runtime.max_pdf_bytes)
+                pdf_paths.append(pdf_path)
+        else:
+            if pdf is None or not pdf.filename:
+                raise HTTPException(status_code=400, detail="single_courseware requires pdf")
+            pdf_name = safe_upload_name(pdf.filename or "courseware.pdf", "courseware.pdf")
+            if Path(pdf_name).suffix.lower() != ".pdf":
+                raise HTTPException(status_code=400, detail="Uploaded file must be a PDF")
+            pdf_path = input_dir / pdf_name
+            await save_pdf_upload(pdf, pdf_path, runtime.max_pdf_bytes)
+            pdf_paths.append(pdf_path)
 
         outline_path = None
         if outline is not None and outline.filename:
             outline_name = safe_upload_name(outline.filename, "outline.md")
+            if resolved_service_mode == "course_outline" and Path(outline_name).suffix.lower() not in {".md", ".txt", ".pdf"}:
+                raise HTTPException(status_code=400, detail="course_outline outline must be .md, .txt, or .pdf")
             outline_path = input_dir / outline_name
-            await save_upload(outline, outline_path)
+            if Path(outline_name).suffix.lower() == ".pdf":
+                await save_pdf_upload(outline, outline_path, runtime.max_pdf_bytes)
+            else:
+                await save_upload(outline, outline_path)
 
+        source_files = build_source_files(pdf_paths)
+        clean_mode = (mode or "").strip()
         content_paths = selected_content_paths(scenario)
         jobs.create(
             job_id=job_id,
-            pdf_path=pdf_path,
+            pdf_path=pdf_paths[0],
+            pdf_paths=pdf_paths,
             outline_path=outline_path,
             output_dir=job_dir / "output",
             metadata={
@@ -558,6 +672,9 @@ def create_app(
                 "scenario": scenario.trace_metadata(),
                 "parser_profile": parser_profile.trace_metadata(),
                 "content_paths": content_paths,
+                "mode": clean_mode,
+                "service_mode": resolved_service_mode,
+                "source_files": source_files,
             },
         )
         background_tasks.add_task(run_job, job_id)
@@ -566,7 +683,6 @@ def create_app(
             "status": "queued",
             "status_url": f"/api/jobs/{job_id}",
         }
-
     @app.get("/api/jobs/{job_id}")
     def job_status(job_id: str, request: Request, response: Response) -> dict[str, Any]:
         set_no_store(response)
@@ -576,13 +692,21 @@ def create_app(
             "status": job.status,
             "error": job.error,
             "quality": job.quality,
+            "service_mode": job.metadata.get("service_mode", "single_courseware"),
+            "source_files": job.metadata.get("source_files", []),
             "output_url": f"/api/jobs/{job_id}/output",
             "evidence_url": f"/api/jobs/{job_id}/evidence",
             "evidence_links_url": f"/api/jobs/{job_id}/evidence-links",
             "trace_url": f"/api/jobs/{job_id}/trace",
+            "package_url": f"/api/jobs/{job_id}/package",
+            "export_url": f"/api/jobs/{job_id}/export",
             "pdf_url": f"/api/jobs/{job_id}/pdf",
             "pdf_info_url": f"/api/jobs/{job_id}/pdf-info",
             "pdf_page_url_template": f"/api/jobs/{job_id}/pdf-page/{{page}}.png",
+            "pdfs_url": f"/api/jobs/{job_id}/pdfs",
+            "source_pdf_url_template": f"/api/jobs/{job_id}/pdfs/{{source_id}}/pdf",
+            "source_pdf_info_url_template": f"/api/jobs/{job_id}/pdfs/{{source_id}}/pdf-info",
+            "source_pdf_page_url_template": f"/api/jobs/{job_id}/pdfs/{{source_id}}/pdf-page/{{page}}.png",
         }
 
     @app.get("/api/jobs/{job_id}/output")
@@ -617,6 +741,56 @@ def create_app(
         path = ready_output_path(job, "trace", "Retrieval trace is not ready")
         return read_json(path)
 
+    @app.get("/api/jobs/{job_id}/package")
+    def job_package(job_id: str, request: Request, response: Response) -> Any:
+        set_private_cache(response)
+        job = job_or_404(job_id, current_user_or_401(request))
+        path = ready_output_path(job, "package", "Material package is not ready")
+        return read_json(path)
+
+    @app.get("/api/jobs/{job_id}/export")
+    def job_export(job_id: str, request: Request) -> Response:
+        job = job_or_404(job_id, current_user_or_401(request))
+        path = ready_output_path(job, "markdown", "Output is not ready")
+        return Response(
+            content=path.read_bytes(),
+            media_type="text/markdown; charset=utf-8",
+            headers={
+                **private_cache_headers(),
+                "Content-Disposition": f'attachment; filename="jstudy-{job_id[:8]}.md"',
+            },
+        )
+
+    @app.get("/api/jobs/{job_id}/pdfs")
+    def job_pdfs(job_id: str, request: Request, response: Response) -> dict[str, Any]:
+        set_private_cache(response)
+        job = job_or_404(job_id, current_user_or_401(request))
+        return {"source_files": job.metadata.get("source_files", [])}
+
+    @app.get("/api/jobs/{job_id}/pdfs/{source_id}/pdf")
+    def job_source_pdf(job_id: str, source_id: str, request: Request) -> FileResponse:
+        job = job_or_404(job_id, current_user_or_401(request))
+        path = source_pdf_path(job, source_id)
+        if not path.exists():
+            raise HTTPException(status_code=404, detail="PDF not found")
+        return FileResponse(
+            path,
+            media_type="application/pdf",
+            filename=path.name,
+            headers=private_cache_headers(),
+        )
+
+    @app.get("/api/jobs/{job_id}/pdfs/{source_id}/pdf-info")
+    def job_source_pdf_info(job_id: str, source_id: str, request: Request, response: Response) -> dict[str, Any]:
+        set_private_cache(response)
+        job = job_or_404(job_id, current_user_or_401(request))
+        return pdf_info_payload(source_pdf_path(job, source_id), source_id=source_id)
+
+    @app.get("/api/jobs/{job_id}/pdfs/{source_id}/pdf-page/{page_no}.png")
+    def job_source_pdf_page_png(job_id: str, source_id: str, page_no: int, request: Request) -> Response:
+        job = job_or_404(job_id, current_user_or_401(request))
+        return pdf_page_png_response(source_pdf_path(job, source_id), page_no)
+
     @app.get("/api/jobs/{job_id}/pdf")
     def job_pdf(job_id: str, request: Request) -> FileResponse:
         job = job_or_404(job_id, current_user_or_401(request))
@@ -634,37 +808,12 @@ def create_app(
     def job_pdf_info(job_id: str, request: Request, response: Response) -> dict[str, Any]:
         set_private_cache(response)
         job = job_or_404(job_id, current_user_or_401(request))
-        path = job.pdf_path
-        if not path.exists():
-            raise HTTPException(status_code=404, detail="PDF not found")
-        with fitz.open(str(path)) as doc:
-            pages = [
-                {
-                    "page": index + 1,
-                    "width": round(page.rect.width, 2),
-                    "height": round(page.rect.height, 2),
-                }
-                for index, page in enumerate(doc)
-            ]
-        return {"page_count": len(pages), "pages": pages}
+        return pdf_info_payload(job.pdf_path)
 
     @app.get("/api/jobs/{job_id}/pdf-page/{page_no}.png")
     def job_pdf_page_png(job_id: str, page_no: int, request: Request) -> Response:
         job = job_or_404(job_id, current_user_or_401(request))
-        path = job.pdf_path
-        if not path.exists():
-            raise HTTPException(status_code=404, detail="PDF not found")
-        with fitz.open(str(path)) as doc:
-            if page_no < 1 or page_no > len(doc):
-                raise HTTPException(status_code=404, detail="PDF page not found")
-            page = doc.load_page(page_no - 1)
-            pixmap = page.get_pixmap(matrix=fitz.Matrix(1.6, 1.6), alpha=False)
-            return Response(
-                content=pixmap.tobytes("png"),
-                media_type="image/png",
-                headers=private_cache_headers(),
-            )
-
+        return pdf_page_png_response(job.pdf_path, page_no)
     return app
 
 

@@ -18,7 +18,7 @@ packages/
   core/
     # workflow contracts, job models, citations, output result types
   parsers/
-    # PyMuPDF parser now; future MinerU implementation
+    # MinerU product parser; PyMuPDF PDF utility
   retrieval/
     # chunking, BM25/RRF, RAG adapters
   domains/
@@ -36,9 +36,9 @@ The first backend reorganization steps are implemented. Further steps should spl
 ## Runtime Flow
 
 ```text
-Upload PDF + optional outline + optional scenario/parser profile
+Upload single PDF or course outline + multiple PDFs + optional scenario
 -> scenario and soul profile resolution
--> Document Parser
+-> MinerU document parsing and normalization
 -> chunks with page metadata
 -> source/outline-driven retrieval query planner
 -> embedding + lexical retrieval
@@ -52,11 +52,12 @@ Upload PDF + optional outline + optional scenario/parser profile
 
 ## Service Mode Architecture
 
-The platform should distinguish service mode from subject scenario and parser profile.
+The platform should distinguish service mode from subject scenario and internal
+parser infrastructure.
 
-- `single_courseware`: one PDF, optional outline, one generated material output. This is the current MVP implementation.
+- `single_courseware`: one PDF, optional outline, one generated material output. This remains the compatible default MVP path.
 - `batch_courseware`: multiple PDFs, optional user notes or loose outline, one material package. The web app should browse the package by chapter or topic and should also export the complete package as one document.
-- `course_outline`: course outline plus all courseware for a full course, one material package. The outline is the section plan, and each outline node should carry its own retrieval evidence, source references, quality status, and generated section output.
+- `course_outline`: course outline plus all courseware for a full course, one material package. The backend contract is implemented with required outline upload, repeated `pdfs`, source identities such as `S001`, and section package metadata. The formal `apps/web` workflow now covers upload, polling, section browsing, source-specific page preview, citation jump, and full Markdown export.
 
 Batch Courseware Mode and Course Outline Mode should share the same package-output contract:
 
@@ -70,7 +71,7 @@ material_package
 -> full export assembled from sections
 ```
 
-The difference is planning. Batch Courseware Mode can derive sections from uploaded file order, detected headings, or inferred topics. Course Outline Mode must follow the uploaded outline first and should mark outline nodes with insufficient evidence instead of silently inventing content.
+The difference is planning. Batch Courseware Mode can derive sections from uploaded file order, detected headings, or inferred topics. Course Outline Mode follows the uploaded outline first and marks sections with weak evidence in the package instead of silently inventing support.
 
 ## Platform Layer
 
@@ -79,8 +80,8 @@ The platform layer should own common product behavior:
 - file upload
 - job lifecycle
 - learning-scenario resolution
-- parser-profile visibility and routing
-- parser selection
+- document parsing orchestration
+- parser provider configuration
 - retrieval execution
 - evidence link contracts
 - output storage
@@ -95,39 +96,34 @@ The platform should expose stable routing hooks for vertical assets. A new subje
 
 ## Document Parser Boundary
 
-The parser boundary is intentional. Parser output should preserve enough metadata to support citation jumps:
+The approved target uses MinerU for all product text and structure extraction.
+Users do not select a parser or parser tier. The current PyMuPDF extraction path
+is a temporary migration implementation, not the target product contract.
 
-- source file
-- page number
-- extracted text
-- optional layout blocks
-- optional table or image references
-- optional bounding boxes in future versions
+MinerU output must be normalized into the versioned J-Study document contract
+before retrieval. The contract preserves:
 
-### Parser Profiles
+- stable J-Study `source_id`
+- source filename and SHA256
+- one-based source page number
+- text and Markdown
+- ordered typed blocks
+- tables, formulas, image references, and bounding boxes when available
+- parser/model/version metadata and safe warnings
 
-Users choose a product-facing parser profile when the profile is exposed. The backend currently defines:
+PyMuPDF remains an internal utility for:
 
-- `fast`: PyMuPDF, enabled and visible to users by default.
-- `quality`: MinerU-backed, hidden from normal users and admin-only until MinerU is configured and the product tier is ready.
+- PDF magic and corruption validation
+- page count and page metadata
+- page PNG rendering for source preview
+- validation of MinerU page references
 
-Automatic PDF difficulty scoring is not part of the current implementation. The system should not silently upgrade a job to MinerU; the selected parser profile is the source of truth.
+There is no automatic difficulty score and no silent fallback from MinerU to
+PyMuPDF text extraction. MinerU failure produces a stable job error and an
+explicit retry path.
 
-### Default Parser: PyMuPDF
-
-PyMuPDF is the default MVP parser. It is fast, simple to deploy, and good enough for text-first PPT-exported PDFs where citation to the original page is already available.
-
-### Future Parser: MinerU
-
-MinerU should be added as a heavier optional parser, not as the first deployment dependency. It is valuable for complex layouts, tables, scanned documents, Office files, and future past-paper question extraction.
-
-The architecture should allow:
-
-```text
-parser = pymupdf | mineru
-```
-
-without rewriting retrieval or domain logic.
+The full migration design is defined in
+`docs/architecture/refactor-blueprint.md`.
 
 ## Retrieval Layer
 
@@ -168,15 +164,16 @@ The preferred model is hybrid:
 
 ## Frontend Architecture
 
-The frontend should be `apps/web` with Next.js and shadcn/ui.
+The formal frontend foundation is `apps/web` with Next.js App Router, TypeScript, Tailwind CSS, shadcn/ui, and TanStack Query. Browser code calls relative `/api/*` routes; local Next.js rewrites proxy those requests to `JSTUDY_API_ORIGIN`, preserving the backend HTTP-only cookie as a same-origin browser flow without FastAPI CORS changes.
 
 Design rules:
 
-- start from a selected shadcn/ui template
-- keep the template's main layout stable
-- adjust brand color, typography, density, states, and product-specific panels
-- build the reader around two independent areas: generated material and source preview
-- source preview should support citation jumps without scrolling the whole page
+- follow the approved Clinical Workbench specification in `docs/frontend/clinical-workbench-spec.md`
+- keep API contracts and auth/job/source/evidence types centralized under `apps/web/src/lib/api`
+- use TanStack Query for server state and feature-local React state for file, section, source, and page selection
+- build the desktop reader as section index, generated material, and source preview panes, with stacked panels at smaller widths
+- use `source_id` as identity and filenames only as display labels
+- keep citation jumps inside the source preview scroll area instead of scrolling the whole page
 
 ## Deployment Architecture
 
@@ -199,7 +196,10 @@ Expected deployment components:
 - mounted `data/` volume for uploads, outputs, and cache
 - `.env` for runtime secrets
 
-Future components can include Redis, Postgres, object storage, and a separate worker.
+The approved target adds PostgreSQL and a separate worker process. Redis remains
+optional until queue/concurrency measurements justify it. Pilot artifacts may
+remain on a mounted persistent volume behind a storage interface; Tencent COS
+can replace it later.
 
 Runtime settings are centralized in `packages/core/jstudy_core/settings.py`. `SILICONFLOW_API_KEY` is the primary API key source; `SILICONFLOW_API_KEY_FILE` is the file fallback. `JSTUDY_JOBS_DIR`, `JSTUDY_SOUL_PATH`, `JSTUDY_MNEMONICS_PATH`, `JSTUDY_MAX_PDF_BYTES`, `JSTUDY_JOB_RETENTION_HOURS`, `SILICONFLOW_CHAT_MODEL`, and `SILICONFLOW_EMBED_MODEL` control deploy-time paths, upload limits, optional cleanup, and model choices. `JSTUDY_MNEMONICS_PATH` is the current compatibility name for the prompt-rendered knowledge snippet file used by the MVP pipeline.
 
@@ -236,9 +236,9 @@ The MVP hook should collect raw feedback into an admin-visible candidate pool on
 
 The admin surface is available at `GET /admin/settings`, backed by `GET/PUT /api/admin/settings` and `POST /api/admin/settings/test/{llm|embedding|search}`. Set `JSTUDY_ADMIN_TOKEN` in server deployments so only operators can read or write model keys and runtime settings.
 
-The backend exposes `GET /api/health` for reverse proxy and container liveness checks. `GET /api/readiness` reports whether runtime paths, prompt files, API key configuration, and PDF upload limits are ready for job execution. `GET /api/readiness?probe_provider=true` also performs a live SiliconFlow chat and embedding probe for deployment verification. `GET /api/options` returns public scenarios and parser profiles. `POST /api/generate` accepts PDF uploads only, optional `scenario_id` and `parser_profile_id` form fields, rejects files above `JSTUDY_MAX_PDF_BYTES`, and returns `503` with readiness details when required runtime configuration is missing.
+The backend exposes `GET /api/health` for reverse proxy and container liveness checks. `GET /api/readiness` reports whether runtime paths, prompt files, API key configuration, and PDF upload limits are ready for job execution. `GET /api/readiness?probe_provider=true` also performs a live SiliconFlow chat and embedding probe for deployment verification. `GET /api/options` returns public scenarios and parser profiles. `POST /api/generate` accepts empty or `single_courseware` `service_mode` with `pdf=<one PDF>`, and accepts `service_mode=course_outline` with required `outline=<.md/.txt/.pdf>` plus repeated `pdfs=<PDF>` uploads. It also accepts optional `scenario_id`, `parser_profile_id`, and metadata-only `mode`, rejects files above `JSTUDY_MAX_PDF_BYTES`, and returns `503` with readiness details when required runtime configuration is missing. The current `mode` field is metadata only; it is intentionally separate from service mode, subject scenario, and parser profile.
 
-Dynamic API responses that drive polling and runtime state use `Cache-Control: no-store`. Uploaded/generated job artifacts such as markdown output, evidence JSON, retrieval trace, PDF metadata, original PDF, and rendered PDF page PNGs use `Cache-Control: private, max-age=0, must-revalidate` so browsers can revalidate private previews without serving stale job state.
+Dynamic API responses that drive polling and runtime state use `Cache-Control: no-store`. Uploaded/generated job artifacts such as markdown output, evidence JSON, material-package JSON, retrieval trace, PDF metadata, original PDF, Markdown export, and rendered PDF page PNGs use `Cache-Control: private, max-age=0, must-revalidate` so browsers can revalidate private previews without serving stale job state.
 
 Job status persists to `JSTUDY_JOBS_DIR/jobs.json` so completed and failed jobs remain visible after a process restart. Queued or running jobs are marked failed on restart because the current MVP does not yet have a separate resumable worker queue.
 
@@ -246,7 +246,7 @@ Job status persists to `JSTUDY_JOBS_DIR/jobs.json` so completed and failed jobs 
 
 Uploaded PDFs stay on local disk during the pilot because citation preview needs the original source file. This is acceptable for a small trial only with nonzero retention. When J-Study needs persistent user history, course libraries, or formal multi-user accounts, uploaded PDFs and generated artifacts should move to Tencent COS or equivalent object storage, with metadata kept in a database and lifecycle rules enforced outside the app process.
 
-Completed jobs expose the retrieval trace through `GET /api/jobs/{job_id}/trace`. This returns the selected chunks, query traces, RAG settings, and knowledge snippet hits already written by the pipeline so backend quality issues can be reviewed without shell access to the server.
+Completed jobs expose the retrieval trace through `GET /api/jobs/{job_id}/trace`. This returns the selected chunks, query traces, RAG settings, source file metadata, and knowledge snippet hits already written by the pipeline so backend quality issues can be reviewed without shell access to the server. Completed jobs expose `material_package` metadata through `GET /api/jobs/{job_id}/package`; single-courseware jobs use one compatibility section, while course-outline jobs include ordered outline sections, source files, evidence ids, section status, quality summaries, and artifact filenames. `GET /api/jobs/{job_id}/export` downloads the generated Markdown with the same owner checks as the other job artifacts. Multi-PDF jobs should use source-specific preview endpoints under `/api/jobs/{job_id}/pdfs/{source_id}/...`; old `/pdf-info` and `/pdf-page/{page}.png` endpoints remain first-source compatibility aliases.
 
 The generated quality report checks whether hidden evidence comments exist, whether cited evidence IDs are valid, whether retrieved evidence was left unused, whether implementation-facing wording leaked into the output, and whether each markdown section has citation coverage. Missing section citations are warnings so the MVP can surface review risk without blocking otherwise valid output.
 

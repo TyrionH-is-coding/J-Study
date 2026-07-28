@@ -93,9 +93,16 @@ class WebMvpTest(unittest.TestCase):
         self.assertIn("function renderCodeBlock", INDEX_HTML)
         self.assertIn("function renderTableBlock", INDEX_HTML)
         self.assertIn("function renderInlineMarkdown", INDEX_HTML)
+        self.assertIn("function renderMath", INDEX_HTML)
+        self.assertIn("renderMath", INDEX_HTML)
+        self.assertIn("katex", INDEX_HTML)
         self.assertIn("headingMatch = line.match", INDEX_HTML)
         self.assertIn("<strong>", INDEX_HTML)
         self.assertIn('line.startsWith("```")', INDEX_HTML)
+        self.assertIn('id="downloadLink"', INDEX_HTML)
+        self.assertIn('class="quality-badge', INDEX_HTML)
+        self.assertIn("job.export_url", INDEX_HTML)
+        self.assertIn("jobId", INDEX_HTML)
         self.assertIn('data-ref="${link.ref_id}"', INDEX_HTML)
         self.assertIn('event.target.closest(".citation-item")', INDEX_HTML)
         self.assertIn("scrollPdfPageIntoView(page)", INDEX_HTML)
@@ -419,6 +426,144 @@ class WebMvpTest(unittest.TestCase):
 
         self.assertEqual(response.status_code, 401)
 
+    def test_generate_rejects_unsupported_service_mode(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            settings = self.ready_settings(root)
+            client = TestClient(create_app(settings=settings))
+            self.register_user(client)
+
+            response = client.post(
+                "/api/generate",
+                files={"pdf": ("lecture.pdf", self.make_pdf_bytes(), "application/pdf")},
+                data={"service_mode": "batch_courseware"},
+            )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("Unsupported service_mode", response.json()["detail"])
+
+    def test_course_outline_requires_outline_and_pdfs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            settings = self.ready_settings(root)
+            client = TestClient(create_app(settings=settings))
+            self.register_user(client)
+
+            missing_outline = client.post(
+                "/api/generate",
+                files=[("pdfs", ("lecture.pdf", self.make_pdf_bytes(), "application/pdf"))],
+                data={"service_mode": "course_outline"},
+            )
+            missing_pdfs = client.post(
+                "/api/generate",
+                files={"outline": ("outline.md", b"# Unit One\n", "text/markdown")},
+                data={"service_mode": "course_outline"},
+            )
+
+        self.assertEqual(missing_outline.status_code, 400)
+        self.assertEqual(missing_pdfs.status_code, 400)
+        self.assertIn("outline", missing_outline.json()["detail"].lower())
+        self.assertIn("pdfs", missing_pdfs.json()["detail"].lower())
+
+    def test_course_outline_accepts_repeated_pdfs_and_exposes_source_preview_contracts(self):
+        captured = {}
+
+        def fake_runner(**kwargs):
+            captured.update(kwargs)
+            output_dir = kwargs["output_dir"]
+            output_prefix = kwargs["output_prefix"]
+            source_files = kwargs.get("source_files") or []
+            output_dir.mkdir(parents=True, exist_ok=True)
+            markdown = output_dir / f"{output_prefix}-output.md"
+            evidence = output_dir / f"{output_prefix}-evidence.json"
+            evidence_links = output_dir / f"{output_prefix}-evidence_links.json"
+            quality = output_dir / f"{output_prefix}-quality.json"
+            trace = output_dir / f"{output_prefix}-retrieval_trace.json"
+            package = output_dir / f"{output_prefix}-package.json"
+            markdown.write_text("Fact <!-- evidence: E001 -->\n", encoding="utf-8")
+            evidence.write_text(
+                json.dumps(
+                    [
+                        {
+                            "id": "E001",
+                            "source_id": "S002",
+                            "source_file": "lecture-02.pdf",
+                            "page": 1,
+                            "chunk_id": "S002-C001",
+                            "excerpt": "Fact",
+                        }
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            evidence_links.write_text(
+                json.dumps(
+                    [
+                        {
+                            "ref_id": "E001",
+                            "occurrence": 1,
+                            "target": {"source_id": "S002", "source_file": "lecture-02.pdf", "page": 1},
+                        }
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            quality.write_text(json.dumps({"status": "pass"}), encoding="utf-8")
+            trace.write_text(json.dumps({"selected_chunks": []}), encoding="utf-8")
+            package.write_text(
+                json.dumps(
+                    {
+                        "type": "material_package",
+                        "service_mode": "course_outline",
+                        "source_files": source_files,
+                        "sections": [{"id": "section-001", "title": "Unit One", "order": 1}],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            return {
+                "markdown": markdown,
+                "evidence": evidence,
+                "evidence_links": evidence_links,
+                "quality": quality,
+                "trace": trace,
+                "package": package,
+            }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            job_store = JobStore()
+            settings = self.ready_settings(root)
+            client = TestClient(create_app(runner=fake_runner, job_store=job_store, settings=settings))
+            self.register_user(client)
+            response = client.post(
+                "/api/generate",
+                files=[
+                    ("outline", ("outline.md", b"# Unit One\n", "text/markdown")),
+                    ("pdfs", ("lecture-01.pdf", self.make_pdf_bytes(), "application/pdf")),
+                    ("pdfs", ("lecture-02.pdf", self.make_pdf_bytes(), "application/pdf")),
+                ],
+                data={"service_mode": "course_outline", "mode": "metadata-only"},
+            )
+            job_id = response.json()["job_id"]
+            status = client.get(f"/api/jobs/{job_id}").json()
+            sources = client.get(f"/api/jobs/{job_id}/pdfs").json()
+            second_info_response = client.get(f"/api/jobs/{job_id}/pdfs/S002/pdf-info")
+            second_page = client.get(f"/api/jobs/{job_id}/pdfs/S002/pdf-page/1.png")
+            record = job_store.require(job_id)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(record.metadata["service_mode"], "course_outline")
+        self.assertEqual(captured["service_mode"], "course_outline")
+        self.assertEqual([path.name for path in captured["pdf_paths"]], ["lecture-01.pdf", "lecture-02.pdf"])
+        self.assertEqual(status["service_mode"], "course_outline")
+        self.assertEqual([item["source_id"] for item in status["source_files"]], ["S001", "S002"])
+        self.assertIn("pdfs_url", status)
+        self.assertEqual([item["source_id"] for item in sources["source_files"]], ["S001", "S002"])
+        self.assertEqual(second_info_response.status_code, 200)
+        self.assertEqual(second_info_response.json()["source_id"], "S002")
+        self.assertEqual(second_page.headers["content-type"], "image/png")
+        self.assertTrue(second_page.content.startswith(b"\x89PNG"))
     def test_generate_job_exposes_output_and_evidence_contracts(self):
         captured = {}
 
@@ -434,6 +579,7 @@ class WebMvpTest(unittest.TestCase):
             rag_config,
             embedding_cache_path,
             outline_path,
+            generation_mode="",
         ):
             captured.update(
                 {
@@ -442,6 +588,7 @@ class WebMvpTest(unittest.TestCase):
                     "api_key_path": api_key_path,
                     "chat_model": chat_model,
                     "embed_model": embed_model,
+                    "generation_mode": generation_mode,
                 }
             )
             output_dir.mkdir(parents=True, exist_ok=True)
@@ -450,6 +597,7 @@ class WebMvpTest(unittest.TestCase):
             evidence_links = output_dir / f"{output_prefix}-evidence_links.json"
             quality = output_dir / f"{output_prefix}-quality.json"
             trace = output_dir / f"{output_prefix}-retrieval_trace.json"
+            package = output_dir / f"{output_prefix}-package.json"
             markdown.write_text("Fact <!-- evidence: E001 -->\n", encoding="utf-8")
             evidence.write_text(
                 json.dumps(
@@ -482,12 +630,17 @@ class WebMvpTest(unittest.TestCase):
                 json.dumps({"selected_chunks": [{"id": "C001"}], "query_traces": [{"query": {"id": "sample"}}]}),
                 encoding="utf-8",
             )
+            package.write_text(
+                json.dumps({"type": "material_package", "sections": [{"title": "完整资料"}]}),
+                encoding="utf-8",
+            )
             return {
                 "markdown": markdown,
                 "evidence": evidence,
                 "evidence_links": evidence_links,
                 "quality": quality,
                 "trace": trace,
+                "package": package,
             }
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -502,6 +655,7 @@ class WebMvpTest(unittest.TestCase):
                     "pdf": ("lecture.pdf", self.make_pdf_bytes(), "application/pdf"),
                     "outline": ("outline.md", b"# outline\n", "text/markdown"),
                 },
+                data={"mode": "exam-quick"},
             )
 
             self.assertEqual(response.status_code, 200)
@@ -514,6 +668,9 @@ class WebMvpTest(unittest.TestCase):
             evidence = evidence_response.json()
             trace_response = client.get(f"/api/jobs/{job_id}/trace")
             trace = trace_response.json()
+            package_response = client.get(f"/api/jobs/{job_id}/package")
+            package = package_response.json()
+            export_response = client.get(f"/api/jobs/{job_id}/export")
             pdf_response = client.get(f"/api/jobs/{job_id}/pdf")
             pdf_info_response = client.get(f"/api/jobs/{job_id}/pdf-info")
             pdf_info = pdf_info_response.json()
@@ -525,6 +682,8 @@ class WebMvpTest(unittest.TestCase):
         self.assertEqual(output_response.headers["cache-control"], "private, max-age=0, must-revalidate")
         self.assertEqual(evidence_response.headers["cache-control"], "private, max-age=0, must-revalidate")
         self.assertEqual(trace_response.headers["cache-control"], "private, max-age=0, must-revalidate")
+        self.assertEqual(package_response.headers["cache-control"], "private, max-age=0, must-revalidate")
+        self.assertEqual(export_response.headers["cache-control"], "private, max-age=0, must-revalidate")
         self.assertEqual(pdf_response.headers["cache-control"], "private, max-age=0, must-revalidate")
         self.assertEqual(pdf_info_response.headers["cache-control"], "private, max-age=0, must-revalidate")
         self.assertEqual(page_png.headers["cache-control"], "private, max-age=0, must-revalidate")
@@ -536,14 +695,22 @@ class WebMvpTest(unittest.TestCase):
         self.assertEqual(captured["api_key_path"], settings.api_key_path)
         self.assertEqual(captured["chat_model"], "chat-model")
         self.assertEqual(captured["embed_model"], "embed-model")
+        self.assertEqual(captured["generation_mode"], "exam-quick")
+        self.assertEqual(record.metadata["mode"], "exam-quick")
         self.assertEqual(status["quality"]["status"], "pass")
         self.assertIn("evidence_links_url", status)
         self.assertIn("trace_url", status)
+        self.assertIn("package_url", status)
+        self.assertIn("export_url", status)
         self.assertIn("Fact", output["markdown"])
         self.assertEqual(evidence["evidence"][0]["id"], "E001")
         self.assertEqual(evidence["evidence_links"][0]["target"]["page"], 2)
         self.assertEqual(trace["selected_chunks"][0]["id"], "C001")
         self.assertEqual(trace["query_traces"][0]["query"]["id"], "sample")
+        self.assertEqual(package["type"], "material_package")
+        self.assertEqual(export_response.headers["content-type"], "text/markdown; charset=utf-8")
+        self.assertIn('attachment; filename="jstudy-', export_response.headers["content-disposition"])
+        self.assertIn(b"Fact", export_response.content)
         self.assertEqual(pdf_info["page_count"], 2)
         self.assertEqual(page_png.headers["content-type"], "image/png")
         self.assertTrue(page_png.content.startswith(b"\x89PNG"))

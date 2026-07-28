@@ -6,6 +6,7 @@ INDEX_HTML = r"""<!doctype html>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>J Study MVP</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
   <style>
     :root {
       color-scheme: light;
@@ -247,6 +248,21 @@ INDEX_HTML = r"""<!doctype html>
       border-radius: 6px;
     }
     .error { color: var(--warn); font-weight: 700; }
+    .download-link {
+      color: var(--accent-strong);
+      font-weight: 700;
+      text-decoration: none;
+    }
+    .quality-badge {
+      display: inline-block;
+      margin-left: 8px;
+      padding: 2px 7px;
+      border-radius: 999px;
+      background: #e6f4f1;
+      color: var(--accent-strong);
+      font-size: 12px;
+      font-weight: 800;
+    }
     @media (max-width: 980px) {
       .workspace { grid-template-columns: 1fr; height: auto; overflow: visible; }
       aside, main, .pdf { border-right: 0; border-bottom: 1px solid var(--line); }
@@ -297,7 +313,7 @@ INDEX_HTML = r"""<!doctype html>
     <section class="pdf">
       <div class="pdf-head">
         <strong>课件依据</strong>
-        <span id="pdfMeta">未选择</span>
+        <span><a class="download-link" id="downloadLink" hidden>下载 Markdown</a> <span id="pdfMeta">未选择</span></span>
       </div>
       <div class="citation-list" id="evidenceList"><div class="empty">生成后显示 citation 对照</div></div>
       <div class="pdf-pages" id="pdfPages"><div class="empty">生成后显示 PDF 页面预览</div></div>
@@ -314,6 +330,7 @@ INDEX_HTML = r"""<!doctype html>
     const pdfMeta = document.getElementById("pdfMeta");
     const evidenceList = document.getElementById("evidenceList");
     const pdfPages = document.getElementById("pdfPages");
+    const downloadLink = document.getElementById("downloadLink");
     const scenarioSelect = document.getElementById("scenarioSelect");
     const parserProfileLabel = document.getElementById("parserProfileLabel");
     const parserProfileSelect = document.getElementById("parserProfileSelect");
@@ -405,12 +422,30 @@ INDEX_HTML = r"""<!doctype html>
       }).join("");
     }
 
+    function renderMath(value) {
+      const placeholders = [];
+      const withPlaceholders = value.replace(/(\$\$?)([\s\S]+?)\1/g, (_, fence, expr) => {
+        if (!window.katex) return _;
+        try {
+          const html = window.katex.renderToString(expr.trim(), {
+            displayMode: fence === "$$",
+            throwOnError: false
+          });
+          placeholders.push(html);
+          return `@@JSTUDY_MATH_${placeholders.length - 1}@@`;
+        } catch (error) {
+          return _;
+        }
+      });
+      return escapeHtml(withPlaceholders).replace(/@@JSTUDY_MATH_(\d+)@@/g, (_, index) => placeholders[Number(index)] || "");
+    }
+
     function renderInlineMarkdown(line) {
       return line
         .split(/(<button class="evidence-btn"[\s\S]*?<\/button>)/g)
         .map(part => {
           if (part.startsWith("<button")) return part;
-          return escapeHtml(part)
+          return renderMath(part)
             .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
             .replace(/`([^`]+)`/g, "<code>$1</code>");
         })
@@ -564,7 +599,7 @@ INDEX_HTML = r"""<!doctype html>
     async function poll(jobId) {
       const res = await fetch(`/api/jobs/${jobId}`);
       const job = await res.json();
-      statusBox.textContent = `状态：${job.status}`;
+      statusBox.textContent = `Job ${jobId} · 状态：${job.status}`;
       if (job.status === "completed") {
         const [outRes, evidenceRes, pdfInfoRes] = await Promise.all([
           fetch(job.output_url),
@@ -578,7 +613,12 @@ INDEX_HTML = r"""<!doctype html>
         output.innerHTML = renderMarkdown(out.markdown);
         renderEvidencePanel(evidenceLinks);
         renderPdfPages(pdfInfo.page_count || 0);
-        pdfMeta.textContent = job.quality && job.quality.status ? `质量：${job.quality.status}` : "已生成";
+        const quality = job.quality && job.quality.status ? job.quality.status : "unknown";
+        pdfMeta.innerHTML = `已生成 <span class="quality-badge ${escapeHtml(quality)}">${escapeHtml(quality)}</span>`;
+        if (job.export_url) {
+          downloadLink.href = job.export_url;
+          downloadLink.hidden = false;
+        }
         run.disabled = false;
         return;
       }
@@ -597,6 +637,7 @@ INDEX_HTML = r"""<!doctype html>
       output.innerHTML = `<div class="empty">生成中</div>`;
       evidenceList.innerHTML = `<div class="empty">等待 citation</div>`;
       pdfPages.innerHTML = `<div class="empty">等待 PDF 预览</div>`;
+      downloadLink.hidden = true;
       const res = await fetch("/api/generate", { method: "POST", body: new FormData(form) });
       const data = await res.json();
       if (!res.ok) {
@@ -623,6 +664,7 @@ INDEX_HTML = r"""<!doctype html>
       showEvidenceLink(link, { scrollCitationList: true });
     });
   </script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
 </body>
 </html>
 """

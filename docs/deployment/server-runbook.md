@@ -202,6 +202,11 @@ The first Tencent Cloud backend-only trial record is tracked in
 
 ## First Full Deployment After Frontend
 
+Before the first full deployment, run the smaller production-like exercise in
+[`first-production-like-deploy-plan.md`](first-production-like-deploy-plan.md).
+That plan is the gate for proxy headers, same-site cookies, manifest capture,
+backup, rollback, and real-browser verification.
+
 Planned sequence:
 
 1. Pull the reviewed branch or release tag.
@@ -333,5 +338,7 @@ If object storage has been introduced, migrate objects before switching DNS and 
 
 - Add frontend container after `apps/web` exists.
 - Add reverse proxy config.
+- Add release manifest generation before overwriting server files.
+- Add real-browser deployment smoke checks for login, `/api/auth/me`, upload, polling, reader, and source preview.
 - Add Alembic migrations before the schema needs versioned changes.
 - Move uploaded PDFs and generated artifacts to object storage when pilot retention is no longer enough.

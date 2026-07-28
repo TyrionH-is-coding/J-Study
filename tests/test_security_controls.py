@@ -180,9 +180,15 @@ class BackendSecurityControlsTest(unittest.TestCase):
                 second_client.get(f"/api/jobs/{job_id}/evidence"),
                 second_client.get(f"/api/jobs/{job_id}/evidence-links"),
                 second_client.get(f"/api/jobs/{job_id}/trace"),
+                second_client.get(f"/api/jobs/{job_id}/package"),
+                second_client.get(f"/api/jobs/{job_id}/export"),
                 second_client.get(f"/api/jobs/{job_id}/pdf"),
                 second_client.get(f"/api/jobs/{job_id}/pdf-info"),
                 second_client.get(f"/api/jobs/{job_id}/pdf-page/1.png"),
+                second_client.get(f"/api/jobs/{job_id}/pdfs"),
+                second_client.get(f"/api/jobs/{job_id}/pdfs/S001/pdf"),
+                second_client.get(f"/api/jobs/{job_id}/pdfs/S001/pdf-info"),
+                second_client.get(f"/api/jobs/{job_id}/pdfs/S001/pdf-page/1.png"),
             ]
             record = job_store.require(job_id)
 
