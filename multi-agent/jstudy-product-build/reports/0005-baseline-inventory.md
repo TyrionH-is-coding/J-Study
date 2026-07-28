@@ -169,4 +169,4 @@ tests/test_web_mvp.py
 
 ## checkpoint SHA
 
-- Checkpoint SHA: 待 Phase 1 提交后回填。
+- Checkpoint SHA: `e7a55bb9db25fd499112536ea8f4da25b190a944`
