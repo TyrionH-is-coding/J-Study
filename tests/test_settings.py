@@ -261,5 +261,59 @@ class SettingsTest(unittest.TestCase):
         self.assertEqual(checks["provider_connectivity"]["status"], "ok")
 
 
+    def test_runtime_settings_resolve_mineru_defaults_and_environment_overrides(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            service = AdminSettingsService(root / "data" / "settings")
+            runtime = service.load_runtime()
+            runtime["parser"]["mineru"]["api_token"] = "persisted-token"
+            runtime["parser"]["mineru"]["language"] = "en"
+            service.save_runtime(runtime)
+
+            with patch.dict(
+                os.environ,
+                {
+                    "MINERU_API_BASE_URL": "https://api.mineru.net",
+                    "MINERU_API_TOKEN": "environment-token",
+                    "MINERU_MODEL_VERSION": "pipeline",
+                    "MINERU_LANGUAGE": "ch",
+                    "MINERU_POLL_INTERVAL_SECONDS": "3",
+                    "MINERU_DEADLINE_SECONDS": "600",
+                    "MINERU_MAX_RESULT_BYTES": "1048576",
+                },
+                clear=True,
+            ):
+                settings = RuntimeSettings.from_env(root)
+
+        self.assertEqual(settings.mineru_api_token, "environment-token")
+        self.assertEqual(settings.mineru_config.api_base_url, "https://api.mineru.net")
+        self.assertEqual(settings.mineru_config.model_version, "pipeline")
+        self.assertEqual(settings.mineru_config.language, "ch")
+        self.assertEqual(settings.mineru_config.poll_interval_seconds, 3)
+        self.assertEqual(settings.mineru_config.deadline_seconds, 600)
+        self.assertEqual(settings.mineru_config.max_result_bytes, 1048576)
+
+    def test_readiness_reports_mineru_configuration_without_blocking_legacy_runner(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            soul = root / "soul.md"
+            mnemonics = root / "mnemonics.md"
+            soul.write_text("soul", encoding="utf-8")
+            mnemonics.write_text("mnemonics", encoding="utf-8")
+            settings = RuntimeSettings(
+                project_root=root,
+                jobs_root=root / "jobs",
+                soul_path=soul,
+                mnemonics_path=mnemonics,
+                api_key_path=None,
+                api_key="model-key",
+                chat_model="chat-model",
+                embed_model="embed-model",
+            )
+
+            readiness = settings.readiness()
+
+        self.assertEqual(readiness["status"], "ready")
+        self.assertFalse(readiness["mineru_configured"])
 if __name__ == "__main__":
     unittest.main()

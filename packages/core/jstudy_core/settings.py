@@ -12,6 +12,7 @@ from packages.core.jstudy_core.admin_settings import (
     active_model,
     active_profile,
 )
+from packages.core.jstudy_core.documents.mineru_client import MinerUClientConfig
 from packages.core.jstudy_core.providers import (
     DEFAULT_CHAT_MODEL,
     DEFAULT_EMBED_MODEL,
@@ -34,6 +35,13 @@ SESSION_SECRET_ENV = "JSTUDY_SESSION_SECRET"
 COOKIE_SECURE_ENV = "JSTUDY_COOKIE_SECURE"
 COOKIE_NAME_ENV = "JSTUDY_SESSION_COOKIE_NAME"
 INVITE_REQUIRED_ENV = "JSTUDY_INVITE_REQUIRED"
+MINERU_API_BASE_URL_ENV = "MINERU_API_BASE_URL"
+MINERU_API_TOKEN_ENV = "MINERU_API_TOKEN"
+MINERU_MODEL_VERSION_ENV = "MINERU_MODEL_VERSION"
+MINERU_LANGUAGE_ENV = "MINERU_LANGUAGE"
+MINERU_POLL_INTERVAL_SECONDS_ENV = "MINERU_POLL_INTERVAL_SECONDS"
+MINERU_DEADLINE_SECONDS_ENV = "MINERU_DEADLINE_SECONDS"
+MINERU_MAX_RESULT_BYTES_ENV = "MINERU_MAX_RESULT_BYTES"
 DEFAULT_MAX_PDF_BYTES = 50 * 1024 * 1024
 ProviderProbe = Callable[[str, str, str], dict[str, Any]]
 
@@ -52,6 +60,16 @@ def env_int(name: str, default: int) -> int:
     parsed = int(value)
     if parsed <= 0:
         raise RuntimeError(f"{name} must be greater than 0")
+    return parsed
+
+
+def env_nonnegative_float(name: str, default: float) -> float:
+    value = os.getenv(name, "").strip()
+    if not value:
+        return default
+    parsed = float(value)
+    if parsed < 0:
+        raise RuntimeError(f"{name} must be greater than or equal to 0")
     return parsed
 
 
@@ -90,7 +108,10 @@ class RuntimeSettings:
     chat_base_url: str = SILICONFLOW_BASE_URL
     embed_base_url: str = SILICONFLOW_BASE_URL
     rag_config: RagConfig = field(default_factory=RagConfig)
+    # parser_config and parser_profiles_config remain for the current pipeline only.
     parser_config: dict[str, Any] = field(default_factory=dict)
+    mineru_config: MinerUClientConfig = field(default_factory=MinerUClientConfig)
+    mineru_api_token: str = ""
     content_pack: dict[str, Any] = field(default_factory=dict)
     content_pack_config: dict[str, Any] = field(default_factory=dict)
     default_scenario_id: str = "medicine-default"
@@ -118,6 +139,42 @@ class RuntimeSettings:
         embedding_profile = active_profile(catalog, "embedding") or {}
         embedding_model = active_model(catalog, "embedding") or {}
         search_profile = active_profile(catalog, "search") or {}
+        mineru_runtime = runtime["parser"]["mineru"]
+        mineru_config = MinerUClientConfig(
+            api_base_url=os.getenv(
+                MINERU_API_BASE_URL_ENV,
+                str(mineru_runtime["api_base_url"]),
+            ).strip()
+            or "https://mineru.net",
+            model_version=os.getenv(
+                MINERU_MODEL_VERSION_ENV,
+                str(mineru_runtime["model_version"]),
+            ).strip()
+            or "vlm",
+            language=os.getenv(
+                MINERU_LANGUAGE_ENV,
+                str(mineru_runtime["language"]),
+            ).strip()
+            or "ch",
+            enable_table=bool(mineru_runtime["enable_table"]),
+            enable_formula=bool(mineru_runtime["enable_formula"]),
+            is_ocr=bool(mineru_runtime["is_ocr"]),
+            poll_interval_seconds=env_nonnegative_float(
+                MINERU_POLL_INTERVAL_SECONDS_ENV,
+                float(mineru_runtime["poll_interval_seconds"]),
+            ),
+            deadline_seconds=float(
+                env_int(MINERU_DEADLINE_SECONDS_ENV, int(mineru_runtime["deadline_seconds"]))
+            ),
+            max_result_bytes=env_int(
+                MINERU_MAX_RESULT_BYTES_ENV,
+                int(mineru_runtime["max_result_bytes"]),
+            ),
+        )
+        mineru_api_token = os.getenv(
+            MINERU_API_TOKEN_ENV,
+            str(mineru_runtime.get("api_token") or ""),
+        ).strip()
         api_key_path = _catalog_path(project_root, llm_profile.get("api_key_path"))
         if api_key_path is None:
             api_key_path = project_root / "siliconflow api key.txt"
@@ -150,6 +207,8 @@ class RuntimeSettings:
             or SILICONFLOW_BASE_URL,
             rag_config=RagConfig(**runtime["rag"]),
             parser_config=runtime["parser"],
+            mineru_config=mineru_config,
+            mineru_api_token=mineru_api_token,
             content_pack=pack,
             content_pack_config=content,
             default_scenario_id=str(content.get("default_scenario_id") or content.get("active_pack_id") or "medicine-default"),
@@ -184,7 +243,11 @@ class RuntimeSettings:
         if probe_provider:
             checks.append(self._provider_connectivity_check(provider_probe or probe_siliconflow_provider))
         status = "ready" if all(check["status"] == "ok" for check in checks) else "degraded"
-        return {"status": status, "checks": checks}
+        return {
+            "status": status,
+            "checks": checks,
+            "mineru_configured": bool(self.mineru_api_token),
+        }
 
     def _jobs_root_check(self) -> dict[str, str]:
         try:

@@ -101,14 +101,25 @@ def _runtime_default() -> dict[str, Any]:
             "mnemonic_limit": 6,
         },
         "parser": {
+            "provider": "mineru",
+            # Deprecated compatibility fields until the pipeline-switch task.
             "backend": "pymupdf",
             "ocr": False,
             "tables": False,
             "formulas": False,
             "mineru": {
-                "mode": "local",
                 "api_base_url": "https://mineru.net",
                 "api_token": "",
+                "model_version": "vlm",
+                "language": "ch",
+                "enable_table": True,
+                "enable_formula": True,
+                "is_ocr": False,
+                "poll_interval_seconds": 2,
+                "deadline_seconds": 900,
+                "max_result_bytes": 268435456,
+                # Deprecated compatibility fields; no live client uses them here.
+                "mode": "local",
                 "local_cli_path": "",
             },
         },
@@ -446,14 +457,24 @@ def _normalize_runtime(settings: dict[str, Any]) -> dict[str, Any]:
             "mnemonic_limit": _int(rag.get("mnemonic_limit"), 6, minimum=1),
         },
         "parser": {
+            "provider": "mineru",
+            # Deprecated compatibility fields until the pipeline-switch task.
             "backend": _string(parser.get("backend")) or "pymupdf",
             "ocr": _bool(parser.get("ocr"), False),
             "tables": _bool(parser.get("tables"), False),
             "formulas": _bool(parser.get("formulas"), False),
             "mineru": {
-                "mode": _string(mineru.get("mode")) or "local",
                 "api_base_url": _string(mineru.get("api_base_url")).rstrip("/") or "https://mineru.net",
                 "api_token": _string(mineru.get("api_token")),
+                "model_version": _choice(mineru.get("model_version"), {"vlm", "pipeline"}, "vlm"),
+                "language": _string(mineru.get("language")) or "ch",
+                "enable_table": _bool(mineru.get("enable_table"), True),
+                "enable_formula": _bool(mineru.get("enable_formula"), True),
+                "is_ocr": _bool(mineru.get("is_ocr"), False),
+                "poll_interval_seconds": _int(mineru.get("poll_interval_seconds"), 2, minimum=0),
+                "deadline_seconds": _int(mineru.get("deadline_seconds"), 900, minimum=1),
+                "max_result_bytes": _int(mineru.get("max_result_bytes"), 268435456, minimum=1),
+                "mode": _string(mineru.get("mode")) or "local",
                 "local_cli_path": _string(mineru.get("local_cli_path")),
             },
         },
@@ -724,6 +745,9 @@ class AdminSettingsService:
     def load_public(self) -> dict[str, Any]:
         payload = self.load_all()
         payload["model_catalog"] = redact_model_catalog(payload["model_catalog"])
+        mineru = payload["runtime"]["parser"]["mineru"]
+        mineru["api_token_set"] = bool(str(mineru.get("api_token") or "").strip())
+        mineru["api_token"] = ""
         return payload
 
     def save_public(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -732,6 +756,15 @@ class AdminSettingsService:
             incoming.get("model_catalog", {}),
             self.load_model_catalog(),
         )
+        existing_runtime = self.load_runtime()
+        incoming_runtime = incoming.get("runtime", {})
+        incoming_parser = incoming_runtime.get("parser", {}) if isinstance(incoming_runtime, dict) else {}
+        incoming_mineru = incoming_parser.get("mineru", {}) if isinstance(incoming_parser, dict) else {}
+        existing_token = existing_runtime["parser"]["mineru"].get("api_token", "")
+        if isinstance(incoming_mineru, dict):
+            incoming_mineru.pop("api_token_set", None)
+            if not str(incoming_mineru.get("api_token") or "").strip():
+                incoming_mineru["api_token"] = existing_token
         return self.save_all(incoming)
 
     def sync_mnemonics_markdown(self, project_root: Path) -> Path:

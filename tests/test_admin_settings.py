@@ -175,5 +175,49 @@ class AdminSettingsTest(unittest.TestCase):
             self.assertIn("Rendered from JSON", target.read_text(encoding="utf-8"))
 
 
+    def test_runtime_defaults_include_mineru_precision_settings(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = AdminSettingsService(Path(tmp) / "settings").load_runtime()
+
+        self.assertEqual(runtime["parser"]["provider"], "mineru")
+        mineru = runtime["parser"]["mineru"]
+        self.assertEqual(mineru["api_base_url"], "https://mineru.net")
+        self.assertEqual(mineru["model_version"], "vlm")
+        self.assertEqual(mineru["language"], "ch")
+        self.assertTrue(mineru["enable_table"])
+        self.assertTrue(mineru["enable_formula"])
+        self.assertFalse(mineru["is_ocr"])
+        self.assertEqual(mineru["poll_interval_seconds"], 2)
+        self.assertEqual(mineru["deadline_seconds"], 900)
+        self.assertEqual(mineru["max_result_bytes"], 268435456)
+
+    def test_public_payload_never_returns_mineru_token(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            service = AdminSettingsService(Path(tmp) / "settings")
+            payload = service.load_all()
+            payload["runtime"]["parser"]["mineru"]["api_token"] = "mineru-secret"
+            service.save_all(payload)
+
+            public = service.load_public()
+
+        mineru = public["runtime"]["parser"]["mineru"]
+        self.assertEqual(mineru["api_token"], "")
+        self.assertTrue(mineru["api_token_set"])
+
+    def test_save_public_preserves_existing_mineru_token(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            service = AdminSettingsService(Path(tmp) / "settings")
+            payload = service.load_all()
+            payload["runtime"]["parser"]["mineru"]["api_token"] = "mineru-secret"
+            service.save_all(payload)
+
+            public = service.load_public()
+            public["runtime"]["parser"]["mineru"]["language"] = "en"
+            service.save_public(public)
+
+            saved = service.load_all()
+
+        self.assertEqual(saved["runtime"]["parser"]["mineru"]["api_token"], "mineru-secret")
+        self.assertEqual(saved["runtime"]["parser"]["mineru"]["language"], "en")
 if __name__ == "__main__":
     unittest.main()
