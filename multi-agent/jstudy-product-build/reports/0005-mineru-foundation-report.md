@@ -10,6 +10,7 @@
 - Pre-refactor SHA: `54629cefec1f54a7fc0f0f6d5bdf056be533d78a`
 - Checkpoint SHA: `e7a55bb9db25fd499112536ea8f4da25b190a944`
 - Implementation SHA before this report: `0b82ae3b01f97b27a56a56a6f5293eb8d9719840`
+- Corrective revision base SHA: `10835bfb64d1e8166acf4a368a4b18764841d91d`
 - Checkpoint exact file list: `multi-agent/jstudy-product-build/reports/0005-baseline-inventory.md`
 
 ## 2. Summary
@@ -17,6 +18,8 @@
 已严格按 Phase 0→7 完成：先盘点并验证 0002–0004 基线，创建 96 文件 checkpoint；随后建立 `ParsedDocument` contract v1、PyMuPDF 验证/元数据/渲染 utility boundary、MinerU Precision Extract v4 传输层、安全 ZIP 归一化、运行时配置和显式注入的旧页列表兼容适配器。
 
 本任务没有切换 `run_mvp()` 或 `run_course_outline()`，没有改变公共 FastAPI route、前端请求/响应 contract、parser 默认行为或 Job 数据库。自动测试没有使用真实 token，也没有调用真实 MinerU。
+
+针对 Supervisor 的 `REVISE`，本次 corrective patch 修复 legacy `PyMuPDFParser` 缺少共享 `validate_pdf` 导入导致的 `NameError`，并将 MinerU ZIP 校验扩展到 Windows drive-relative、ADS、UNC/device、大小写不敏感重复目标、resolved-target containment 及 symlink/reparse traversal。
 
 MinerU 官方文档复核日期为 `2026-07-28`：
 
@@ -27,6 +30,15 @@ J-Study 归一化只采用稳定的 legacy `*_content_list.json`；明确不采�
 
 ## 3. Changed Files
 
+本次 corrective patch 的精确文件范围：
+
+- `packages/parsers/pymupdf_parser.py`: 导入并复用共享 PDF 校验。
+- `tests/test_pdf_utility.py`: 用真实最小 PDF 直接覆盖 legacy parser 回归。
+- `packages/core/jstudy_core/documents/mineru_normalizer.py`: 增加 Windows 路径、重复目标、resolved containment 和 reparse-point 防护。
+- `tests/test_mineru_normalizer.py`: 覆盖 drive-relative、ADS、UNC/device、大小写重复、junction traversal 和正常解压。
+- `multi-agent/jstudy-product-build/reports/0005-mineru-foundation-report.md`: 更新纠正范围、测试计数与安全限制。
+
+Task 0005 累计变更文件：
 - `multi-agent/jstudy-product-build/reports/0005-baseline-inventory.md`: 记录 checkpoint SHA。
 - `packages/core/jstudy_core/documents/__init__.py`: 导出统一文档 contract。
 - `packages/core/jstudy_core/documents/models.py`: contract v1 与页码、bbox、source identity、block id 等不变量。
@@ -46,14 +58,18 @@ J-Study 归一化只采用稳定的 legacy `*_content_list.json`；明确不采�
 
 ## 4. Verification
 
+- Command: `python -m unittest tests.test_pdf_utility.PdfUtilityTest.test_legacy_parser_validates_pdf_and_returns_page_list -v`
+- Result: `1/1` 通过；真实最小有效 PDF 返回预期 one-based page list，不再出现 `NameError`。
+- Command: `python -m unittest tests.test_pdf_utility tests.test_mineru_normalizer -v`
+- Result: `22/22` 通过；Windows directory junction 回归实际执行，无 skip。
 - Command: `python -m unittest tests.test_document_models tests.test_pdf_utility tests.test_mineru_client tests.test_mineru_normalizer -v`
-- Result: `43/43` 通过。
+- Result: `48/48` 通过。
 - Command: `python -m unittest tests.test_admin_settings tests.test_settings tests.test_parser_profile_router tests.test_mvp_runner -v`
 - Result: `59/59` 通过。
 - Command: 清空 `MINERU_API_TOKEN`，将 `HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY` 指向 `127.0.0.1:1` 后运行 `python -m unittest tests.test_mineru_client -v`
 - Result: `17/17` 通过；所有 HTTP 请求均由注入的 `httpx.MockTransport` 处理，证明自动测试不依赖真实 MinerU 网络或 token。
 - Command: `python -m unittest discover -s tests -v`
-- Result: `168/168` 通过。
+- Result: `173/173` 通过。
 - Command: `python -m compileall -q apps packages`
 - Result: 通过。
 - Command: `npm run lint && npm run typecheck && npm run test && npm run build && npm run test:e2e`（PowerShell 逐项 fail-fast）
@@ -69,7 +85,7 @@ J-Study 归一化只采用稳定的 legacy `*_content_list.json`；明确不采�
 - MinerU ZIP: 单成员压缩比最多 `100x`。
 - Result download: 最多 `268435456` bytes（256 MiB），同时检查 `Content-Length` 与流式累计大小。
 - Result URL: 仅 HTTPS，默认 allowlist 为 `cdn-mineru.openxlab.org.cn` 和 `mineru.oss-cn-shanghai.aliyuncs.com`。
-- ZIP path: 拒绝 absolute path、drive path、`..` traversal、duplicate path 和 symlink；仅解压到 job-owned target。
+- ZIP path: 拒绝 absolute、drive-absolute/drive-relative、ADS、UNC/device、`.`/`..`、Windows 保留设备名、尾随空格/点、大小写不敏感重复目标及 ZIP symlink。每个目录与文件写入前后均校验 resolved target 位于 job-owned root，并拒绝既存 symlink/reparse point（含 directory junction）穿越。
 - Content contract: 必须恰有一个可用 `*_content_list.json`；拒绝 malformed JSON、缺失资产、越界页和空有效文档。
 
 ## 5. Risks and Limitations
@@ -83,6 +99,6 @@ J-Study 归一化只采用稳定的 legacy `*_content_list.json`；明确不采�
 
 ## 6. Requested Supervisor Action
 
-请 Supervisor 审核并给出一个 verdict：`PASS` / `PASS_WITH_LIMITATIONS` / `REVISE` / `REJECT`。
+请 Supervisor 对 corrective patch 重新审核并给出 fresh verdict：`PASS` / `PASS_WITH_LIMITATIONS` / `REVISE` / `REJECT`。
 
 Code Agent 请求：`PASS`。

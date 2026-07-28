@@ -15,6 +15,7 @@ from packages.core.jstudy_core.documents.pdf_utility import (
     render_pdf_page_png,
     validate_pdf,
 )
+from packages.parsers.pymupdf_parser import extract_pdf_pages
 
 
 class PdfUtilityTest(unittest.TestCase):
@@ -79,6 +80,19 @@ class PdfUtilityTest(unittest.TestCase):
             png = render_pdf_page_png(path, 1)
 
             self.assertTrue(png.startswith(b"\x89PNG\r\n\x1a\n"))
+
+    def test_legacy_parser_validates_pdf_and_returns_page_list(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "legacy.pdf"
+            document = fitz.open()
+            page = document.new_page()
+            page.insert_text((40, 60), "legacy page")
+            document.save(path)
+            document.close()
+
+            pages = extract_pdf_pages(path)
+
+            self.assertEqual(pages, [{"page": 1, "text": "legacy page"}])
 
 
 if __name__ == "__main__":

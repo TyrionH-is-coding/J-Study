@@ -2,12 +2,11 @@ from __future__ import annotations
 
 import io
 import json
-import re
 import stat
 import zipfile
 from collections import Counter
 from dataclasses import dataclass
-from pathlib import Path, PurePosixPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
 from .models import (
@@ -19,6 +18,14 @@ from .models import (
 
 
 AUXILIARY_TYPES = {"header", "footer", "page_number", "aside_text", "page_footnote"}
+WINDOWS_RESERVED_NAMES = {
+    "CON",
+    "PRN",
+    "AUX",
+    "NUL",
+    *(f"COM{index}" for index in range(1, 10)),
+    *(f"LPT{index}" for index in range(1, 10)),
+}
 
 
 class MinerUNormalizationError(DocumentContractError):
@@ -53,7 +60,7 @@ def normalize_mineru_zip(
 ) -> ParsedDocument:
     if source_page_count < 1:
         raise MinerUNormalizationError("source PDF page count must be positive")
-    if artifact_dir.exists() and artifact_dir.is_symlink():
+    if artifact_dir.exists() and _is_link_or_reparse(artifact_dir):
         raise MinerUNormalizationError("artifact directory cannot be a symlink")
 
     try:
@@ -102,22 +109,15 @@ def _validate_members(
     if len(members) > limits.max_members:
         raise MinerUNormalizationError("MinerU ZIP contains too many members")
 
-    names: set[str] = set()
+    target_keys: set[str] = set()
     total_uncompressed = 0
     for info in members:
-        name = _normalized_name(info.filename)
-        path = PurePosixPath(name)
-        if (
-            not name
-            or name.startswith("/")
-            or re.match(r"^[A-Za-z]:/", name)
-            or path.is_absolute()
-            or ".." in path.parts
-        ):
-            raise MinerUNormalizationError("MinerU ZIP contains an unsafe member path")
-        if name in names:
+        name = _validate_member_path(info.filename)
+        target_key = name.rstrip("/").casefold()
+        if target_key in target_keys:
             raise MinerUNormalizationError("MinerU ZIP contains duplicate member paths")
-        names.add(name)
+        target_keys.add(target_key)
+
         unix_mode = info.external_attr >> 16
         if stat.S_ISLNK(unix_mode):
             raise MinerUNormalizationError("MinerU ZIP symlinks are not allowed")
@@ -129,6 +129,65 @@ def _validate_members(
             if ratio > limits.max_compression_ratio:
                 raise MinerUNormalizationError("MinerU ZIP exceeds the compression ratio limit")
     return members
+
+
+def _validate_member_path(value: str) -> str:
+    name = _normalized_name(value)
+    candidate = name.rstrip("/")
+    if not candidate or name.startswith("/"):
+        raise MinerUNormalizationError("MinerU ZIP contains an unsafe member path")
+
+    parts = candidate.split("/")
+    windows_path = PureWindowsPath(candidate)
+    if windows_path.drive or windows_path.root or any(part in {"", ".", ".."} for part in parts):
+        raise MinerUNormalizationError("MinerU ZIP contains an unsafe member path")
+
+    for part in parts:
+        device_name = part.split(".", 1)[0].upper()
+        if (
+            ":" in part
+            or part.endswith((" ", "."))
+            or device_name in WINDOWS_RESERVED_NAMES
+        ):
+            raise MinerUNormalizationError("MinerU ZIP contains an unsafe Windows member path")
+    return name
+
+
+def _is_link_or_reparse(path: Path) -> bool:
+    try:
+        details = path.lstat()
+    except FileNotFoundError:
+        return False
+    attributes = getattr(details, "st_file_attributes", 0)
+    reparse_flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+    return stat.S_ISLNK(details.st_mode) or bool(attributes & reparse_flag)
+
+
+def _assert_safe_target(root: Path, target: Path) -> None:
+    root_resolved = root.resolve(strict=True)
+    try:
+        target.relative_to(root)
+        target.resolve(strict=False).relative_to(root_resolved)
+    except ValueError as exc:
+        raise MinerUNormalizationError("MinerU ZIP target escapes the extraction root") from exc
+
+    current = root
+    for part in target.relative_to(root).parts:
+        current = current / part
+        if _is_link_or_reparse(current):
+            raise MinerUNormalizationError("MinerU ZIP target crosses a symlink or reparse point")
+
+
+def _safe_mkdir(root: Path, target: Path) -> None:
+    _assert_safe_target(root, target)
+    target.mkdir(parents=True, exist_ok=True)
+    _assert_safe_target(root, target)
+
+
+def _safe_write_bytes(root: Path, target: Path, value: bytes) -> None:
+    _safe_mkdir(root, target.parent)
+    _assert_safe_target(root, target)
+    target.write_bytes(value)
 
 
 def _normalize_content(
@@ -302,10 +361,10 @@ def _asset_path(value: dict[str, Any], member_names: set[str]) -> str | None:
     raw = str(value.get("img_path") or "").strip()
     if not raw:
         return None
-    name = _normalized_name(raw)
-    path = PurePosixPath(name)
-    if name.startswith("/") or re.match(r"^[A-Za-z]:/", name) or ".." in path.parts:
-        raise MinerUNormalizationError("MinerU asset path is unsafe")
+    try:
+        name = _validate_member_path(raw)
+    except MinerUNormalizationError as exc:
+        raise MinerUNormalizationError("MinerU asset path is unsafe") from exc
     if name not in member_names:
         raise MinerUNormalizationError("MinerU content references a missing asset")
     return f"mineru/{name}"
@@ -329,22 +388,39 @@ def _write_private_artifacts(
     artifact_dir: Path,
 ) -> None:
     artifact_dir.mkdir(parents=True, exist_ok=True)
+    if _is_link_or_reparse(artifact_dir):
+        raise MinerUNormalizationError("artifact directory cannot be a symlink or reparse point")
+
     extraction_root = artifact_dir / "mineru"
+    if _is_link_or_reparse(extraction_root):
+        raise MinerUNormalizationError("extraction root cannot be a symlink or reparse point")
     extraction_root.mkdir(parents=True, exist_ok=True)
+
     for info in members:
-        parts = PurePosixPath(_normalized_name(info.filename)).parts
+        parts = PurePosixPath(_validate_member_path(info.filename)).parts
         target = extraction_root.joinpath(*parts)
         if info.is_dir():
-            target.mkdir(parents=True, exist_ok=True)
+            _safe_mkdir(extraction_root, target)
             continue
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(archive.read(info))
-    (artifact_dir / "mineru-original.zip").write_bytes(zip_bytes)
+        _safe_write_bytes(extraction_root, target, archive.read(info))
+
+    _safe_write_bytes(
+        artifact_dir,
+        artifact_dir / "mineru-original.zip",
+        zip_bytes,
+    )
     full_markdown = [
-        info for info in members if not info.is_dir() and PurePosixPath(_normalized_name(info.filename)).name == "full.md"
+        info
+        for info in members
+        if not info.is_dir()
+        and PurePosixPath(_normalized_name(info.filename)).name == "full.md"
     ]
     if len(full_markdown) == 1:
-        (artifact_dir / "full.md").write_bytes(archive.read(full_markdown[0]))
+        _safe_write_bytes(
+            artifact_dir,
+            artifact_dir / "full.md",
+            archive.read(full_markdown[0]),
+        )
 
 
 def _normalized_name(value: str) -> str:

@@ -6,6 +6,8 @@ from typing import Any
 
 import fitz
 
+from packages.core.jstudy_core.documents.pdf_utility import validate_pdf
+
 
 def _normalize_text(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()

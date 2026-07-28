@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import stat
+import subprocess
 import tempfile
 import unittest
 import zipfile
@@ -152,6 +154,81 @@ class MinerUNormalizerTest(unittest.TestCase):
                 zip_bytes = self.make_zip([], members={member_name: b"bad"})
                 with self.assertRaises(MinerUNormalizationError):
                     self.normalize(Path(tmp), zip_bytes)
+
+    def test_rejects_windows_drive_ads_unc_and_device_paths(self):
+        content = [{"type": "text", "text": "safe", "page_idx": 0}]
+        unsafe_names = (
+            "C:escape.txt",
+            "safe.txt:stream",
+            "\\\\server\\share\\escape.txt",
+            "\\\\?\\C:\\escape.txt",
+            "\\\\.\\C:\\escape.txt",
+        )
+        for member_name in unsafe_names:
+            with self.subTest(member_name=member_name), tempfile.TemporaryDirectory() as tmp:
+                zip_bytes = self.make_zip(content, members={member_name: b"bad"})
+                with self.assertRaises(MinerUNormalizationError):
+                    self.normalize(Path(tmp), zip_bytes, page_count=1)
+
+    def test_rejects_case_insensitive_duplicate_targets(self):
+        content = [{"type": "text", "text": "safe", "page_idx": 0}]
+        zip_bytes = self.make_zip(
+            content,
+            members={"Images/Figure.png": b"first", "images/figure.png": b"second"},
+        )
+        with tempfile.TemporaryDirectory() as tmp, self.assertRaises(MinerUNormalizationError):
+            self.normalize(Path(tmp), zip_bytes, page_count=1)
+
+    def test_rejects_preexisting_symlink_traversal(self):
+        content = [{"type": "text", "text": "safe", "page_idx": 0}]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            outside = root / "outside"
+            outside.mkdir()
+            extraction_root = root / "artifacts" / "mineru"
+            extraction_root.mkdir(parents=True)
+            try:
+                os.symlink(outside, extraction_root / "images", target_is_directory=True)
+            except OSError as exc:
+                if os.name != "nt":
+                    self.skipTest(f"directory symlink unavailable: {exc}")
+                junction = subprocess.run(
+                    [
+                        "cmd.exe",
+                        "/c",
+                        "mklink",
+                        "/J",
+                        str(extraction_root / "images"),
+                        str(outside),
+                    ],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertEqual(
+                    junction.returncode,
+                    0,
+                    junction.stdout + junction.stderr,
+                )
+
+            zip_bytes = self.make_zip(content, members={"images/escape.txt": b"bad"})
+            with self.assertRaises(MinerUNormalizationError):
+                self.normalize(root, zip_bytes, page_count=1)
+            self.assertFalse((outside / "escape.txt").exists())
+
+    def test_extracts_normal_archive_inside_job_root(self):
+        content = [{"type": "text", "text": "safe", "page_idx": 0}]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            zip_bytes = self.make_zip(content, members={"images/figure.png": b"png"})
+
+            document = self.normalize(root, zip_bytes, page_count=1)
+
+            self.assertEqual(document.pages[0].text, "safe")
+            self.assertEqual(
+                (root / "artifacts" / "mineru" / "images" / "figure.png").read_bytes(),
+                b"png",
+            )
 
     def test_rejects_zip_symlink(self):
         buffer = io.BytesIO()
