@@ -12,6 +12,7 @@ def _normalize_text(text: str) -> str:
 
 
 def extract_pdf_pages(pdf_path: Path) -> list[dict[str, Any]]:
+    validate_pdf(pdf_path)
     pages: list[dict[str, Any]] = []
     with fitz.open(str(pdf_path)) as doc:
         for page_index, page in enumerate(doc, start=1):
