@@ -1,9 +1,9 @@
 import json
+import inspect
 import os
 import sys
 import tempfile
 import unittest
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -15,7 +15,9 @@ sys.path.insert(0, str(ROOT))
 
 from apps.api.jstudy_api.app import ADMIN_SETTINGS_HTML, INDEX_HTML, create_app  # noqa: E402
 from packages.core.jstudy_core.admin_settings import AdminSettingsService  # noqa: E402
-from packages.core.jstudy_core.jobs import JobStore  # noqa: E402
+from packages.core.jstudy_core.auth_db import create_application_tables, create_auth_engine  # noqa: E402
+from packages.core.jstudy_core.job_system import JobRepository, JobService, JobState  # noqa: E402
+from packages.core.jstudy_core.job_system.worker import JobWorker  # noqa: E402
 from packages.core.jstudy_core.settings import RuntimeSettings  # noqa: E402
 
 
@@ -83,6 +85,134 @@ class WebMvpTest(unittest.TestCase):
         response = client.post("/api/auth/login", json={"email": email, "password": password})
         self.assertEqual(response.status_code, 200)
         return response.json()
+
+    def durable_dependencies(
+        self,
+        settings: RuntimeSettings,
+    ) -> tuple[JobRepository, JobService]:
+        database_url = settings.database_url or (
+            f"sqlite:///{(settings.jobs_root / 'jstudy.db').as_posix()}"
+        )
+        engine = create_auth_engine(database_url)
+        create_application_tables(engine)
+        repository = JobRepository(engine)
+        return repository, JobService(repository, settings)
+
+    def run_next_job(
+        self,
+        client: TestClient,
+        settings: RuntimeSettings,
+        runner,
+    ) -> None:
+        def staged_runner(**kwargs):
+            callback = kwargs["progress_callback"]
+            callback(JobState.RETRIEVING)
+            callback(JobState.GENERATING)
+            callback(JobState.PACKAGING)
+            signature = inspect.signature(runner)
+            if any(
+                parameter.kind is inspect.Parameter.VAR_KEYWORD
+                for parameter in signature.parameters.values()
+            ):
+                forwarded = kwargs
+            else:
+                forwarded = {
+                    name: value
+                    for name, value in kwargs.items()
+                    if name in signature.parameters
+                    and signature.parameters[name].kind
+                    in {
+                        inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                        inspect.Parameter.KEYWORD_ONLY,
+                    }
+                }
+            return runner(**forwarded)
+
+        worker = JobWorker(
+            client.app.state.job_repository,
+            settings,
+            single_runner=staged_runner,
+            outline_runner=staged_runner,
+        )
+        self.assertTrue(worker.run_once())
+
+    def test_generate_is_durable_queued_and_never_calls_runner(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            settings = self.ready_settings(root)
+            repository, service = self.durable_dependencies(settings)
+            with patch(
+                "packages.core.jstudy_core.pipeline.run_mvp",
+                side_effect=AssertionError("API must not call the runner"),
+            ) as runner:
+                first_client = TestClient(
+                    create_app(
+                        settings=settings,
+                        job_repository=repository,
+                        job_service=service,
+                    )
+                )
+                self.register_user(first_client)
+                generated = first_client.post(
+                    "/api/generate",
+                    files={"pdf": ("lecture.pdf", self.make_pdf_bytes(), "application/pdf")},
+                    headers={"Idempotency-Key": "durable-one"},
+                )
+                runner.assert_not_called()
+            job_id = generated.json()["job_id"]
+            first_status = first_client.get(f"/api/jobs/{job_id}").json()
+
+            restarted_repository, restarted_service = self.durable_dependencies(settings)
+            second_client = TestClient(
+                create_app(
+                    settings=settings,
+                    job_repository=restarted_repository,
+                    job_service=restarted_service,
+                )
+            )
+            self.login_user(second_client)
+            restarted_status = second_client.get(f"/api/jobs/{job_id}").json()
+
+        self.assertEqual(generated.status_code, 200)
+        self.assertEqual(first_status["status"], "queued")
+        self.assertEqual(first_status["state"], "queued")
+        self.assertEqual(first_status["progress"], 0)
+        self.assertEqual(restarted_status["job_id"], job_id)
+        self.assertEqual(restarted_status["status"], "queued")
+
+    def test_generate_idempotency_is_owner_scoped_and_conflict_safe(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            settings = self.ready_settings(root)
+            client = TestClient(create_app(settings=settings))
+            self.register_user(client)
+            pdf_bytes = self.make_pdf_bytes()
+
+            first = client.post(
+                "/api/generate",
+                files={"pdf": ("lecture.pdf", pdf_bytes, "application/pdf")},
+                headers={"Idempotency-Key": "same-request"},
+            )
+            replay = client.post(
+                "/api/generate",
+                files={"pdf": ("lecture.pdf", pdf_bytes, "application/pdf")},
+                headers={"Idempotency-Key": "same-request"},
+            )
+            conflict = client.post(
+                "/api/generate",
+                data={"mode": "different-metadata"},
+                files={"pdf": ("lecture.pdf", pdf_bytes, "application/pdf")},
+                headers={"Idempotency-Key": "same-request"},
+            )
+
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(replay.status_code, 200)
+        self.assertEqual(first.json()["job_id"], replay.json()["job_id"])
+        self.assertEqual(conflict.status_code, 409)
+        self.assertEqual(
+            conflict.json()["detail"]["code"],
+            "idempotency_conflict",
+        )
 
     def test_index_html_contains_pdf_citation_panel(self):
         self.assertIn('id="evidenceList"', INDEX_HTML)
@@ -360,17 +490,27 @@ class WebMvpTest(unittest.TestCase):
         self.assertEqual(checks["soul_path"]["status"], "error")
         self.assertEqual(checks["mnemonics_path"]["status"], "error")
         self.assertEqual(checks["api_key"]["status"], "error")
+        serialized = json.dumps(body)
+        for private_value in (
+            root,
+            settings.jobs_root,
+            settings.soul_path,
+            settings.mnemonics_path,
+            settings.api_key_path,
+        ):
+            self.assertNotIn(str(private_value), serialized)
+        self.assertNotIn(root.name, serialized)
+        self.assertNotIn("missing-soul.md", serialized)
+        self.assertNotIn("missing-mnemonics.md", serialized)
+        self.assertNotIn("missing-api-key.txt", serialized)
 
     def test_readiness_endpoint_runs_provider_probe_only_when_requested(self):
         calls = []
+        private_error = r"D:\private\provider-token.txt connection refused"
 
         def probe(api_key: str, chat_model: str, embed_model: str):
             calls.append((api_key, chat_model, embed_model))
-            return {
-                "name": "provider_connectivity",
-                "status": "ok",
-                "detail": "chat and embedding reachable",
-            }
+            raise RuntimeError(private_error)
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -383,12 +523,69 @@ class WebMvpTest(unittest.TestCase):
         self.assertEqual(calls, [("key", "chat-model", "embed-model")])
         self.assertNotIn("provider_connectivity", {check["name"] for check in plain["checks"]})
         checks = {check["name"]: check for check in probed["checks"]}
-        self.assertEqual(checks["provider_connectivity"]["status"], "ok")
+        self.assertEqual(checks["provider_connectivity"]["status"], "error")
+        self.assertNotIn(private_error, json.dumps(probed))
+        self.assertNotIn("provider-token.txt", json.dumps(probed))
+
+    def test_database_unavailable_degrades_readiness_and_blocks_admission(self):
+        private_error = (
+            r"postgresql://private-user:secret@db.internal/jstudy "
+            r"D:\private\jobs"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            settings = self.ready_settings(root)
+            client = TestClient(create_app(settings=settings))
+            self.register_user(client)
+            repository = client.app.state.job_repository
+            with patch.object(repository, "check_connection", return_value=False):
+                health = client.get("/api/health")
+                readiness = client.get("/api/readiness")
+                generated = client.post(
+                    "/api/generate",
+                    files={
+                        "pdf": (
+                            "lecture.pdf",
+                            self.make_pdf_bytes(),
+                            "application/pdf",
+                        )
+                    },
+                )
+
+        self.assertEqual(health.status_code, 200)
+        self.assertEqual(health.json()["status"], "ok")
+        self.assertEqual(readiness.status_code, 200)
+        self.assertEqual(readiness.json()["status"], "degraded")
+        checks = {item["name"]: item for item in readiness.json()["checks"]}
+        self.assertEqual(
+            checks["database"],
+            {
+                "name": "database",
+                "status": "error",
+                "detail": "database unavailable",
+            },
+        )
+        self.assertEqual(generated.status_code, 503)
+        self.assertEqual(
+            {
+                item["name"]: item
+                for item in generated.json()["detail"]["checks"]
+            }["database"]["detail"],
+            "database unavailable",
+        )
+        serialized = json.dumps(
+            [readiness.json(), generated.json()],
+            ensure_ascii=False,
+        )
+        self.assertNotIn(private_error, serialized)
+        self.assertNotIn("private-user", serialized)
+        self.assertNotIn("secret", serialized)
+        self.assertNotIn("db.internal", serialized)
+        self.assertNotIn(r"D:\private\jobs", serialized)
 
     def test_generate_rejects_unready_runtime_config(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            job_store = JobStore()
             settings = RuntimeSettings(
                 project_root=root,
                 jobs_root=root / "jobs",
@@ -398,7 +595,7 @@ class WebMvpTest(unittest.TestCase):
                 chat_model="chat-model",
                 embed_model="embed-model",
             )
-            client = TestClient(create_app(runner=lambda **kwargs: {}, job_store=job_store, settings=settings))
+            client = TestClient(create_app(settings=settings))
             self.register_user(client)
 
             response = client.post(
@@ -412,12 +609,25 @@ class WebMvpTest(unittest.TestCase):
         self.assertEqual(body["detail"]["status"], "degraded")
         checks = {check["name"]: check for check in body["detail"]["checks"]}
         self.assertEqual(checks["soul_path"]["status"], "error")
+        serialized = json.dumps(body)
+        for private_value in (
+            root,
+            settings.jobs_root,
+            settings.soul_path,
+            settings.mnemonics_path,
+            settings.api_key_path,
+        ):
+            self.assertNotIn(str(private_value), serialized)
+        self.assertNotIn(root.name, serialized)
+        self.assertNotIn("missing-soul.md", serialized)
+        self.assertNotIn("missing-mnemonics.md", serialized)
+        self.assertNotIn("missing-api-key.txt", serialized)
 
     def test_generate_requires_authenticated_user(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             settings = self.ready_settings(root)
-            client = TestClient(create_app(runner=lambda **kwargs: {}, settings=settings))
+            client = TestClient(create_app(settings=settings))
 
             response = client.post(
                 "/api/generate",
@@ -440,7 +650,10 @@ class WebMvpTest(unittest.TestCase):
             )
 
         self.assertEqual(response.status_code, 400)
-        self.assertIn("Unsupported service_mode", response.json()["detail"])
+        self.assertEqual(
+            response.json()["detail"]["code"],
+            "unsupported_service_mode",
+        )
 
     def test_course_outline_requires_outline_and_pdfs(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -462,8 +675,8 @@ class WebMvpTest(unittest.TestCase):
 
         self.assertEqual(missing_outline.status_code, 400)
         self.assertEqual(missing_pdfs.status_code, 400)
-        self.assertIn("outline", missing_outline.json()["detail"].lower())
-        self.assertIn("pdfs", missing_pdfs.json()["detail"].lower())
+        self.assertEqual(missing_outline.json()["detail"]["code"], "invalid_outline")
+        self.assertEqual(missing_pdfs.json()["detail"]["code"], "invalid_pdf")
 
     def test_course_outline_accepts_repeated_pdfs_and_exposes_source_preview_contracts(self):
         captured = {}
@@ -532,9 +745,8 @@ class WebMvpTest(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            job_store = JobStore()
             settings = self.ready_settings(root)
-            client = TestClient(create_app(runner=fake_runner, job_store=job_store, settings=settings))
+            client = TestClient(create_app(settings=settings))
             self.register_user(client)
             response = client.post(
                 "/api/generate",
@@ -546,16 +758,17 @@ class WebMvpTest(unittest.TestCase):
                 data={"service_mode": "course_outline", "mode": "metadata-only"},
             )
             job_id = response.json()["job_id"]
+            self.run_next_job(client, settings, fake_runner)
             status = client.get(f"/api/jobs/{job_id}").json()
             sources = client.get(f"/api/jobs/{job_id}/pdfs").json()
             second_info_response = client.get(f"/api/jobs/{job_id}/pdfs/S002/pdf-info")
             second_page = client.get(f"/api/jobs/{job_id}/pdfs/S002/pdf-page/1.png")
-            record = job_store.require(job_id)
+            record = client.app.state.job_repository.get(job_id)
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(record.metadata["service_mode"], "course_outline")
+        self.assertEqual(record.service_mode, "course_outline")
         self.assertEqual(captured["service_mode"], "course_outline")
-        self.assertEqual([path.name for path in captured["pdf_paths"]], ["lecture-01.pdf", "lecture-02.pdf"])
+        self.assertEqual([path.name for path in captured["pdf_paths"]], ["S001.pdf", "S002.pdf"])
         self.assertEqual(status["service_mode"], "course_outline")
         self.assertEqual([item["source_id"] for item in status["source_files"]], ["S001", "S002"])
         self.assertIn("pdfs_url", status)
@@ -645,9 +858,8 @@ class WebMvpTest(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            job_store = JobStore()
             settings = self.ready_settings(root)
-            client = TestClient(create_app(runner=fake_runner, job_store=job_store, settings=settings))
+            client = TestClient(create_app(settings=settings))
             self.register_user(client)
             response = client.post(
                 "/api/generate",
@@ -660,6 +872,7 @@ class WebMvpTest(unittest.TestCase):
 
             self.assertEqual(response.status_code, 200)
             job_id = response.json()["job_id"]
+            self.run_next_job(client, settings, fake_runner)
             status_response = client.get(f"/api/jobs/{job_id}")
             status = status_response.json()
             output_response = client.get(f"/api/jobs/{job_id}/output")
@@ -675,7 +888,8 @@ class WebMvpTest(unittest.TestCase):
             pdf_info_response = client.get(f"/api/jobs/{job_id}/pdf-info")
             pdf_info = pdf_info_response.json()
             page_png = client.get(f"/api/jobs/{job_id}/pdf-page/2.png")
-            record = job_store.require(job_id)
+            record = client.app.state.job_repository.get(job_id)
+            source = client.app.state.job_repository.list_sources(job_id)[0]
 
         self.assertEqual(response.headers["cache-control"], "no-store")
         self.assertEqual(status_response.headers["cache-control"], "no-store")
@@ -688,15 +902,15 @@ class WebMvpTest(unittest.TestCase):
         self.assertEqual(pdf_info_response.headers["cache-control"], "private, max-age=0, must-revalidate")
         self.assertEqual(page_png.headers["cache-control"], "private, max-age=0, must-revalidate")
         self.assertEqual(status["status"], "completed")
-        self.assertEqual(record.status, "completed")
-        self.assertEqual(record.pdf_path.name, "lecture.pdf")
+        self.assertEqual(record.state, JobState.COMPLETED)
+        self.assertEqual(source.original_filename, "lecture.pdf")
         self.assertEqual(captured["soul_path"], settings.soul_path)
         self.assertEqual(captured["mnemonics_path"], settings.mnemonics_path)
         self.assertEqual(captured["api_key_path"], settings.api_key_path)
         self.assertEqual(captured["chat_model"], "chat-model")
         self.assertEqual(captured["embed_model"], "embed-model")
         self.assertEqual(captured["generation_mode"], "exam-quick")
-        self.assertEqual(record.metadata["mode"], "exam-quick")
+        self.assertEqual(record.generation_mode, "exam-quick")
         self.assertEqual(status["quality"]["status"], "pass")
         self.assertIn("evidence_links_url", status)
         self.assertIn("trace_url", status)
@@ -737,23 +951,22 @@ class WebMvpTest(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            job_store = JobStore()
             settings = self.ready_settings(root)
-            first_client = TestClient(create_app(runner=fake_runner, job_store=job_store, settings=settings))
+            first_client = TestClient(create_app(settings=settings))
             first_user = self.register_user(first_client, email="one@example.com", invite_code="ONE")
             response = first_client.post(
                 "/api/generate",
                 files={"pdf": ("lecture.pdf", self.make_pdf_bytes(), "application/pdf")},
             )
             job_id = response.json()["job_id"]
-            record = job_store.require(job_id)
+            record = first_client.app.state.job_repository.get(job_id)
 
-            second_client = TestClient(create_app(runner=fake_runner, job_store=job_store, settings=settings))
+            second_client = TestClient(create_app(settings=settings))
             self.register_user(second_client, email="two@example.com", invite_code="TWO")
             blocked = second_client.get(f"/api/jobs/{job_id}")
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(record.metadata["owner_user_id"], first_user["id"])
+        self.assertEqual(record.owner_user_id, first_user["id"])
         self.assertEqual(blocked.status_code, 404)
 
     def test_generate_job_uses_admin_runtime_model_and_rag_settings(self):
@@ -796,13 +1009,14 @@ class WebMvpTest(unittest.TestCase):
             payload["runtime"]["rag"]["per_query_limit"] = 4
             service.save_all(payload)
             settings = RuntimeSettings.from_env(root)
-            client = TestClient(create_app(runner=fake_runner, settings=settings))
+            client = TestClient(create_app(settings=settings))
             self.register_user(client)
 
             response = client.post(
                 "/api/generate",
                 files={"pdf": ("lecture.pdf", self.make_pdf_bytes(), "application/pdf")},
             )
+            self.run_next_job(client, settings, fake_runner)
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(captured["api_key"], "catalog-key")
@@ -850,13 +1064,14 @@ class WebMvpTest(unittest.TestCase):
             settings.soul_path.write_text("soul", encoding="utf-8")
             settings.mnemonics_path.write_text("mnemonics", encoding="utf-8")
             settings.api_key_path.write_text("key", encoding="utf-8")
-            client = TestClient(create_app(runner=fake_runner, settings=settings))
+            client = TestClient(create_app(settings=settings))
             self.register_user(client)
 
             response = client.post(
                 "/api/generate",
                 files={"pdf": ("lecture.pdf", self.make_pdf_bytes(), "application/pdf")},
             )
+            self.run_next_job(client, settings, fake_runner)
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(captured["parser_backend"], "pymupdf")
@@ -910,7 +1125,7 @@ class WebMvpTest(unittest.TestCase):
             general_soul.parent.mkdir(parents=True, exist_ok=True)
             general_soul.write_text("general soul", encoding="utf-8")
             settings.api_key_path.write_text("key", encoding="utf-8")
-            client = TestClient(create_app(runner=fake_runner, settings=settings))
+            client = TestClient(create_app(settings=settings))
             self.register_user(client)
 
             response = client.post(
@@ -918,6 +1133,7 @@ class WebMvpTest(unittest.TestCase):
                 data={"scenario_id": "general-default"},
                 files={"pdf": ("lecture.pdf", self.make_pdf_bytes(), "application/pdf")},
             )
+            self.run_next_job(client, settings, fake_runner)
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(captured["soul_path"], general_soul)
@@ -947,7 +1163,7 @@ class WebMvpTest(unittest.TestCase):
 
         self.assertEqual(response.status_code, 403)
 
-    def test_default_job_store_persists_completed_job_status_between_app_instances(self):
+    def test_durable_repository_persists_completed_job_status_between_app_instances(self):
         def fake_runner(
             pdf_path,
             soul_path,
@@ -980,98 +1196,95 @@ class WebMvpTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             settings = self.ready_settings(root)
-            first_client = TestClient(create_app(runner=fake_runner, settings=settings))
+            first_client = TestClient(create_app(settings=settings))
             self.register_user(first_client)
             response = first_client.post(
                 "/api/generate",
                 files={"pdf": ("lecture.pdf", self.make_pdf_bytes(), "application/pdf")},
             )
             job_id = response.json()["job_id"]
+            self.run_next_job(first_client, settings, fake_runner)
 
-            second_client = TestClient(create_app(runner=fake_runner, settings=settings))
+            second_client = TestClient(create_app(settings=settings))
             self.login_user(second_client)
             restored = second_client.get(f"/api/jobs/{job_id}").json()
 
         self.assertEqual(restored["status"], "completed")
         self.assertEqual(restored["quality"]["status"], "pass")
 
-    def test_failed_job_status_includes_exception_type_and_message(self):
+    def test_failed_job_status_exposes_only_safe_worker_error(self):
         def failing_runner(**kwargs):
             raise TimeoutError("provider timeout")
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             settings = self.ready_settings(root)
-            client = TestClient(create_app(runner=failing_runner, settings=settings))
+            client = TestClient(create_app(settings=settings))
             self.register_user(client)
             response = client.post(
                 "/api/generate",
                 files={"pdf": ("lecture.pdf", self.make_pdf_bytes(), "application/pdf")},
             )
             job_id = response.json()["job_id"]
+            self.run_next_job(client, settings, failing_runner)
+            self.run_next_job(client, settings, failing_runner)
 
             status = client.get(f"/api/jobs/{job_id}").json()
 
         self.assertEqual(status["status"], "failed")
-        self.assertEqual(status["error"], "TimeoutError: provider timeout")
+        self.assertEqual(status["error_code"], "worker_error")
+        self.assertEqual(status["error"], "The job could not be processed.")
+        self.assertNotIn("provider timeout", json.dumps(status))
 
-    def test_create_app_prunes_expired_finished_jobs_when_retention_enabled(self):
+    def test_create_app_does_not_run_retention_cleanup(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             settings = self.ready_settings(root, job_retention_hours=1)
-            job_store = JobStore(store_path=settings.jobs_root / "jobs.json")
-            old_dir = settings.jobs_root / "old-job"
-            old_dir.joinpath("input").mkdir(parents=True)
-            old_dir.joinpath("output").mkdir()
-            old_dir.joinpath("output", "result.md").write_text("old", encoding="utf-8")
-            job_store.create(
-                job_id="old-job",
-                pdf_path=old_dir / "input" / "lecture.pdf",
-                output_dir=old_dir / "output",
+            client = TestClient(create_app(settings=settings))
+            self.register_user(client)
+            generated = client.post(
+                "/api/generate",
+                files={"pdf": ("lecture.pdf", self.make_pdf_bytes(), "application/pdf")},
             )
-            job_store.mark_completed("old-job", outputs={}, quality={"status": "pass"})
-            job_store.require("old-job").updated_at = (
-                datetime.now(timezone.utc) - timedelta(hours=2)
-            ).isoformat()
+            job_id = generated.json()["job_id"]
 
-            create_app(runner=lambda **kwargs: {}, job_store=job_store, settings=settings)
+            restarted = TestClient(create_app(settings=settings))
+            self.login_user(restarted)
 
-            restored = JobStore(store_path=settings.jobs_root / "jobs.json")
-
-            self.assertIsNone(job_store.get("old-job"))
-            self.assertIsNone(restored.get("old-job"))
-            self.assertFalse(old_dir.exists())
+            self.assertEqual(restarted.get(f"/api/jobs/{job_id}").status_code, 200)
+            self.assertTrue((settings.jobs_root / job_id).is_dir())
 
     def test_queued_job_result_endpoints_return_not_ready(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            job_store = JobStore()
-            job_store.create(
-                job_id="queued-job",
-                pdf_path=root / "input" / "lecture.pdf",
-                output_dir=root / "output",
-                metadata={"owner_user_id": "user-1"},
+            settings = self.ready_settings(root)
+            client = TestClient(create_app(settings=settings), raise_server_exceptions=False)
+            self.register_user(client)
+            generated = client.post(
+                "/api/generate",
+                files={"pdf": ("lecture.pdf", self.make_pdf_bytes(), "application/pdf")},
             )
-            client = TestClient(
-                create_app(base_dir=root, runner=lambda **kwargs: {}, job_store=job_store),
-                raise_server_exceptions=False,
-            )
-            user = self.register_user(client)
-            job_store.require("queued-job").metadata["owner_user_id"] = user["id"]
+            job_id = generated.json()["job_id"]
 
-            output = client.get("/api/jobs/queued-job/output")
-            evidence = client.get("/api/jobs/queued-job/evidence")
-            evidence_links = client.get("/api/jobs/queued-job/evidence-links")
+            output = client.get(f"/api/jobs/{job_id}/output")
+            evidence = client.get(f"/api/jobs/{job_id}/evidence")
+            evidence_links = client.get(f"/api/jobs/{job_id}/evidence-links")
+            trace = client.get(f"/api/jobs/{job_id}/trace")
+            package = client.get(f"/api/jobs/{job_id}/package")
+            export = client.get(f"/api/jobs/{job_id}/export")
 
         self.assertEqual(output.status_code, 404)
         self.assertEqual(evidence.status_code, 404)
         self.assertEqual(evidence_links.status_code, 404)
+        self.assertEqual(trace.status_code, 404)
+        self.assertEqual(package.status_code, 404)
+        self.assertEqual(export.status_code, 404)
 
     def test_generate_rejects_non_pdf_upload(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             settings = self.ready_settings(root, max_pdf_bytes=1024)
-            client = TestClient(create_app(runner=lambda **kwargs: {}, settings=settings))
+            client = TestClient(create_app(settings=settings))
             self.register_user(client)
 
             response = client.post(
@@ -1080,13 +1293,13 @@ class WebMvpTest(unittest.TestCase):
             )
 
         self.assertEqual(response.status_code, 400)
-        self.assertIn("PDF", response.json()["detail"])
+        self.assertEqual(response.json()["detail"]["code"], "invalid_pdf")
 
     def test_generate_rejects_pdf_above_configured_limit(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             settings = self.ready_settings(root, max_pdf_bytes=5)
-            client = TestClient(create_app(runner=lambda **kwargs: {}, settings=settings))
+            client = TestClient(create_app(settings=settings))
             self.register_user(client)
 
             response = client.post(
@@ -1095,7 +1308,7 @@ class WebMvpTest(unittest.TestCase):
             )
 
         self.assertEqual(response.status_code, 413)
-        self.assertIn("too large", response.json()["detail"].lower())
+        self.assertEqual(response.json()["detail"]["code"], "pdf_too_large")
 
 
 if __name__ == "__main__":

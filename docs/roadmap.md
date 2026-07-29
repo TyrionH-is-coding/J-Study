@@ -58,8 +58,8 @@ Deliverables:
 - safe result download and ZIP normalization
 - PyMuPDF limited to PDF validation and source preview utilities
 - explicit job state machine
-- PostgreSQL job/source/section/artifact persistence
-- separate API and worker processes
+- PostgreSQL job/source/section/artifact/transition persistence（Task 0006 foundation 已实现）
+- separate API and `jstudy-worker` processes（Task 0006 foundation 已实现）
 - typed FastAPI schemas and OpenAPI/frontend contract validation
 - removal of public parser choice
 
@@ -71,6 +71,15 @@ Acceptance:
 - no raw MinerU provider structure leaks into retrieval or frontend code
 - no user-facing parser profile remains
 - the checkpoint SHA and deletion gates are recorded
+
+Task 0006 当前边界：
+
+- Compose 使用 `postgres`、`jstudy-api`、`jstudy-worker`，worker 无公开端口；
+- API durable submission 与 worker lease/retry/retention 已分离；
+- 旧 `jobs.json` 仅保留 compatibility boundary，production 不 import；
+- SQLModel `create_all()` 仅用于 disposable pilot；
+- 持久数据上线前仍必须交付 versioned migrations 和迁移/回滚/备份 runbook；
+- HTML、`material-package.v2` 与 MinerU pipeline 切换仍属于后续任务。
 
 Implementation order is controlled by:
 

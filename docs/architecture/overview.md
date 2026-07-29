@@ -196,10 +196,12 @@ Expected deployment components:
 - mounted `data/` volume for uploads, outputs, and cache
 - `.env` for runtime secrets
 
-The approved target adds PostgreSQL and a separate worker process. Redis remains
-optional until queue/concurrency measurements justify it. Pilot artifacts may
-remain on a mounted persistent volume behind a storage interface; Tencent COS
-can replace it later.
+当前 durable execution foundation 使用 `postgres`、`jstudy-api`、
+`jstudy-worker` 三服务拓扑。API 只校验上传并持久化 queued Job；独立 worker
+通过原子认领、lease 和 bounded retry 执行现有 pipeline。两者共享
+PostgreSQL 与 jobs read-write volume，`jstudy-worker` 不暴露端口。Redis
+仍不在当前架构中。Pilot artifact 可继续位于挂载卷，后续再通过 storage
+boundary 迁移到 Tencent COS。
 
 Runtime settings are centralized in `packages/core/jstudy_core/settings.py`. `SILICONFLOW_API_KEY` is the primary API key source; `SILICONFLOW_API_KEY_FILE` is the file fallback. `JSTUDY_JOBS_DIR`, `JSTUDY_SOUL_PATH`, `JSTUDY_MNEMONICS_PATH`, `JSTUDY_MAX_PDF_BYTES`, `JSTUDY_JOB_RETENTION_HOURS`, `SILICONFLOW_CHAT_MODEL`, and `SILICONFLOW_EMBED_MODEL` control deploy-time paths, upload limits, optional cleanup, and model choices. `JSTUDY_MNEMONICS_PATH` is the current compatibility name for the prompt-rendered knowledge snippet file used by the MVP pipeline.
 
@@ -240,9 +242,23 @@ The backend exposes `GET /api/health` for reverse proxy and container liveness c
 
 Dynamic API responses that drive polling and runtime state use `Cache-Control: no-store`. Uploaded/generated job artifacts such as markdown output, evidence JSON, material-package JSON, retrieval trace, PDF metadata, original PDF, Markdown export, and rendered PDF page PNGs use `Cache-Control: private, max-age=0, must-revalidate` so browsers can revalidate private previews without serving stale job state.
 
-Job status persists to `JSTUDY_JOBS_DIR/jobs.json` so completed and failed jobs remain visible after a process restart. Queued or running jobs are marked failed on restart because the current MVP does not yet have a separate resumable worker queue.
+Job、source、section、artifact 与 append-only transition 持久化在 PostgreSQL。
+API 不执行 pipeline；`jstudy-worker` 负责认领、续租、状态推进、artifact
+发布与 retention。旧 `jobs.json` 实现仍保留为 compatibility boundary，
+但 production API/worker 不 import 或写入它。
 
-`JSTUDY_JOB_RETENTION_HOURS` defaults to `0`, which disables cleanup. Public pilot deployments should set it to `72` or `168`. When set to a positive number, the API prunes completed or failed jobs older than that TTL during app startup and before accepting a new generation job. Cleanup removes the persisted job record and the job directory only when the directory is safely shaped as `JSTUDY_JOBS_DIR/{job_id}`. Queued and running jobs are never pruned by this policy.
+`JSTUDY_JOB_RETENTION_HOURS` defaults to `0`, which disables cleanup. Public
+pilot deployments should set it to `72` or `168`. Retention is worker-owned:
+worker 只删除超过 TTL、terminal、无 lease 且目录安全归属于
+`JSTUDY_JOBS_DIR/{job_id}` 的 Job；active 或 leased Job 不会被清理。
+
+`GET /api/health` 是纯 liveness；`GET /api/readiness` 是 readiness，并检查
+数据库连接和执行所需配置。`JSTUDY_DATABASE_URL` 是首选数据库变量，
+`DATABASE_URL` 仅作为兼容 fallback。
+
+当前 SQLModel `create_all()` 只适用于数据可丢弃的 disposable pilot。
+持久用户数据启用前必须引入 versioned migrations，并形成迁移、回滚、
+备份与恢复 runbook。
 
 Uploaded PDFs stay on local disk during the pilot because citation preview needs the original source file. This is acceptable for a small trial only with nonzero retention. When J-Study needs persistent user history, course libraries, or formal multi-user accounts, uploaded PDFs and generated artifacts should move to Tencent COS or equivalent object storage, with metadata kept in a database and lifecycle rules enforced outside the app process.
 

@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import sys
 import tempfile
+import threading
 import time
 
 import uvicorn
@@ -13,7 +14,16 @@ ROOT = Path(__file__).resolve().parents[4]
 sys.path.insert(0, str(ROOT))
 
 from apps.api.jstudy_api.app import create_app  # noqa: E402
-from packages.core.jstudy_core.jobs import JobStore  # noqa: E402
+from packages.core.jstudy_core.auth_db import (  # noqa: E402
+    create_application_tables,
+    create_auth_engine,
+)
+from packages.core.jstudy_core.job_system.repository import JobRepository  # noqa: E402
+from packages.core.jstudy_core.job_system.states import JobState  # noqa: E402
+from packages.core.jstudy_core.job_system.worker import (  # noqa: E402
+    JobWorker,
+    PermanentJobError,
+)
 from packages.core.jstudy_core.settings import RuntimeSettings  # noqa: E402
 
 
@@ -23,14 +33,29 @@ def write_json(path: Path, payload: object) -> None:
 
 def deterministic_runner(**kwargs) -> dict[str, Path]:
     pdf_paths = kwargs.get("pdf_paths") or [kwargs["pdf_path"]]
-    if any("fail" in path.name.lower() for path in pdf_paths):
-        raise RuntimeError("deterministic E2E generation failure")
+    source_files = kwargs.get("source_files") or []
+    if any(
+        "fail" in source["file_name"].lower()
+        for source in source_files
+    ):
+        raise PermanentJobError(
+            "deterministic_e2e_failure",
+            "deterministic E2E generation failure",
+        )
+
+    progress_callback = kwargs["progress_callback"]
+    for state in (
+        JobState.PARSING,
+        JobState.RETRIEVING,
+        JobState.GENERATING,
+        JobState.PACKAGING,
+    ):
+        progress_callback(state)
 
     time.sleep(0.25)
     output_dir = kwargs["output_dir"]
     output_dir.mkdir(parents=True, exist_ok=True)
     prefix = kwargs["output_prefix"]
-    source_files = kwargs.get("source_files") or []
     target_source = source_files[-1] if source_files else {"source_id": "S001", "file_name": pdf_paths[-1].name}
     target_source_id = target_source["source_id"]
     target_file = target_source["file_name"]
@@ -124,15 +149,42 @@ def build_settings(root: Path) -> RuntimeSettings:
         database_url=f"sqlite:///{(root / 'jstudy.db').as_posix()}",
         session_secret="e2e-session-secret",
         invite_required=False,
+        worker_poll_seconds=1,
+        worker_lease_seconds=30,
     )
 
 
 if __name__ == "__main__":
     with tempfile.TemporaryDirectory(prefix="jstudy-e2e-") as temporary:
         root = Path(temporary)
-        app = create_app(
-            runner=deterministic_runner,
-            job_store=JobStore(root / "jobs.json"),
-            settings=build_settings(root),
+        settings = build_settings(root)
+        engine = create_auth_engine(settings.database_url)
+        create_application_tables(engine)
+        repository = JobRepository(engine)
+        app = create_app(settings=settings, job_repository=repository)
+        worker = JobWorker(
+            repository,
+            settings,
+            worker_id="e2e-worker",
+            single_runner=deterministic_runner,
+            outline_runner=deterministic_runner,
         )
-        uvicorn.run(app, host="127.0.0.1", port=int(os.environ.get("JSTUDY_E2E_API_PORT", "8130")), log_level="warning")
+        stop_event = threading.Event()
+        worker_thread = threading.Thread(
+            target=worker.run_forever,
+            args=(stop_event,),
+            name="jstudy-e2e-worker",
+            daemon=True,
+        )
+        worker_thread.start()
+        try:
+            uvicorn.run(
+                app,
+                host="127.0.0.1",
+                port=int(os.environ.get("JSTUDY_E2E_API_PORT", "8130")),
+                log_level="warning",
+            )
+        finally:
+            stop_event.set()
+            worker_thread.join(timeout=5)
+            engine.dispose()

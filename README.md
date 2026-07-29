@@ -119,8 +119,8 @@ Operators can use `/admin/settings` to edit JSON-backed runtime settings instead
 The admin settings directory defaults to `data/settings` and can be moved with `JSTUDY_SETTINGS_DIR`.
 `JSTUDY_JOBS_DIR`, `JSTUDY_SOUL_PATH`, and `JSTUDY_MNEMONICS_PATH` can be used to move runtime data and domain templates outside the repository in Docker or on a server. `JSTUDY_SOUL_PATH` is the compatibility fallback for the default active pack; selected scenarios should normally resolve their own soul profile path from `content_pack.json`. `JSTUDY_MNEMONICS_PATH` is the current compatibility name for the prompt-rendered knowledge snippet file.
 `JSTUDY_MAX_PDF_BYTES` controls the upload limit for courseware PDFs; the default is 50 MB.
-`JSTUDY_JOB_RETENTION_HOURS` is optional. The application default is `0`, which disables cleanup, but public pilot deployments should set `72` or `168` so uploaded PDFs and generated artifacts do not accumulate indefinitely.
-`DATABASE_URL` controls auth persistence. It defaults to a local SQLite file in development; Docker Compose uses Postgres.
+`JSTUDY_JOB_RETENTION_HOURS` is optional. The application default is `0`, which disables cleanup, but public pilot deployments should set `72` or `168` so uploaded PDFs and generated artifacts do not accumulate indefinitely. Durable Job retention 由独立 worker 执行，API 不负责清理。
+`JSTUDY_DATABASE_URL` controls Job and auth persistence and takes precedence over the legacy-compatible `DATABASE_URL`. It defaults to a local SQLite file in development; Docker Compose uses PostgreSQL.
 Set `JSTUDY_SESSION_SECRET` before deployment. Use `JSTUDY_COOKIE_SECURE=true` when serving over HTTPS.
 `JSTUDY_INVITE_REQUIRED` defaults to `true`. For small private tests only, set `JSTUDY_INVITE_REQUIRED=false` to allow registration without an invite code; set it back to `true` before broader public access.
 
@@ -136,13 +136,13 @@ Readiness check for deploy-time configuration:
 GET /api/readiness
 ```
 
-`/api/health` only confirms the API process is alive. `/api/readiness` checks the jobs directory, domain prompt files, API key source, and PDF upload limit.
+`/api/health` 是 liveness，只确认 API 进程存活。`/api/readiness` 是 readiness，检查 jobs directory、domain prompt files、API key、PDF upload limit 和数据库连接。
 Use `/api/readiness?probe_provider=true` during deployment to run a live SiliconFlow chat and embedding connectivity probe.
 `POST /api/generate` returns `503` with the readiness payload when required runtime configuration is missing.
 `GET /api/options` returns public scenarios and parser profiles for the upload form.
 `POST /api/generate` accepts optional `scenario_id`, `parser_profile_id`, `mode`, and `service_mode` form fields. Missing scenario and parser values resolve to the admin-configured defaults. Empty `service_mode` or `single_courseware` keeps the existing `pdf=<one PDF>` path. `service_mode=course_outline` requires `outline=<.md/.txt/.pdf>` and at least one repeated `pdfs=<PDF>` upload. `mode` is stored as generation metadata for frontend experiments, but it does not replace service mode, subject scenario, or parser profile behavior. `scenario_id` resolves `content_pack_id`, `prompt_profile`, and the matching `soul_profile`, so different subjects can use different soul files without changing code.
 `parser_profile_id=fast` maps to PyMuPDF. The reserved `quality` profile maps to MinerU, is hidden from normal users at first, and should be enabled only after MinerU is configured.
-Job status is persisted in `JSTUDY_JOBS_DIR/jobs.json`; jobs that were queued or running during a server restart are marked failed because the MVP has no separate worker queue yet.
+Job、source、section、artifact 和 transition 已由 SQLModel 持久化到 PostgreSQL；独立 `jstudy-worker` 通过 lease 认领并执行 queued Job，API 只负责 durable submission 和 owner-scoped read。旧 `jobs.json` 代码仍保留为 compatibility boundary，但 production API/worker 不 import 或写入它。
 Completed jobs expose retrieval diagnostics at `/api/jobs/{job_id}/trace`, material-package metadata at `/api/jobs/{job_id}/package`, and a Markdown attachment at `/api/jobs/{job_id}/export`. Source previews are available through the legacy first-source endpoints `/api/jobs/{job_id}/pdf-info` and `/api/jobs/{job_id}/pdf-page/{page}.png`, plus source-specific endpoints `/api/jobs/{job_id}/pdfs`, `/api/jobs/{job_id}/pdfs/{source_id}/pdf-info`, and `/api/jobs/{job_id}/pdfs/{source_id}/pdf-page/{page}.png`.
 
 User auth:
@@ -195,12 +195,16 @@ Then open:
 http://127.0.0.1:8765/
 ```
 
-Backend Docker Compose scaffold with Postgres:
+Backend Docker Compose 三服务拓扑包含 `postgres`、`jstudy-api` 和 `jstudy-worker`。API 与 worker 共享数据库、jobs volume 和运行设置；worker 不暴露端口：
 
 ```powershell
 docker compose -f deploy/docker-compose/api.compose.yml config
 docker compose -f deploy/docker-compose/api.compose.yml up -d --build
+docker compose -f deploy/docker-compose/api.compose.yml logs -f
+docker compose -f deploy/docker-compose/api.compose.yml down
 ```
+
+当前 SQLModel `create_all()` 只允许用于数据可丢弃的 disposable pilot。开始保存持久用户数据前，必须采用 versioned migrations，并准备迁移、回滚、备份和恢复 runbook。详细操作见 [Docker Compose 运行手册](deploy/docker-compose/README.md)。
 
 ## Key Documents
 

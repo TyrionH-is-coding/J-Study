@@ -55,6 +55,31 @@ class SettingsTest(unittest.TestCase):
         self.assertEqual(settings.session_cookie_name, "custom_session")
         self.assertFalse(settings.invite_required)
 
+    def test_runtime_settings_prefers_jstudy_database_url(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            env = {
+                "JSTUDY_DATABASE_URL": "postgresql+psycopg://jstudy:new@postgres:5432/jstudy",
+                "DATABASE_URL": "postgresql+psycopg://jstudy:legacy@postgres:5432/jstudy",
+            }
+
+            with patch.dict(os.environ, env, clear=True):
+                settings = RuntimeSettings.from_env(root)
+
+        self.assertEqual(settings.database_url, env["JSTUDY_DATABASE_URL"])
+
+    def test_runtime_settings_keeps_legacy_database_url_fallback(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            env = {
+                "DATABASE_URL": "postgresql+psycopg://jstudy:legacy@postgres:5432/jstudy",
+            }
+
+            with patch.dict(os.environ, env, clear=True):
+                settings = RuntimeSettings.from_env(root)
+
+        self.assertEqual(settings.database_url, env["DATABASE_URL"])
+
     def test_runtime_settings_keep_mvp_defaults(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -72,6 +97,42 @@ class SettingsTest(unittest.TestCase):
         self.assertFalse(settings.cookie_secure)
         self.assertEqual(settings.session_cookie_name, "jstudy_session")
         self.assertTrue(settings.invite_required)
+        self.assertEqual(settings.max_pdfs, 20)
+        self.assertEqual(settings.max_pdf_bytes, 50 * 1024 * 1024)
+        self.assertEqual(settings.max_total_upload_bytes, 300 * 1024 * 1024)
+        self.assertEqual(settings.max_outline_bytes, 5 * 1024 * 1024)
+        self.assertEqual(settings.queue_capacity, 100)
+        self.assertEqual(settings.user_active_job_limit, 3)
+        self.assertEqual(settings.worker_poll_seconds, 1)
+        self.assertEqual(settings.worker_lease_seconds, 300)
+        self.assertEqual(settings.worker_max_attempts, 2)
+
+    def test_runtime_settings_loads_job_admission_and_worker_environment(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            env = {
+                "JSTUDY_MAX_PDFS": "7",
+                "JSTUDY_MAX_PDF_BYTES": "1000",
+                "JSTUDY_MAX_TOTAL_UPLOAD_BYTES": "4000",
+                "JSTUDY_MAX_OUTLINE_BYTES": "500",
+                "JSTUDY_QUEUE_CAPACITY": "9",
+                "JSTUDY_USER_ACTIVE_JOB_LIMIT": "2",
+                "JSTUDY_WORKER_POLL_SECONDS": "4",
+                "JSTUDY_WORKER_LEASE_SECONDS": "45",
+                "JSTUDY_WORKER_MAX_ATTEMPTS": "5",
+            }
+            with patch.dict(os.environ, env, clear=True):
+                settings = RuntimeSettings.from_env(root)
+
+        self.assertEqual(settings.max_pdfs, 7)
+        self.assertEqual(settings.max_pdf_bytes, 1000)
+        self.assertEqual(settings.max_total_upload_bytes, 4000)
+        self.assertEqual(settings.max_outline_bytes, 500)
+        self.assertEqual(settings.queue_capacity, 9)
+        self.assertEqual(settings.user_active_job_limit, 2)
+        self.assertEqual(settings.worker_poll_seconds, 4)
+        self.assertEqual(settings.worker_lease_seconds, 45)
+        self.assertEqual(settings.worker_max_attempts, 5)
 
     def test_invalid_cookie_secure_environment_is_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:

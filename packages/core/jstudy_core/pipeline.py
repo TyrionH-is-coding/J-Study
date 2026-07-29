@@ -3,12 +3,13 @@ from __future__ import annotations
 from dataclasses import asdict, replace
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from packages.core.jstudy_core import citations
 from packages.core.jstudy_core import providers
 from packages.core.jstudy_core.settings import read_api_key
 from packages.core.jstudy_core.storage import build_output_paths, write_json
+from packages.core.jstudy_core.job_system.states import JobState
 from packages.domains.medicine import (
     StudyQuery,
     audit_output_quality,
@@ -48,6 +49,15 @@ build_evidence_links = citations.build_evidence_links
 
 
 OUTLINE_SECTION_LIMIT = 12
+ProgressCallback = Callable[[JobState], None]
+
+
+def _report_progress(
+    callback: ProgressCallback | None,
+    state: JobState,
+) -> None:
+    if callback is not None:
+        callback(state)
 
 
 def source_id_for_index(index: int) -> str:
@@ -146,10 +156,12 @@ def run_mvp(
     routing_metadata: dict[str, Any] | None = None,
     parser_config: dict[str, Any] | None = None,
     generation_mode: str = "",
+    progress_callback: ProgressCallback | None = None,
 ) -> dict[str, Path]:
     rag_config = rag_config or RagConfig()
     embedding_cache_path = embedding_cache_path or output_dir / ".mvp_cache" / "embeddings.json"
     resolved_api_key = api_key or read_api_key(api_key_path)
+    _report_progress(progress_callback, JobState.PARSING)
     if parser_backend == "pymupdf":
         pages = extract_pdf_pages(pdf_path)
     elif parser_backend == "mineru":
@@ -164,6 +176,7 @@ def run_mvp(
     if not chunks:
         raise RuntimeError("No text chunks extracted from PDF")
 
+    _report_progress(progress_callback, JobState.RETRIEVING)
     chunk_embeddings = providers.embed_texts_cached(
         [chunk.text for chunk in chunks],
         api_key=resolved_api_key,
@@ -264,6 +277,7 @@ def run_mvp(
     }
     write_json(output_paths.package, package)
 
+    _report_progress(progress_callback, JobState.GENERATING)
     messages = build_generation_prompt(
         soul_path.read_text(encoding="utf-8"),
         evidence,
@@ -279,6 +293,7 @@ def run_mvp(
             model=chat_model,
             base_url=chat_base_url,
         )
+    _report_progress(progress_callback, JobState.PACKAGING)
     output_paths.markdown.write_text(markdown + "\n", encoding="utf-8")
     write_json(output_paths.evidence_links, citations.build_evidence_links(markdown, evidence))
     write_json(output_paths.quality, audit_output_quality(markdown, evidence))
@@ -307,12 +322,14 @@ def run_course_outline(
     generation_mode: str = "",
     source_files: list[dict[str, Any]] | None = None,
     service_mode: str = "course_outline",
+    progress_callback: ProgressCallback | None = None,
 ) -> dict[str, Path]:
     if not pdf_paths:
         raise RuntimeError("Course Outline Mode requires at least one PDF")
     rag_config = rag_config or RagConfig()
     embedding_cache_path = embedding_cache_path or output_dir / ".mvp_cache" / "embeddings.json"
     resolved_api_key = api_key or read_api_key(api_key_path)
+    _report_progress(progress_callback, JobState.PARSING)
     outline_text = read_outline_text(outline_path, parser_backend, parser_config)
     outline_sections = parse_outline_sections(outline_text)
 
@@ -342,6 +359,7 @@ def run_course_outline(
     if not chunks:
         raise RuntimeError("No text chunks extracted from course PDFs")
 
+    _report_progress(progress_callback, JobState.RETRIEVING)
     chunk_embeddings = providers.embed_texts_cached(
         [chunk.text for chunk in chunks],
         api_key=resolved_api_key,
@@ -387,6 +405,7 @@ def run_course_outline(
     package_sections: list[dict[str, Any]] = []
     soul_text = soul_path.read_text(encoding="utf-8")
 
+    _report_progress(progress_callback, JobState.GENERATING)
     for section, trace in zip(outline_sections, retrieval_trace):
         kept_ids = [str(chunk.get("id", "")) for chunk in trace.get("kept", [])]
         section_evidence = [evidence_by_chunk[chunk_id] for chunk_id in kept_ids if chunk_id in evidence_by_chunk]
@@ -431,6 +450,7 @@ def run_course_outline(
             }
         )
 
+    _report_progress(progress_callback, JobState.PACKAGING)
     markdown = "\n\n".join(section_markdown_parts)
     output_paths.markdown.write_text(markdown + "\n", encoding="utf-8")
     evidence_links = citations.build_evidence_links(markdown, evidence)

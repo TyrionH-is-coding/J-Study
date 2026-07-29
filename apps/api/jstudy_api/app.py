@@ -1,24 +1,19 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta, timezone
-import inspect
 import os
-from pathlib import Path
-import re
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Callable
-import unicodedata
-from uuid import uuid4
 
 import fitz
-from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Request, Response, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse
 
 from apps.api.jstudy_api.admin_ui import ADMIN_SETTINGS_HTML
 from apps.api.jstudy_api.ui import INDEX_HTML
 
 from packages.core.jstudy_core.admin_settings import AdminSettingsService
-from packages.core.jstudy_core.auth_db import create_auth_engine, create_auth_tables
+from packages.core.jstudy_core.auth_db import create_application_tables, create_auth_engine
 from packages.core.jstudy_core.auth_models import InviteCode, InviteCodeUse, User
 from packages.core.jstudy_core.auth_service import (
     AuthService,
@@ -28,19 +23,28 @@ from packages.core.jstudy_core.auth_service import (
     InvalidInviteCodeError,
     InviteCodeExistsError,
 )
-from packages.core.jstudy_core.jobs import JobRecord, JobStore
+from packages.core.jstudy_core.job_system import (
+    AdmissionError,
+    ArtifactKind,
+    ArtifactSnapshot,
+    JobAdmissionRequest,
+    JobRepository,
+    JobService,
+    JobSnapshot,
+    JobSourceSnapshot,
+    public_status,
+    resolve_job_path,
+)
 from packages.core.jstudy_core.parser_profile_router import (
     ParserProfileRoutingError,
     ParserProfileUnavailable,
     public_parser_profiles,
     resolve_parser_profile,
 )
-from packages.core.jstudy_core.pipeline import run_course_outline, run_mvp
 from packages.core.jstudy_core.scenario_router import ScenarioRoutingError, resolve_scenario
 from packages.core.jstudy_core.settings import RuntimeSettings
 from packages.core.jstudy_core.storage import read_json
 
-Runner = Callable[..., dict[str, Path]]
 ProviderProbe = Callable[[str, str, str], dict[str, Any]]
 
 
@@ -49,7 +53,7 @@ ROOT = PROJECT_ROOT
 NO_STORE_CACHE_CONTROL = "no-store"
 PRIVATE_CACHE_CONTROL = "private, max-age=0, must-revalidate"
 ADMIN_TOKEN_ENV = "JSTUDY_ADMIN_TOKEN"
-ALLOWED_SERVICE_MODES = {"single_courseware", "course_outline"}
+TRACE_PATH_KEYS = {"pdf", "pdfs", "outline", "embedding_cache"}
 
 
 def private_cache_headers() -> dict[str, str]:
@@ -64,19 +68,50 @@ def set_private_cache(response: Response) -> None:
     response.headers["Cache-Control"] = PRIVATE_CACHE_CONTROL
 
 
-async def save_upload(upload: UploadFile, target: Path) -> None:
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_bytes(await upload.read())
+def public_readiness_payload(readiness: dict[str, Any]) -> dict[str, Any]:
+    checks = []
+    for raw_check in readiness.get("checks", []):
+        status = str(raw_check.get("status") or "error")
+        checks.append(
+            {
+                "name": str(raw_check.get("name") or ""),
+                "status": status,
+                "detail": "available" if status == "ok" else "unavailable",
+            }
+        )
+    return {
+        "status": str(readiness.get("status") or "degraded"),
+        "checks": checks,
+        "mineru_configured": bool(readiness.get("mineru_configured")),
+    }
 
 
-def safe_upload_name(filename: str, default: str) -> str:
-    normalized = unicodedata.normalize("NFC", filename or default)
-    name = normalized.replace("\\", "/").rsplit("/", 1)[-1]
-    name = re.sub(r"[\x00-\x1f\x7f]", "", name)
-    name = re.sub(r'[<>:"/\\|?*]', "_", name)
-    if not name or name in (".", "..") or name.strip("_") == "":
-        return default
-    return name
+def public_trace_payload(value: Any, *, key: str = "") -> Any:
+    normalized_key = key.lower()
+    path_field = (
+        normalized_key in TRACE_PATH_KEYS
+        or normalized_key == "path"
+        or normalized_key.endswith("_path")
+        or normalized_key.endswith("_paths")
+    )
+    if isinstance(value, dict):
+        return {
+            item_key: public_trace_payload(item, key=str(item_key))
+            for item_key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [public_trace_payload(item, key=key) for item in value]
+    if isinstance(value, str):
+        text = value.strip()
+        windows_path = PureWindowsPath(text)
+        if (
+            path_field
+            or windows_path.is_absolute()
+            or bool(windows_path.drive)
+            or PurePosixPath(text).is_absolute()
+        ):
+            return "[redacted]"
+    return value
 
 
 def project_path(project_root: Path, value: Any) -> Path | None:
@@ -85,58 +120,6 @@ def project_path(project_root: Path, value: Any) -> Path | None:
         return None
     path = Path(text)
     return path if path.is_absolute() else project_root / path
-
-
-async def save_pdf_upload(upload: UploadFile, target: Path, max_bytes: int) -> None:
-    data = await upload.read()
-    if len(data) > max_bytes:
-        raise HTTPException(status_code=413, detail=f"PDF upload too large: {len(data)} bytes")
-    if not data.startswith(b"%PDF-"):
-        raise HTTPException(status_code=400, detail="Uploaded file must be a PDF")
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_bytes(data)
-
-
-def normalize_service_mode(value: str) -> str:
-    service_mode = (value or "").strip() or "single_courseware"
-    if service_mode not in ALLOWED_SERVICE_MODES:
-        raise HTTPException(status_code=400, detail=f"Unsupported service_mode: {service_mode}")
-    return service_mode
-
-
-def source_id_for_upload(index: int) -> str:
-    return f"S{index + 1:03d}"
-
-
-def pdf_page_count(path: Path) -> int:
-    with fitz.open(str(path)) as doc:
-        return len(doc)
-
-
-def build_source_files(pdf_paths: list[Path]) -> list[dict[str, Any]]:
-    return [
-        {
-            "source_id": source_id_for_upload(index),
-            "file_name": path.name,
-            "page_count": pdf_page_count(path),
-        }
-        for index, path in enumerate(pdf_paths)
-    ]
-
-
-def source_file_record(job: JobRecord, source_id: str) -> dict[str, Any]:
-    for item in job.metadata.get("source_files", []):
-        if str(item.get("source_id")) == source_id:
-            return item
-    raise HTTPException(status_code=404, detail="Source PDF not found")
-
-
-def source_pdf_path(job: JobRecord, source_id: str) -> Path:
-    source_file_record(job, source_id)
-    for index, path in enumerate(job.pdf_paths or [job.pdf_path]):
-        if source_id_for_upload(index) == source_id:
-            return path
-    raise HTTPException(status_code=404, detail="Source PDF not found")
 
 
 def pdf_info_payload(path: Path, source_id: str = "") -> dict[str, Any]:
@@ -170,22 +153,6 @@ def pdf_page_png_response(path: Path, page_no: int) -> Response:
             media_type="image/png",
             headers=private_cache_headers(),
         )
-
-def format_job_error(exc: Exception) -> str:
-    message = str(exc).strip()
-    if message:
-        return f"{type(exc).__name__}: {message}"
-    return type(exc).__name__
-
-
-def filter_runner_kwargs(runner: Runner, kwargs: dict[str, Any]) -> dict[str, Any]:
-    signature = inspect.signature(runner)
-    parameters = signature.parameters.values()
-    if any(parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in parameters):
-        return kwargs
-    allowed = set(signature.parameters)
-    return {key: value for key, value in kwargs.items() if key in allowed}
-
 
 def require_admin(request: Request) -> None:
     expected = os.getenv(ADMIN_TOKEN_ENV, "").strip()
@@ -253,49 +220,77 @@ def invite_use_payload(item: InviteCodeUse) -> dict[str, Any]:
 
 def create_app(
     base_dir: Path | None = None,
-    runner: Runner = run_mvp,
-    job_store: JobStore | None = None,
     settings: RuntimeSettings | None = None,
     provider_probe: ProviderProbe | None = None,
+    job_repository: JobRepository | None = None,
+    job_service: JobService | None = None,
 ) -> FastAPI:
     runtime = settings or RuntimeSettings.from_env(ROOT, jobs_root=base_dir)
     jobs_root = base_dir or runtime.jobs_root
     jobs_root.mkdir(parents=True, exist_ok=True)
-    jobs = job_store or JobStore(store_path=jobs_root / "jobs.json")
     admin_settings = AdminSettingsService(
         runtime.admin_settings_dir or runtime.project_root / "data" / "settings"
     )
     database_url = runtime.database_url or f"sqlite:///{(jobs_root / 'jstudy.db').as_posix()}"
-    auth_engine = create_auth_engine(database_url)
-    create_auth_tables(auth_engine)
-    auth_service = AuthService(auth_engine, invite_required=runtime.invite_required)
+    owns_engine = job_repository is None and job_service is None
+    if job_service is not None:
+        if job_repository is not None and job_service.repository is not job_repository:
+            raise ValueError("job_service and job_repository must use the same repository")
+        repository = job_service.repository
+    else:
+        repository = job_repository or JobRepository(create_auth_engine(database_url))
+    application_engine = repository.engine
+    create_application_tables(application_engine)
+    durable_service = job_service or JobService(repository, runtime)
+    auth_service = AuthService(application_engine, invite_required=runtime.invite_required)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         try:
             yield
         finally:
-            auth_engine.dispose()
+            if owns_engine:
+                application_engine.dispose()
 
     app = FastAPI(title="J Study MVP", lifespan=lifespan)
+    app.state.job_repository = repository
+    app.state.job_service = durable_service
 
     def refresh_runtime() -> None:
         nonlocal runtime
         runtime = RuntimeSettings.from_env(runtime.project_root, jobs_root=jobs_root)
-
-    def cleanup_expired_jobs() -> None:
-        if runtime.job_retention_hours <= 0:
-            return
-        cutoff = datetime.now(timezone.utc) - timedelta(hours=runtime.job_retention_hours)
-        jobs.cleanup_finished_older_than(cutoff, delete_files=True)
-
-    cleanup_expired_jobs()
 
     def routing_content_config() -> dict[str, Any]:
         return runtime.content_pack_config or admin_settings.load_content_pack()
 
     def routing_parser_profiles_config() -> dict[str, Any]:
         return runtime.parser_profiles_config or admin_settings.load_runtime().get("parser_profiles", {})
+
+    def application_readiness(
+        *,
+        probe_provider: bool = False,
+    ) -> dict[str, Any]:
+        payload = public_readiness_payload(
+            runtime.readiness(
+                probe_provider=probe_provider,
+                provider_probe=provider_probe,
+            )
+        )
+        database_available = repository.check_connection()
+        payload["checks"].append(
+            {
+                "name": "database",
+                "status": "ok" if database_available else "error",
+                "detail": (
+                    "database available"
+                    if database_available
+                    else "database unavailable"
+                ),
+            }
+        )
+        if not database_available:
+            payload["status"] = "degraded"
+        return payload
 
     def current_user_or_401(request: Request) -> User:
         token = session_token_from_request(request, runtime)
@@ -304,21 +299,67 @@ def create_app(
             raise HTTPException(status_code=401, detail="Not authenticated")
         return user
 
-    def job_or_404(job_id: str, current_user: User) -> JobRecord:
-        try:
-            job = jobs.require(job_id)
-        except KeyError:
-            raise HTTPException(status_code=404, detail="Job not found")
-        owner_user_id = str(job.metadata.get("owner_user_id") or "")
-        if not owner_user_id or owner_user_id != current_user.id:
+    def job_or_404(job_id: str, current_user: User) -> JobSnapshot:
+        job = repository.get_owned(job_id, current_user.id)
+        if job is None:
             raise HTTPException(status_code=404, detail="Job not found")
         return job
 
-    def ready_output_path(job: JobRecord, key: str, detail: str) -> Path:
-        path = job.outputs.get(key)
-        if path is None or not path.is_file():
+    def source_files(job: JobSnapshot) -> list[dict[str, Any]]:
+        return [
+            {
+                "source_id": source.source_id,
+                "file_name": source.original_filename,
+                "page_count": source.page_count,
+            }
+            for source in repository.list_sources(job.id)
+        ]
+
+    def source_or_404(job: JobSnapshot, source_id: str) -> JobSourceSnapshot:
+        for source in repository.list_sources(job.id):
+            if source.source_id == source_id:
+                return source
+        raise HTTPException(status_code=404, detail="Source PDF not found")
+
+    def resolved_source_path(source: JobSourceSnapshot) -> Path:
+        try:
+            path = resolve_job_path(jobs_root, source.relative_path)
+        except (OSError, ValueError):
+            raise HTTPException(status_code=404, detail="PDF not found")
+        if not path.is_file():
+            raise HTTPException(status_code=404, detail="PDF not found")
+        return path
+
+    def source_pdf_path(job: JobSnapshot, source_id: str) -> Path:
+        return resolved_source_path(source_or_404(job, source_id))
+
+    def artifact_map(job: JobSnapshot) -> dict[ArtifactKind, ArtifactSnapshot]:
+        return {
+            artifact.kind: artifact
+            for artifact in repository.list_artifacts(job.id)
+        }
+
+    def ready_output_path(job: JobSnapshot, kind: ArtifactKind, detail: str) -> Path:
+        artifact = artifact_map(job).get(kind)
+        if artifact is None:
+            raise HTTPException(status_code=404, detail=detail)
+        try:
+            path = resolve_job_path(jobs_root, artifact.relative_path)
+        except (OSError, ValueError):
+            raise HTTPException(status_code=404, detail=detail)
+        if not path.is_file():
             raise HTTPException(status_code=404, detail=detail)
         return path
+
+    def quality_payload(job: JobSnapshot) -> dict[str, Any]:
+        artifact = artifact_map(job).get(ArtifactKind.QUALITY)
+        if artifact is None:
+            return {}
+        try:
+            path = resolve_job_path(jobs_root, artifact.relative_path)
+            return read_json(path) if path.is_file() else {}
+        except (OSError, ValueError):
+            return {}
 
     def generation_file_or_503(path: Path, label: str) -> Path:
         if not path.is_file():
@@ -348,45 +389,6 @@ def create_app(
             "soul_path": str(generation_file_or_503(soul_path, "Soul profile")),
             "mnemonics_path": str(generation_file_or_503(mnemonics_path, "Knowledge snippet")),
         }
-
-    def run_job(job_id: str) -> None:
-        job = jobs.require(job_id)
-        jobs.mark_running(job_id)
-        try:
-            content_paths = job.metadata.get("content_paths", {})
-            service_mode = str(job.metadata.get("service_mode") or "single_courseware")
-            selected_runner = run_course_outline if service_mode == "course_outline" and runner is run_mvp else runner
-            runner_kwargs = {
-                "pdf_path": job.pdf_path,
-                "pdf_paths": job.pdf_paths or [job.pdf_path],
-                "soul_path": Path(str(content_paths.get("soul_path") or runtime.soul_path)),
-                "mnemonics_path": Path(str(content_paths.get("mnemonics_path") or runtime.mnemonics_path)),
-                "api_key_path": runtime.api_key_path,
-                "output_dir": job.output_dir,
-                "chat_model": runtime.chat_model,
-                "embed_model": runtime.embed_model,
-                "output_prefix": "result",
-                "rag_config": runtime.rag_config,
-                "embedding_cache_path": jobs_root / ".cache" / "embeddings.json",
-                "outline_path": job.outline_path,
-                "api_key": runtime.api_key or None,
-                "chat_base_url": runtime.chat_base_url,
-                "embed_base_url": runtime.embed_base_url,
-                "parser_backend": job.metadata.get("parser_profile", {}).get("backend", "pymupdf"),
-                "routing_metadata": job.metadata,
-                "parser_config": runtime.parser_config,
-                "generation_mode": job.metadata.get("mode", ""),
-                "service_mode": service_mode,
-                "source_files": job.metadata.get("source_files", []),
-            }
-            outputs = selected_runner(
-                **filter_runner_kwargs(selected_runner, runner_kwargs)
-            )
-            quality_path = outputs.get("quality")
-            quality = read_json(quality_path) if quality_path and quality_path.exists() else {}
-            jobs.mark_completed(job_id, outputs=outputs, quality=quality)
-        except Exception as exc:  # pragma: no cover - exercised manually with real APIs
-            jobs.mark_failed(job_id, format_job_error(exc))
 
     @app.get("/", response_class=HTMLResponse)
     def index() -> str:
@@ -557,7 +559,7 @@ def create_app(
         set_no_store(response)
         return {
             "service": "jstudy-api",
-            **runtime.readiness(probe_provider=probe_provider, provider_probe=provider_probe),
+            **application_readiness(probe_provider=probe_provider),
         }
 
     @app.get("/api/options")
@@ -582,7 +584,6 @@ def create_app(
 
     @app.post("/api/generate")
     async def generate(
-        background_tasks: BackgroundTasks,
         response: Response,
         request: Request,
         pdf: UploadFile | None = File(None),
@@ -595,10 +596,13 @@ def create_app(
     ) -> dict[str, Any]:
         set_no_store(response)
         current_user = current_user_or_401(request)
-        resolved_service_mode = normalize_service_mode(service_mode)
-        readiness = runtime.readiness()
-        if readiness["status"] != "ready":
-            raise HTTPException(status_code=503, detail=readiness)
+        resolved_service_mode = (service_mode or "").strip() or "single_courseware"
+        runtime_readiness = application_readiness()
+        if runtime_readiness["status"] != "ready":
+            raise HTTPException(
+                status_code=503,
+                detail=runtime_readiness,
+            )
 
         try:
             scenario = resolve_scenario(routing_content_config(), scenario_id)
@@ -615,85 +619,77 @@ def create_app(
         except ParserProfileUnavailable as exc:
             raise HTTPException(status_code=503, detail=str(exc))
 
-        cleanup_expired_jobs()
-
-        job_id = uuid4().hex[:12]
-        job_dir = jobs_root / job_id
-        input_dir = job_dir / "input"
-        pdf_paths: list[Path] = []
-
+        selected_content_paths(scenario)
         if resolved_service_mode == "course_outline":
-            if outline is None or not outline.filename:
-                raise HTTPException(status_code=400, detail="course_outline requires outline")
-            course_pdfs = [item for item in (pdfs or []) if item is not None and item.filename]
-            if not course_pdfs:
-                raise HTTPException(status_code=400, detail="course_outline requires at least one pdfs upload")
-            for index, upload in enumerate(course_pdfs):
-                pdf_name = safe_upload_name(upload.filename or "courseware.pdf", f"courseware-{index + 1}.pdf")
-                if Path(pdf_name).suffix.lower() != ".pdf":
-                    raise HTTPException(status_code=400, detail="Uploaded file must be a PDF")
-                pdf_path = input_dir / pdf_name
-                if pdf_path.exists():
-                    pdf_path = input_dir / f"{source_id_for_upload(index)}-{pdf_name}"
-                await save_pdf_upload(upload, pdf_path, runtime.max_pdf_bytes)
-                pdf_paths.append(pdf_path)
+            uploads = tuple(
+                item
+                for item in (pdfs or [])
+                if item is not None and item.filename
+            )
         else:
-            if pdf is None or not pdf.filename:
-                raise HTTPException(status_code=400, detail="single_courseware requires pdf")
-            pdf_name = safe_upload_name(pdf.filename or "courseware.pdf", "courseware.pdf")
-            if Path(pdf_name).suffix.lower() != ".pdf":
-                raise HTTPException(status_code=400, detail="Uploaded file must be a PDF")
-            pdf_path = input_dir / pdf_name
-            await save_pdf_upload(pdf, pdf_path, runtime.max_pdf_bytes)
-            pdf_paths.append(pdf_path)
-
-        outline_path = None
-        if outline is not None and outline.filename:
-            outline_name = safe_upload_name(outline.filename, "outline.md")
-            if resolved_service_mode == "course_outline" and Path(outline_name).suffix.lower() not in {".md", ".txt", ".pdf"}:
-                raise HTTPException(status_code=400, detail="course_outline outline must be .md, .txt, or .pdf")
-            outline_path = input_dir / outline_name
-            if Path(outline_name).suffix.lower() == ".pdf":
-                await save_pdf_upload(outline, outline_path, runtime.max_pdf_bytes)
-            else:
-                await save_upload(outline, outline_path)
-
-        source_files = build_source_files(pdf_paths)
-        clean_mode = (mode or "").strip()
-        content_paths = selected_content_paths(scenario)
-        jobs.create(
-            job_id=job_id,
-            pdf_path=pdf_paths[0],
-            pdf_paths=pdf_paths,
-            outline_path=outline_path,
-            output_dir=job_dir / "output",
-            metadata={
-                "owner_user_id": current_user.id,
-                "scenario": scenario.trace_metadata(),
-                "parser_profile": parser_profile.trace_metadata(),
-                "content_paths": content_paths,
-                "mode": clean_mode,
-                "service_mode": resolved_service_mode,
-                "source_files": source_files,
-            },
+            uploads = (pdf,) if pdf is not None and pdf.filename else ()
+        submitted_outline = (
+            outline
+            if outline is not None and outline.filename
+            else None
         )
-        background_tasks.add_task(run_job, job_id)
+        try:
+            submission = await durable_service.submit(
+                JobAdmissionRequest(
+                    owner_user_id=current_user.id,
+                    service_mode=resolved_service_mode,
+                    scenario_id=scenario.scenario_id,
+                    parser_profile_id=parser_profile.profile_id,
+                    generation_mode=(mode or "").strip() or None,
+                    outline=submitted_outline,
+                    pdfs=uploads,
+                    idempotency_key=(
+                        request.headers.get("Idempotency-Key", "").strip()
+                        or None
+                    ),
+                    content_metadata={
+                        "scenario": scenario.trace_metadata(),
+                        "parser_profile": parser_profile.trace_metadata(),
+                    },
+                )
+            )
+        except AdmissionError as exc:
+            status_code = {
+                "outline_too_large": 413,
+                "pdf_too_large": 413,
+                "total_upload_too_large": 413,
+                "too_many_pdfs": 413,
+                "idempotency_conflict": 409,
+                "queue_full": 429,
+                "user_active_job_limit": 429,
+            }.get(exc.code, 400)
+            raise HTTPException(
+                status_code=status_code,
+                detail={"code": exc.code, "message": str(exc)},
+            )
+        job_id = submission.job.id
         return {
             "job_id": job_id,
-            "status": "queued",
+            "status": public_status(submission.job.state),
             "status_url": f"/api/jobs/{job_id}",
         }
+
     @app.get("/api/jobs/{job_id}")
     def job_status(job_id: str, request: Request, response: Response) -> dict[str, Any]:
         set_no_store(response)
         job = job_or_404(job_id, current_user_or_401(request))
         return {
             "job_id": job_id,
-            "status": job.status,
-            "error": job.error,
-            "quality": job.quality,
-            "service_mode": job.metadata.get("service_mode", "single_courseware"),
-            "source_files": job.metadata.get("source_files", []),
+            "status": public_status(job.state),
+            "state": job.state.value,
+            "stage": job.state.value,
+            "progress": job.progress,
+            "attempt_count": job.attempt_count,
+            "error_code": job.error_code,
+            "error": job.error_message,
+            "quality": quality_payload(job),
+            "service_mode": job.service_mode,
+            "source_files": source_files(job),
             "output_url": f"/api/jobs/{job_id}/output",
             "evidence_url": f"/api/jobs/{job_id}/evidence",
             "evidence_links_url": f"/api/jobs/{job_id}/evidence-links",
@@ -713,15 +709,15 @@ def create_app(
     def job_output(job_id: str, request: Request, response: Response) -> dict[str, str]:
         set_private_cache(response)
         job = job_or_404(job_id, current_user_or_401(request))
-        path = ready_output_path(job, "markdown", "Output is not ready")
+        path = ready_output_path(job, ArtifactKind.MARKDOWN, "Output is not ready")
         return {"markdown": path.read_text(encoding="utf-8")}
 
     @app.get("/api/jobs/{job_id}/evidence")
     def job_evidence(job_id: str, request: Request, response: Response) -> dict[str, Any]:
         set_private_cache(response)
         job = job_or_404(job_id, current_user_or_401(request))
-        evidence_path = ready_output_path(job, "evidence", "Evidence is not ready")
-        links_path = ready_output_path(job, "evidence_links", "Evidence is not ready")
+        evidence_path = ready_output_path(job, ArtifactKind.EVIDENCE, "Evidence is not ready")
+        links_path = ready_output_path(job, ArtifactKind.EVIDENCE_LINKS, "Evidence is not ready")
         return {
             "evidence": read_json(evidence_path),
             "evidence_links": read_json(links_path),
@@ -731,27 +727,27 @@ def create_app(
     def job_evidence_links(job_id: str, request: Request, response: Response) -> Any:
         set_private_cache(response)
         job = job_or_404(job_id, current_user_or_401(request))
-        path = ready_output_path(job, "evidence_links", "Evidence links are not ready")
+        path = ready_output_path(job, ArtifactKind.EVIDENCE_LINKS, "Evidence links are not ready")
         return read_json(path)
 
     @app.get("/api/jobs/{job_id}/trace")
     def job_trace(job_id: str, request: Request, response: Response) -> Any:
         set_private_cache(response)
         job = job_or_404(job_id, current_user_or_401(request))
-        path = ready_output_path(job, "trace", "Retrieval trace is not ready")
-        return read_json(path)
+        path = ready_output_path(job, ArtifactKind.TRACE, "Retrieval trace is not ready")
+        return public_trace_payload(read_json(path))
 
     @app.get("/api/jobs/{job_id}/package")
     def job_package(job_id: str, request: Request, response: Response) -> Any:
         set_private_cache(response)
         job = job_or_404(job_id, current_user_or_401(request))
-        path = ready_output_path(job, "package", "Material package is not ready")
+        path = ready_output_path(job, ArtifactKind.PACKAGE, "Material package is not ready")
         return read_json(path)
 
     @app.get("/api/jobs/{job_id}/export")
     def job_export(job_id: str, request: Request) -> Response:
         job = job_or_404(job_id, current_user_or_401(request))
-        path = ready_output_path(job, "markdown", "Output is not ready")
+        path = ready_output_path(job, ArtifactKind.MARKDOWN, "Output is not ready")
         return Response(
             content=path.read_bytes(),
             media_type="text/markdown; charset=utf-8",
@@ -765,18 +761,17 @@ def create_app(
     def job_pdfs(job_id: str, request: Request, response: Response) -> dict[str, Any]:
         set_private_cache(response)
         job = job_or_404(job_id, current_user_or_401(request))
-        return {"source_files": job.metadata.get("source_files", [])}
+        return {"source_files": source_files(job)}
 
     @app.get("/api/jobs/{job_id}/pdfs/{source_id}/pdf")
     def job_source_pdf(job_id: str, source_id: str, request: Request) -> FileResponse:
         job = job_or_404(job_id, current_user_or_401(request))
-        path = source_pdf_path(job, source_id)
-        if not path.exists():
-            raise HTTPException(status_code=404, detail="PDF not found")
+        source = source_or_404(job, source_id)
+        path = resolved_source_path(source)
         return FileResponse(
             path,
             media_type="application/pdf",
-            filename=path.name,
+            filename=source.original_filename,
             headers=private_cache_headers(),
         )
 
@@ -794,13 +789,12 @@ def create_app(
     @app.get("/api/jobs/{job_id}/pdf")
     def job_pdf(job_id: str, request: Request) -> FileResponse:
         job = job_or_404(job_id, current_user_or_401(request))
-        path = job.pdf_path
-        if not path.exists():
-            raise HTTPException(status_code=404, detail="PDF not found")
+        source = source_or_404(job, "S001")
+        path = resolved_source_path(source)
         return FileResponse(
             path,
             media_type="application/pdf",
-            filename=path.name,
+            filename=source.original_filename,
             headers=private_cache_headers(),
         )
 
@@ -808,12 +802,12 @@ def create_app(
     def job_pdf_info(job_id: str, request: Request, response: Response) -> dict[str, Any]:
         set_private_cache(response)
         job = job_or_404(job_id, current_user_or_401(request))
-        return pdf_info_payload(job.pdf_path)
+        return pdf_info_payload(source_pdf_path(job, "S001"))
 
     @app.get("/api/jobs/{job_id}/pdf-page/{page_no}.png")
     def job_pdf_page_png(job_id: str, page_no: int, request: Request) -> Response:
         job = job_or_404(job_id, current_user_or_401(request))
-        return pdf_page_png_response(job.pdf_path, page_no)
+        return pdf_page_png_response(source_pdf_path(job, "S001"), page_no)
     return app
 
 

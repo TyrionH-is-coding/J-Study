@@ -29,7 +29,16 @@ JOBS_DIR_ENV = "JSTUDY_JOBS_DIR"
 SOUL_PATH_ENV = "JSTUDY_SOUL_PATH"
 MNEMONICS_PATH_ENV = "JSTUDY_MNEMONICS_PATH"
 MAX_PDF_BYTES_ENV = "JSTUDY_MAX_PDF_BYTES"
+MAX_PDFS_ENV = "JSTUDY_MAX_PDFS"
+MAX_TOTAL_UPLOAD_BYTES_ENV = "JSTUDY_MAX_TOTAL_UPLOAD_BYTES"
+MAX_OUTLINE_BYTES_ENV = "JSTUDY_MAX_OUTLINE_BYTES"
+QUEUE_CAPACITY_ENV = "JSTUDY_QUEUE_CAPACITY"
+USER_ACTIVE_JOB_LIMIT_ENV = "JSTUDY_USER_ACTIVE_JOB_LIMIT"
+WORKER_POLL_SECONDS_ENV = "JSTUDY_WORKER_POLL_SECONDS"
+WORKER_LEASE_SECONDS_ENV = "JSTUDY_WORKER_LEASE_SECONDS"
+WORKER_MAX_ATTEMPTS_ENV = "JSTUDY_WORKER_MAX_ATTEMPTS"
 JOB_RETENTION_HOURS_ENV = "JSTUDY_JOB_RETENTION_HOURS"
+JSTUDY_DATABASE_URL_ENV = "JSTUDY_DATABASE_URL"
 DATABASE_URL_ENV = "DATABASE_URL"
 SESSION_SECRET_ENV = "JSTUDY_SESSION_SECRET"
 COOKIE_SECURE_ENV = "JSTUDY_COOKIE_SECURE"
@@ -43,6 +52,14 @@ MINERU_POLL_INTERVAL_SECONDS_ENV = "MINERU_POLL_INTERVAL_SECONDS"
 MINERU_DEADLINE_SECONDS_ENV = "MINERU_DEADLINE_SECONDS"
 MINERU_MAX_RESULT_BYTES_ENV = "MINERU_MAX_RESULT_BYTES"
 DEFAULT_MAX_PDF_BYTES = 50 * 1024 * 1024
+DEFAULT_MAX_PDFS = 20
+DEFAULT_MAX_TOTAL_UPLOAD_BYTES = 300 * 1024 * 1024
+DEFAULT_MAX_OUTLINE_BYTES = 5 * 1024 * 1024
+DEFAULT_QUEUE_CAPACITY = 100
+DEFAULT_USER_ACTIVE_JOB_LIMIT = 3
+DEFAULT_WORKER_POLL_SECONDS = 1
+DEFAULT_WORKER_LEASE_SECONDS = 300
+DEFAULT_WORKER_MAX_ATTEMPTS = 2
 ProviderProbe = Callable[[str, str, str], dict[str, Any]]
 
 
@@ -118,7 +135,15 @@ class RuntimeSettings:
     scenarios: list[dict[str, Any]] = field(default_factory=list)
     parser_profiles_config: dict[str, Any] = field(default_factory=dict)
     search_config: dict[str, Any] = field(default_factory=dict)
+    max_pdfs: int = DEFAULT_MAX_PDFS
     max_pdf_bytes: int = DEFAULT_MAX_PDF_BYTES
+    max_total_upload_bytes: int = DEFAULT_MAX_TOTAL_UPLOAD_BYTES
+    max_outline_bytes: int = DEFAULT_MAX_OUTLINE_BYTES
+    queue_capacity: int = DEFAULT_QUEUE_CAPACITY
+    user_active_job_limit: int = DEFAULT_USER_ACTIVE_JOB_LIMIT
+    worker_poll_seconds: int = DEFAULT_WORKER_POLL_SECONDS
+    worker_lease_seconds: int = DEFAULT_WORKER_LEASE_SECONDS
+    worker_max_attempts: int = DEFAULT_WORKER_MAX_ATTEMPTS
     job_retention_hours: int = 0
     database_url: str = ""
     session_secret: str = "dev-session-secret"
@@ -179,7 +204,9 @@ class RuntimeSettings:
         if api_key_path is None:
             api_key_path = project_root / "siliconflow api key.txt"
         resolved_jobs_root = jobs_root or env_path(JOBS_DIR_ENV, project_root / "web_jobs")
-        database_url = os.getenv(DATABASE_URL_ENV, "").strip()
+        database_url = os.getenv(JSTUDY_DATABASE_URL_ENV, "").strip()
+        if not database_url:
+            database_url = os.getenv(DATABASE_URL_ENV, "").strip()
         if not database_url:
             database_url = f"sqlite:///{(resolved_jobs_root / 'jstudy.db').as_posix()}"
 
@@ -215,7 +242,33 @@ class RuntimeSettings:
             scenarios=list(content.get("scenarios", [])),
             parser_profiles_config=dict(runtime.get("parser_profiles", {})),
             search_config=search_profile,
+            max_pdfs=env_int(MAX_PDFS_ENV, DEFAULT_MAX_PDFS),
             max_pdf_bytes=env_int(MAX_PDF_BYTES_ENV, runtime["jobs"]["max_pdf_bytes"]),
+            max_total_upload_bytes=env_int(
+                MAX_TOTAL_UPLOAD_BYTES_ENV,
+                DEFAULT_MAX_TOTAL_UPLOAD_BYTES,
+            ),
+            max_outline_bytes=env_int(
+                MAX_OUTLINE_BYTES_ENV,
+                DEFAULT_MAX_OUTLINE_BYTES,
+            ),
+            queue_capacity=env_int(QUEUE_CAPACITY_ENV, DEFAULT_QUEUE_CAPACITY),
+            user_active_job_limit=env_int(
+                USER_ACTIVE_JOB_LIMIT_ENV,
+                DEFAULT_USER_ACTIVE_JOB_LIMIT,
+            ),
+            worker_poll_seconds=env_int(
+                WORKER_POLL_SECONDS_ENV,
+                DEFAULT_WORKER_POLL_SECONDS,
+            ),
+            worker_lease_seconds=env_int(
+                WORKER_LEASE_SECONDS_ENV,
+                DEFAULT_WORKER_LEASE_SECONDS,
+            ),
+            worker_max_attempts=env_int(
+                WORKER_MAX_ATTEMPTS_ENV,
+                DEFAULT_WORKER_MAX_ATTEMPTS,
+            ),
             job_retention_hours=env_nonnegative_int(
                 JOB_RETENTION_HOURS_ENV,
                 runtime["jobs"]["job_retention_hours"],

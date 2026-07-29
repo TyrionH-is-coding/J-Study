@@ -36,6 +36,7 @@ from packages.core.jstudy_core.pipeline import (  # noqa: E402
     siliconflow_post,
 )
 from packages.core.jstudy_core.providers import probe_siliconflow_provider  # noqa: E402
+from packages.core.jstudy_core.job_system.states import JobState  # noqa: E402
 
 
 class FakeHttpResponse:
@@ -324,6 +325,7 @@ content: 一嗅二视三动眼。
             outline = root / "outline.md"
             output_dir = root / "out"
             cache = root / "cache" / "embeddings.json"
+            progress_states = []
             pdf.write_bytes(b"%PDF-1.4\n")
             soul.write_text("rules", encoding="utf-8")
             mnemonics.write_text("", encoding="utf-8")
@@ -359,6 +361,7 @@ content: 一嗅二视三动眼。
                             "backend": "pymupdf",
                         },
                     },
+                    progress_callback=progress_states.append,
                 )
 
             quality = json.loads(outputs["quality"].read_text(encoding="utf-8"))
@@ -383,6 +386,15 @@ content: 一嗅二视三动眼。
             query_builder.assert_called_once()
             self.assertIn("alpha overview", query_builder.call_args.kwargs["source_text"])
             self.assertIn(outline.read_text(encoding="utf-8"), query_builder.call_args.kwargs["outline"])
+            self.assertEqual(
+                progress_states,
+                [
+                    JobState.PARSING,
+                    JobState.RETRIEVING,
+                    JobState.GENERATING,
+                    JobState.PACKAGING,
+                ],
+            )
 
     @patch("packages.core.jstudy_core.pipeline.extract_pdf_pages")
     @patch("packages.core.jstudy_core.providers.embed_texts")
@@ -581,6 +593,7 @@ content: 一嗅二视三动眼。
             api_key = root / "api-key.txt"
             output_dir = root / "out"
             cache = root / "cache" / "embeddings.json"
+            progress_states = []
             outline.write_text("# Unit One\n\n## Unit Two\n", encoding="utf-8")
             pdf_one.write_bytes(b"%PDF-1.4\n")
             pdf_two.write_bytes(b"%PDF-1.4\n")
@@ -604,6 +617,7 @@ content: 一嗅二视三动眼。
                     embedding_cache_path=cache,
                     parser_backend="pymupdf",
                     generation_mode="metadata-only",
+                    progress_callback=progress_states.append,
                 )
 
             package = json.loads(outputs["package"].read_text(encoding="utf-8"))
@@ -617,6 +631,15 @@ content: 一嗅二视三动眼。
         self.assertEqual(package["sections"][0]["artifact_filenames"]["markdown"], "course-output.md")
         self.assertIn(evidence[0]["source_id"], {"S001", "S002"})
         self.assertIn("source_id", links[0]["target"])
+        self.assertEqual(
+            progress_states,
+            [
+                JobState.PARSING,
+                JobState.RETRIEVING,
+                JobState.GENERATING,
+                JobState.PACKAGING,
+            ],
+        )
     def test_select_evidence_chunks_is_stable_regression_sample(self):
         sample = json.loads(
             (ROOT / "tests" / "fixtures" / "cocci_regression_sample.json").read_text(encoding="utf-8")
