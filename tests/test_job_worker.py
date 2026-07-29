@@ -121,6 +121,8 @@ class JobWorkerTest(unittest.TestCase):
         job_id: str = "job-1",
         service_mode: str = "single_courseware",
         max_attempts: int = 2,
+        scenario_id: str = "medicine-default",
+        parser_profile_id: str = "fast",
     ):
         job_dir = self.jobs_root / job_id
         inputs = job_dir / "inputs"
@@ -137,8 +139,8 @@ class JobWorkerTest(unittest.TestCase):
                 id=job_id,
                 owner_user_id="owner-1",
                 service_mode=service_mode,
-                scenario_id="medicine-default",
-                parser_profile_id="fast",
+                scenario_id=scenario_id,
+                parser_profile_id=parser_profile_id,
                 generation_mode="study",
                 max_attempts=max_attempts,
                 outline_relative_path=outline_relative_path,
@@ -172,8 +174,43 @@ class JobWorkerTest(unittest.TestCase):
             markdown = output_dir / "result-output.md"
             package = output_dir / "result-material-package.json"
             markdown.write_text("# Result\n", encoding="utf-8")
+            sections = (
+                [
+                    {
+                        "id": "section-001",
+                        "title": "Unit One",
+                        "order": 1,
+                        "status": "generated",
+                        "quality": {"evidence_count": 2},
+                        "artifact_filenames": {"markdown": markdown.name},
+                    },
+                    {
+                        "id": "section-002",
+                        "title": "Unit Two",
+                        "order": 2,
+                        "status": "weak_evidence",
+                        "quality": {"evidence_count": 0},
+                        "artifact_filenames": {"markdown": markdown.name},
+                    },
+                ]
+                if expected_mode == "course_outline"
+                else [
+                    {
+                        "id": "full-material",
+                        "title": "完整资料",
+                        "order": 1,
+                        "artifact_urls": {"markdown": markdown.name},
+                    }
+                ]
+            )
             package.write_text(
-                json.dumps({"type": "material_package"}),
+                json.dumps(
+                    {
+                        "type": "material_package",
+                        "service_mode": expected_mode,
+                        "sections": sections,
+                    }
+                ),
                 encoding="utf-8",
             )
             return {"markdown": markdown, "package": package}
@@ -240,6 +277,28 @@ class JobWorkerTest(unittest.TestCase):
             artifacts_by_kind[ArtifactKind.PACKAGE].relative_path,
             "job-1/attempts/1/output/result-material-package.json",
         )
+        sections = self.repository.list_sections("job-1")
+        self.assertEqual(
+            [
+                (
+                    section.section_id,
+                    section.position,
+                    section.title,
+                    section.status,
+                    section.artifact_filename,
+                )
+                for section in sections
+            ],
+            [
+                (
+                    "full-material",
+                    1,
+                    "完整资料",
+                    "generated",
+                    "result-output.md",
+                )
+            ],
+        )
 
     def test_course_outline_selects_outline_runner_and_preserves_sources(self):
         self.create_job(service_mode="course_outline")
@@ -272,6 +331,22 @@ class JobWorkerTest(unittest.TestCase):
                 }
             ],
         )
+        sections = self.repository.list_sections("job-1")
+        self.assertEqual(
+            [
+                (
+                    section.section_id,
+                    section.position,
+                    section.status,
+                    json.loads(section.quality_json),
+                )
+                for section in sections
+            ],
+            [
+                ("section-001", 1, "generated", {"evidence_count": 2}),
+                ("section-002", 2, "weak_evidence", {"evidence_count": 0}),
+            ],
+        )
 
     def test_embedding_cache_is_isolated_to_the_claimed_job_attempt(self):
         self.create_job(job_id="job-1")
@@ -297,6 +372,130 @@ class JobWorkerTest(unittest.TestCase):
         )
         self.assertNotEqual(cache_paths[0], cache_paths[1])
 
+    def test_each_claim_reloads_generation_settings_and_keeps_running_snapshot(self):
+        self.create_job(job_id="job-1")
+        self.create_job(
+            job_id="job-2",
+            scenario_id="new-scenario",
+            parser_profile_id="new-parser",
+        )
+        new_soul = self.root / "new-soul.md"
+        new_mnemonics = self.root / "new-mnemonics.md"
+        new_soul.write_text("new soul", encoding="utf-8")
+        new_mnemonics.write_text("new mnemonics", encoding="utf-8")
+        updated = replace(
+            self.settings,
+            chat_model="chat-new",
+            embed_model="embed-new",
+            rag_config=replace(
+                self.settings.rag_config,
+                top_k_candidates=7,
+            ),
+            parser_profiles_config={
+                "default_profile_id": "new-parser",
+                "profiles": [
+                    {
+                        "id": "new-parser",
+                        "display_name": "New parser",
+                        "backend": "pymupdf",
+                        "tier": "fast",
+                        "enabled": True,
+                        "visible_to_users": True,
+                        "requires_admin": False,
+                    }
+                ],
+            },
+            content_pack_config={
+                "active_pack_id": "new-pack",
+                "default_scenario_id": "new-scenario",
+                "packs": [
+                    {
+                        "id": "new-pack",
+                        "enabled": True,
+                        "mnemonics_path": new_mnemonics.name,
+                    }
+                ],
+                "scenarios": [
+                    {
+                        "id": "new-scenario",
+                        "enabled": True,
+                        "content_pack_id": "new-pack",
+                        "prompt_profile": "new-soul",
+                    }
+                ],
+                "soul_profiles": [
+                    {
+                        "id": "new-soul",
+                        "soul_path": new_soul.name,
+                    }
+                ],
+            },
+            default_scenario_id="medicine-default",
+        )
+        current = [self.settings]
+        calls = []
+
+        def runner(**kwargs):
+            calls.append(kwargs)
+            if len(calls) == 1:
+                current[0] = updated
+                self.assertEqual(kwargs["chat_model"], "chat")
+                self.assertEqual(kwargs["embed_model"], "embed")
+                self.assertEqual(kwargs["rag_config"].top_k_candidates, 14)
+            callback = kwargs["progress_callback"]
+            for state in (
+                JobState.PARSING,
+                JobState.RETRIEVING,
+                JobState.GENERATING,
+                JobState.PACKAGING,
+            ):
+                callback(state)
+            output_dir = kwargs["output_dir"]
+            output_dir.mkdir(parents=True, exist_ok=True)
+            markdown = output_dir / "result-output.md"
+            package = output_dir / "result-material-package.json"
+            markdown.write_text("# Result\n", encoding="utf-8")
+            package.write_text(
+                json.dumps(
+                    {
+                        "type": "material_package",
+                        "service_mode": kwargs["service_mode"],
+                        "sections": [
+                            {
+                                "id": "full-material",
+                                "title": "完整资料",
+                                "order": 1,
+                                "artifact_urls": {"markdown": markdown.name},
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            return {"markdown": markdown, "package": package}
+
+        worker = JobWorker(
+            self.repository,
+            self.settings,
+            worker_id="worker-settings-test",
+            single_runner=runner,
+            settings_provider=lambda: current[0],
+        )
+
+        self.assertTrue(worker.run_once())
+        self.assertTrue(worker.run_once())
+
+        self.assertEqual(calls[1]["chat_model"], "chat-new")
+        self.assertEqual(calls[1]["embed_model"], "embed-new")
+        self.assertEqual(calls[1]["rag_config"].top_k_candidates, 7)
+        self.assertEqual(calls[1]["parser_backend"], "pymupdf")
+        self.assertEqual(
+            calls[1]["routing_metadata"]["scenario"]["resolved_scenario_id"],
+            "new-scenario",
+        )
+        self.assertEqual(calls[1]["soul_path"], new_soul)
+        self.assertEqual(calls[1]["mnemonics_path"], new_mnemonics)
+
     def test_retryable_failure_requeues_then_exhausts_attempts(self):
         self.create_job(max_attempts=2)
 
@@ -320,6 +519,39 @@ class JobWorkerTest(unittest.TestCase):
         self.assertEqual(second.state, JobState.FAILED)
         self.assertEqual(second.error_code, "provider_timeout")
         self.assertEqual(second.error_message, "Provider unavailable.")
+
+    def test_package_service_mode_mismatch_fails_without_sections(self):
+        self.create_job(
+            service_mode="course_outline",
+            max_attempts=1,
+        )
+
+        def mismatched_runner(**kwargs):
+            outputs = self.output_runner([], "course_outline")(**kwargs)
+            package = json.loads(
+                outputs["package"].read_text(encoding="utf-8")
+            )
+            package["service_mode"] = "single_courseware"
+            outputs["package"].write_text(
+                json.dumps(package),
+                encoding="utf-8",
+            )
+            return outputs
+
+        worker = JobWorker(
+            self.repository,
+            self.settings,
+            worker_id="worker-package-validation",
+            outline_runner=mismatched_runner,
+        )
+
+        self.assertTrue(worker.run_once())
+
+        job = self.repository.get("job-1")
+        self.assertEqual(job.state, JobState.FAILED)
+        self.assertEqual(job.error_code, "invalid_job_output")
+        self.assertEqual(self.repository.list_artifacts("job-1"), [])
+        self.assertEqual(self.repository.list_sections("job-1"), [])
 
     def test_permanent_and_generic_failures_store_safe_errors(self):
         cases = (
@@ -409,6 +641,7 @@ class JobWorkerTest(unittest.TestCase):
         job = repository.get("job-1")
         self.assertNotEqual(job.state, JobState.COMPLETED)
         self.assertEqual(repository.list_artifacts("job-1"), [])
+        self.assertEqual(repository.list_sections("job-1"), [])
         first_attempt = (
             self.jobs_root / "job-1/attempts/1/output/result-output.md"
         )

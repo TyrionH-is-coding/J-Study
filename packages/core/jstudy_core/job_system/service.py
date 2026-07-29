@@ -22,7 +22,11 @@ from packages.core.jstudy_core.job_system.repository import (
     QueueCapacityExceededError,
     resolve_job_path,
 )
-from packages.core.jstudy_core.settings import RuntimeSettings
+from packages.core.jstudy_core.settings import (
+    RuntimeSettings,
+    RuntimeSettingsProvider,
+    load_runtime_settings_snapshot,
+)
 
 
 UPLOAD_CHUNK_BYTES = 64 * 1024
@@ -104,11 +108,30 @@ class JobService:
         self,
         repository: JobRepository,
         settings: RuntimeSettings,
+        *,
+        settings_provider: RuntimeSettingsProvider | None = None,
     ):
         self.repository = repository
         self.settings = settings
+        self.settings_provider = settings_provider or (lambda: settings)
 
     async def submit(
+        self,
+        request: JobAdmissionRequest,
+        *,
+        settings_snapshot: RuntimeSettings | None = None,
+    ) -> JobSubmissionResult:
+        settings = load_runtime_settings_snapshot(
+            self.settings,
+            (
+                (lambda: settings_snapshot)
+                if settings_snapshot is not None
+                else self.settings_provider
+            ),
+        )
+        return await JobService(self.repository, settings)._submit_once(request)
+
+    async def _submit_once(
         self,
         request: JobAdmissionRequest,
     ) -> JobSubmissionResult:
@@ -274,9 +297,18 @@ class JobService:
                 "invalid_outline",
                 "The outline must not be empty.",
             )
-        if suffix == ".pdf":
+        destination = job_dir / "inputs" / f"outline{suffix}"
+        if suffix in {".md", ".txt"}:
             try:
-                validate_pdf(job_dir / "inputs" / "outline.pdf")
+                destination.read_bytes().decode("utf-8", errors="strict")
+            except UnicodeDecodeError as exc:
+                raise AdmissionError(
+                    "invalid_outline",
+                    "The outline text must be valid UTF-8.",
+                ) from exc
+        elif suffix == ".pdf":
+            try:
+                validate_pdf(destination)
             except PdfValidationError as exc:
                 raise AdmissionError(
                     "invalid_outline",

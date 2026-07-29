@@ -208,6 +208,21 @@ class JobServiceTest(unittest.TestCase):
         self.assertGreaterEqual(len(upload.read_sizes), 3)
         self.assertEqual(set(upload.read_sizes), {64 * 1024})
 
+    def test_text_outline_requires_valid_utf8_and_cleans_up(self):
+        for suffix in (".md", ".txt"):
+            with self.subTest(suffix=suffix):
+                self.assert_error(
+                    "invalid_outline",
+                    self.request(
+                        outline=AsyncUpload(
+                            f"outline{suffix}",
+                            b"\xff\xfe\xfd",
+                        )
+                    ),
+                )
+                self.assertEqual(self.repository.count_queued(), 0)
+                self.assert_jobs_root_empty()
+
     def test_pdf_outline_uses_shared_pdf_validation(self):
         valid = self.submit(
             self.request(
@@ -240,6 +255,50 @@ class JobServiceTest(unittest.TestCase):
             settings=settings,
         )
         self.assert_jobs_root_empty()
+
+    def test_each_submission_uses_latest_settings_without_switching_storage(self):
+        current = [replace(self.settings, max_pdfs=2)]
+        service = JobService(
+            self.repository,
+            current[0],
+            settings_provider=lambda: current[0],
+        )
+        accepted = asyncio.run(
+            service.submit(
+                self.request(
+                    owner="owner-1",
+                    pdfs=(
+                        AsyncUpload("one.pdf", make_pdf("one")),
+                        AsyncUpload("two.pdf", make_pdf("two")),
+                    ),
+                )
+            )
+        )
+        self.assertTrue(accepted.created)
+
+        current[0] = replace(current[0], max_pdfs=1)
+        with self.assertRaises(AdmissionError) as caught:
+            asyncio.run(
+                service.submit(
+                    self.request(
+                        owner="owner-2",
+                        pdfs=(
+                            AsyncUpload("one.pdf", make_pdf("one")),
+                            AsyncUpload("two.pdf", make_pdf("two")),
+                        ),
+                    )
+                )
+            )
+        self.assertEqual(caught.exception.code, "too_many_pdfs")
+        self.assertEqual(self.repository.count_queued(), 1)
+
+        current[0] = replace(
+            current[0],
+            jobs_root=self.root / "other-jobs",
+        )
+        with self.assertRaises(RuntimeError):
+            asyncio.run(service.submit(self.request(owner="owner-3")))
+        self.assertFalse((self.root / "other-jobs").exists())
 
     def test_each_pdf_size_is_limited_while_streaming_and_cleans_up(self):
         pdf = make_pdf()

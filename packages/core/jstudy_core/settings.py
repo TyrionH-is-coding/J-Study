@@ -374,6 +374,21 @@ class RuntimeSettings:
             return ""
 
 
+RuntimeSettingsProvider = Callable[[], RuntimeSettings]
+
+
+def load_runtime_settings_snapshot(
+    initial: RuntimeSettings,
+    provider: RuntimeSettingsProvider,
+) -> RuntimeSettings:
+    current = provider()
+    if current.database_url != initial.database_url:
+        raise RuntimeError("runtime settings cannot change database_url")
+    if current.jobs_root.resolve() != initial.jobs_root.resolve():
+        raise RuntimeError("runtime settings cannot change jobs_root")
+    return current
+
+
 def _project_path(project_root: Path, value: Any, default: str) -> Path:
     text = str(value or default).strip() or default
     path = Path(text)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import stat
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -74,6 +75,9 @@ class SectionInput:
     section_id: str
     position: int
     title: str
+    status: str = "pending"
+    quality_json: str = "{}"
+    artifact_filename: str | None = None
 
 
 @dataclass(frozen=True)
@@ -155,6 +159,16 @@ class ArtifactSnapshot:
     mime_type: str
     byte_size: int
     sha256: str
+
+
+@dataclass(frozen=True)
+class SectionSnapshot:
+    section_id: str
+    position: int
+    title: str
+    status: str
+    quality_json: str
+    artifact_filename: str | None
 
 
 @dataclass(frozen=True)
@@ -384,6 +398,9 @@ class JobRepository:
                     section_id=section.section_id,
                     position=section.position,
                     title=section.title,
+                    status=section.status,
+                    quality_json=section.quality_json,
+                    artifact_filename=section.artifact_filename,
                 )
             )
         session.add(
@@ -786,6 +803,7 @@ class JobRepository:
         job_id: str,
         worker_id: str,
         artifacts: list[ArtifactInput],
+        sections: Sequence[SectionInput] = (),
     ) -> JobSnapshot:
         now = utc_now()
         event = TransitionEvent(
@@ -838,6 +856,23 @@ class JobRepository:
                     )
                 )
 
+            session.exec(
+                delete(JobSection).where(JobSection.job_id == job_id)
+            )
+            for section in sections:
+                session.add(
+                    JobSection(
+                        job_id=job_id,
+                        section_id=section.section_id,
+                        position=section.position,
+                        title=section.title,
+                        status=section.status,
+                        quality_json=section.quality_json,
+                        artifact_filename=section.artifact_filename,
+                        updated_at=now,
+                    )
+                )
+
             session.expire_all()
             job = session.get(Job, job_id)
             self._append_transition(
@@ -851,6 +886,25 @@ class JobRepository:
             session.commit()
             session.refresh(job)
             return _job_snapshot(job)
+
+    def list_sections(self, job_id: str) -> list[SectionSnapshot]:
+        with Session(self.engine) as session:
+            sections = session.exec(
+                select(JobSection)
+                .where(JobSection.job_id == job_id)
+                .order_by(JobSection.position)
+            ).all()
+            return [
+                SectionSnapshot(
+                    section_id=section.section_id,
+                    position=section.position,
+                    title=section.title,
+                    status=section.status,
+                    quality_json=section.quality_json,
+                    artifact_filename=section.artifact_filename,
+                )
+                for section in sections
+            ]
 
     def list_artifacts(self, job_id: str) -> list[ArtifactSnapshot]:
         with Session(self.engine) as session:

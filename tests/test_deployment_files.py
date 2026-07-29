@@ -82,14 +82,28 @@ class DeploymentFilesTest(unittest.TestCase):
             "JSTUDY_JOBS_DIR: /app/data/jobs",
             "../../data/jobs:/app/data/jobs",
             "JSTUDY_SETTINGS_DIR: /app/data/settings",
-            "SILICONFLOW_API_KEY:",
-            "SILICONFLOW_API_KEY_FILE:",
-            "SILICONFLOW_CHAT_MODEL:",
-            "SILICONFLOW_EMBED_MODEL:",
         )
         for entry in shared_entries:
             self.assertIn(entry, api_block)
             self.assertIn(entry, worker_block)
+
+        admin_managed_overrides = (
+            "SILICONFLOW_API_KEY:",
+            "SILICONFLOW_API_KEY_FILE:",
+            "SILICONFLOW_CHAT_MODEL:",
+            "SILICONFLOW_EMBED_MODEL:",
+            "MINERU_API_BASE_URL:",
+            "MINERU_API_TOKEN:",
+            "MINERU_MODEL_VERSION:",
+            "MINERU_LANGUAGE:",
+            "JSTUDY_SOUL_PATH:",
+            "JSTUDY_MNEMONICS_PATH:",
+            "JSTUDY_MAX_PDF_BYTES:",
+            "JSTUDY_JOB_RETENTION_HOURS:",
+        )
+        for entry in admin_managed_overrides:
+            self.assertNotIn(entry, api_block)
+            self.assertNotIn(entry, worker_block)
 
         self.assertIn("ports:", api_block)
         self.assertIn("/api/health", api_block)

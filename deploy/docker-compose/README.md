@@ -79,6 +79,9 @@ worker 没有 HTTP liveness endpoint，也没有 `ports` 映射；其运行状�
 - PostgreSQL 数据挂载在 `data/postgres`。
 - 上传和生成 artifact 挂载在 `data/jobs`。
 - 管理员运行设置挂载在 `data/settings`。
+- Compose 不注入模型、provider key、parser、Soul/content pack、
+  `max_pdf_bytes` 或 retention 的环境覆盖值；这些可热更新字段以
+  `data/settings` 为准，使新 submission 和新 claim 无需重启即可读取更新。
 - `JSTUDY_JOB_RETENTION_HOURS` 为正数时，retention 由 worker 执行；API 不负责删除 Job。
 - 旧 `jobs.json` 实现仍保留为 compatibility boundary，但 production API/worker 不 import 或写入它。
 

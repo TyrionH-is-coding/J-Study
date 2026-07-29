@@ -4,6 +4,7 @@ import os
 import sys
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -179,6 +180,105 @@ class WebMvpTest(unittest.TestCase):
         self.assertEqual(first_status["progress"], 0)
         self.assertEqual(restarted_status["job_id"], job_id)
         self.assertEqual(restarted_status["status"], "queued")
+
+    def test_generate_reloads_submission_limits_and_routing_without_restart(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            settings = self.ready_settings(root)
+            current = [settings]
+            provider_calls = []
+
+            def settings_provider():
+                provider_calls.append(current[0])
+                return current[0]
+
+            repository, service = self.durable_dependencies(settings)
+            client = TestClient(
+                create_app(
+                    settings=settings,
+                    job_repository=repository,
+                    job_service=service,
+                    settings_provider=settings_provider,
+                )
+            )
+            self.register_user(client)
+            updated_soul = root / "config" / "updated-soul.md"
+            updated_soul.write_text("updated soul", encoding="utf-8")
+            current[0] = replace(
+                settings,
+                default_scenario_id="updated-scenario",
+                content_pack_config={
+                    "active_pack_id": "updated-pack",
+                    "default_scenario_id": "updated-scenario",
+                    "packs": [
+                        {
+                            "id": "updated-pack",
+                            "enabled": True,
+                            "soul_path": "config/updated-soul.md",
+                        }
+                    ],
+                    "scenarios": [
+                        {
+                            "id": "updated-scenario",
+                            "enabled": True,
+                            "content_pack_id": "updated-pack",
+                            "prompt_profile": "updated-profile",
+                        }
+                    ],
+                    "soul_profiles": [
+                        {
+                            "id": "updated-profile",
+                            "soul_path": "config/updated-soul.md",
+                        }
+                    ],
+                },
+                parser_profiles_config={
+                    "default_profile_id": "updated-parser",
+                    "profiles": [
+                        {
+                            "id": "updated-parser",
+                            "display_name": "Updated parser",
+                            "backend": "pymupdf",
+                            "tier": "fast",
+                            "enabled": True,
+                            "visible_to_users": True,
+                            "requires_admin": False,
+                        }
+                    ],
+                },
+            )
+            pdf = self.make_pdf_bytes()
+            generated = client.post(
+                "/api/generate",
+                data={
+                    "scenario_id": "updated-scenario",
+                    "parser_profile_id": "updated-parser",
+                },
+                files={"pdf": ("lecture.pdf", pdf, "application/pdf")},
+            )
+            job = client.app.state.job_repository.get(
+                generated.json()["job_id"]
+            )
+
+            current[0] = replace(
+                current[0],
+                max_pdf_bytes=len(pdf) - 1,
+            )
+            rejected = client.post(
+                "/api/generate",
+                data={
+                    "scenario_id": "updated-scenario",
+                    "parser_profile_id": "updated-parser",
+                },
+                files={"pdf": ("lecture.pdf", pdf, "application/pdf")},
+            )
+
+        self.assertEqual(generated.status_code, 200)
+        self.assertEqual(job.scenario_id, "updated-scenario")
+        self.assertEqual(job.parser_profile_id, "updated-parser")
+        self.assertEqual(rejected.status_code, 413, rejected.json())
+        self.assertEqual(rejected.json()["detail"]["code"], "pdf_too_large")
+        self.assertEqual(len(provider_calls), 2)
 
     def test_generate_idempotency_is_owner_scoped_and_conflict_safe(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -410,6 +510,8 @@ class WebMvpTest(unittest.TestCase):
     def test_admin_settings_api_redacts_and_persists_settings(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
+            (root / "soul.md").write_text("soul", encoding="utf-8")
+            (root / "mnemonics.md").write_text("mnemonics", encoding="utf-8")
             service = AdminSettingsService(root / "data" / "settings")
             payload = service.load_all()
             payload["model_catalog"]["services"]["llm"]["profiles"][0]["api_key"] = "sk-secret"
@@ -419,13 +521,27 @@ class WebMvpTest(unittest.TestCase):
 
             loaded = client.get("/api/admin/settings").json()
             loaded["runtime"]["rag"]["chunk_max_chars"] = 900
+            loaded["runtime"]["jobs"]["max_pdf_bytes"] = 64
             loaded["content_pack"]["packs"][0]["name"] = "Medicine Pilot"
             saved = client.put("/api/admin/settings", json=loaded)
+            self.register_user(client)
+            rejected = client.post(
+                "/api/generate",
+                files={
+                    "pdf": (
+                        "lecture.pdf",
+                        self.make_pdf_bytes(),
+                        "application/pdf",
+                    )
+                },
+            )
             restored = service.load_all()
 
         self.assertEqual(loaded["model_catalog"]["services"]["llm"]["profiles"][0]["api_key"], "")
         self.assertTrue(loaded["model_catalog"]["services"]["llm"]["profiles"][0]["api_key_set"])
         self.assertEqual(saved.status_code, 200)
+        self.assertEqual(rejected.status_code, 413, rejected.json())
+        self.assertEqual(rejected.json()["detail"]["code"], "pdf_too_large")
         self.assertEqual(restored["runtime"]["rag"]["chunk_max_chars"], 900)
         self.assertEqual(restored["content_pack"]["packs"][0]["name"], "Medicine Pilot")
         self.assertEqual(
@@ -729,7 +845,18 @@ class WebMvpTest(unittest.TestCase):
                         "type": "material_package",
                         "service_mode": "course_outline",
                         "source_files": source_files,
-                        "sections": [{"id": "section-001", "title": "Unit One", "order": 1}],
+                        "sections": [
+                            {
+                                "id": "section-001",
+                                "title": "Unit One",
+                                "order": 1,
+                                "status": "generated",
+                                "quality": {"evidence_count": 1},
+                                "artifact_filenames": {
+                                    "markdown": markdown.name,
+                                },
+                            }
+                        ],
                     }
                 ),
                 encoding="utf-8",
@@ -764,6 +891,7 @@ class WebMvpTest(unittest.TestCase):
             second_info_response = client.get(f"/api/jobs/{job_id}/pdfs/S002/pdf-info")
             second_page = client.get(f"/api/jobs/{job_id}/pdfs/S002/pdf-page/1.png")
             record = client.app.state.job_repository.get(job_id)
+            sections = client.app.state.job_repository.list_sections(job_id)
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(record.service_mode, "course_outline")
@@ -777,6 +905,19 @@ class WebMvpTest(unittest.TestCase):
         self.assertEqual(second_info_response.json()["source_id"], "S002")
         self.assertEqual(second_page.headers["content-type"], "image/png")
         self.assertTrue(second_page.content.startswith(b"\x89PNG"))
+        self.assertEqual(
+            [
+                (
+                    section.section_id,
+                    section.position,
+                    section.status,
+                    json.loads(section.quality_json),
+                )
+                for section in sections
+            ],
+            [("section-001", 1, "generated", {"evidence_count": 1})],
+        )
+
     def test_generate_job_exposes_output_and_evidence_contracts(self):
         captured = {}
 
@@ -844,7 +985,22 @@ class WebMvpTest(unittest.TestCase):
                 encoding="utf-8",
             )
             package.write_text(
-                json.dumps({"type": "material_package", "sections": [{"title": "完整资料"}]}),
+                json.dumps(
+                    {
+                        "type": "material_package",
+                        "service_mode": "single_courseware",
+                        "sections": [
+                            {
+                                "id": "full-material",
+                                "title": "完整资料",
+                                "order": 1,
+                                "artifact_urls": {
+                                    "markdown": markdown.name,
+                                },
+                            }
+                        ],
+                    }
+                ),
                 encoding="utf-8",
             )
             return {
@@ -890,6 +1046,7 @@ class WebMvpTest(unittest.TestCase):
             page_png = client.get(f"/api/jobs/{job_id}/pdf-page/2.png")
             record = client.app.state.job_repository.get(job_id)
             source = client.app.state.job_repository.list_sources(job_id)[0]
+            sections = client.app.state.job_repository.list_sections(job_id)
 
         self.assertEqual(response.headers["cache-control"], "no-store")
         self.assertEqual(status_response.headers["cache-control"], "no-store")
@@ -922,6 +1079,18 @@ class WebMvpTest(unittest.TestCase):
         self.assertEqual(trace["selected_chunks"][0]["id"], "C001")
         self.assertEqual(trace["query_traces"][0]["query"]["id"], "sample")
         self.assertEqual(package["type"], "material_package")
+        self.assertEqual(
+            [
+                (
+                    section.section_id,
+                    section.position,
+                    section.status,
+                    section.artifact_filename,
+                )
+                for section in sections
+            ],
+            [("full-material", 1, "generated", "result-output.md")],
+        )
         self.assertEqual(export_response.headers["content-type"], "text/markdown; charset=utf-8")
         self.assertIn('attachment; filename="jstudy-', export_response.headers["content-disposition"])
         self.assertIn(b"Fact", export_response.content)
@@ -1182,15 +1351,36 @@ class WebMvpTest(unittest.TestCase):
             evidence = output_dir / f"{output_prefix}-evidence.json"
             evidence_links = output_dir / f"{output_prefix}-evidence_links.json"
             quality = output_dir / f"{output_prefix}-quality.json"
+            package = output_dir / f"{output_prefix}-package.json"
             markdown.write_text("Fact\n", encoding="utf-8")
             evidence.write_text("[]", encoding="utf-8")
             evidence_links.write_text("[]", encoding="utf-8")
             quality.write_text(json.dumps({"status": "pass"}), encoding="utf-8")
+            package.write_text(
+                json.dumps(
+                    {
+                        "type": "material_package",
+                        "service_mode": "single_courseware",
+                        "sections": [
+                            {
+                                "id": "full-material",
+                                "title": "完整资料",
+                                "order": 1,
+                                "artifact_urls": {
+                                    "markdown": markdown.name,
+                                },
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
             return {
                 "markdown": markdown,
                 "evidence": evidence,
                 "evidence_links": evidence_links,
                 "quality": quality,
+                "package": package,
             }
 
         with tempfile.TemporaryDirectory() as tmp:

@@ -87,17 +87,36 @@ class BackendSecurityControlsTest(unittest.TestCase):
         evidence_links = output_dir / f"{output_prefix}-evidence_links.json"
         quality = output_dir / f"{output_prefix}-quality.json"
         trace = output_dir / f"{output_prefix}-retrieval_trace.json"
+        package = output_dir / f"{output_prefix}-package.json"
         markdown.write_text("Fact\n", encoding="utf-8")
         evidence.write_text("[]", encoding="utf-8")
         evidence_links.write_text("[]", encoding="utf-8")
         quality.write_text(json.dumps({"status": "pass"}), encoding="utf-8")
         trace.write_text("{}", encoding="utf-8")
+        package.write_text(
+            json.dumps(
+                {
+                    "type": "material_package",
+                    "service_mode": "single_courseware",
+                    "sections": [
+                        {
+                            "id": "full-material",
+                            "title": "完整资料",
+                            "order": 1,
+                            "artifact_urls": {"markdown": markdown.name},
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
         return {
             "markdown": markdown,
             "evidence": evidence,
             "evidence_links": evidence_links,
             "quality": quality,
             "trace": trace,
+            "package": package,
         }
 
     def test_durable_repository_hides_unknown_and_foreign_jobs_identically(self):

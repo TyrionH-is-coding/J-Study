@@ -27,7 +27,14 @@ def build_worker(project_root: Path) -> JobWorker:
     settings = RuntimeSettings.from_env(project_root)
     engine = create_auth_engine(settings.database_url)
     create_application_tables(engine)
-    return JobWorker(JobRepository(engine), settings)
+    return JobWorker(
+        JobRepository(engine),
+        settings,
+        settings_provider=lambda: RuntimeSettings.from_env(
+            project_root,
+            jobs_root=settings.jobs_root,
+        ),
+    )
 
 
 def main(argv: list[str] | None = None) -> int:

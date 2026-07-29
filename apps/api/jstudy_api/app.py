@@ -42,7 +42,11 @@ from packages.core.jstudy_core.parser_profile_router import (
     resolve_parser_profile,
 )
 from packages.core.jstudy_core.scenario_router import ScenarioRoutingError, resolve_scenario
-from packages.core.jstudy_core.settings import RuntimeSettings
+from packages.core.jstudy_core.settings import (
+    RuntimeSettings,
+    RuntimeSettingsProvider,
+    load_runtime_settings_snapshot,
+)
 from packages.core.jstudy_core.storage import read_json
 
 ProviderProbe = Callable[[str, str, str], dict[str, Any]]
@@ -224,6 +228,7 @@ def create_app(
     provider_probe: ProviderProbe | None = None,
     job_repository: JobRepository | None = None,
     job_service: JobService | None = None,
+    settings_provider: RuntimeSettingsProvider | None = None,
 ) -> FastAPI:
     runtime = settings or RuntimeSettings.from_env(ROOT, jobs_root=base_dir)
     jobs_root = base_dir or runtime.jobs_root
@@ -232,6 +237,18 @@ def create_app(
         runtime.admin_settings_dir or runtime.project_root / "data" / "settings"
     )
     database_url = runtime.database_url or f"sqlite:///{(jobs_root / 'jstudy.db').as_posix()}"
+    initial_runtime = runtime
+
+    if settings_provider is not None:
+        load_runtime = settings_provider
+    elif settings is None or runtime.admin_settings_dir is not None:
+        load_runtime = lambda: RuntimeSettings.from_env(
+            initial_runtime.project_root,
+            jobs_root=jobs_root,
+        )
+    else:
+        load_runtime = lambda: initial_runtime
+
     owns_engine = job_repository is None and job_service is None
     if job_service is not None:
         if job_repository is not None and job_service.repository is not job_repository:
@@ -241,7 +258,11 @@ def create_app(
         repository = job_repository or JobRepository(create_auth_engine(database_url))
     application_engine = repository.engine
     create_application_tables(application_engine)
-    durable_service = job_service or JobService(repository, runtime)
+    durable_service = job_service or JobService(
+        repository,
+        runtime,
+        settings_provider=load_runtime,
+    )
     auth_service = AuthService(application_engine, invite_required=runtime.invite_required)
 
     @asynccontextmanager
@@ -258,7 +279,7 @@ def create_app(
 
     def refresh_runtime() -> None:
         nonlocal runtime
-        runtime = RuntimeSettings.from_env(runtime.project_root, jobs_root=jobs_root)
+        runtime = load_runtime_settings_snapshot(initial_runtime, load_runtime)
 
     def routing_content_config() -> dict[str, Any]:
         return runtime.content_pack_config or admin_settings.load_content_pack()
@@ -596,6 +617,7 @@ def create_app(
     ) -> dict[str, Any]:
         set_no_store(response)
         current_user = current_user_or_401(request)
+        refresh_runtime()
         resolved_service_mode = (service_mode or "").strip() or "single_courseware"
         runtime_readiness = application_readiness()
         if runtime_readiness["status"] != "ready":
@@ -651,7 +673,8 @@ def create_app(
                         "scenario": scenario.trace_metadata(),
                         "parser_profile": parser_profile.trace_metadata(),
                     },
-                )
+                ),
+                settings_snapshot=runtime,
             )
         except AdmissionError as exc:
             status_code = {

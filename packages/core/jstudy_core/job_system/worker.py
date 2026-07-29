@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import inspect
+import json
 import mimetypes
 import shutil
 import threading
@@ -17,6 +18,7 @@ from packages.core.jstudy_core.job_system.repository import (
     JobRepository,
     JobSnapshot,
     RelativePathError,
+    SectionInput,
     StaleWorkerError,
     TransitionEvent,
     resolve_job_path,
@@ -25,7 +27,11 @@ from packages.core.jstudy_core.job_system.states import JobState
 from packages.core.jstudy_core.parser_profile_router import resolve_parser_profile
 from packages.core.jstudy_core.pipeline import run_course_outline, run_mvp
 from packages.core.jstudy_core.scenario_router import resolve_scenario
-from packages.core.jstudy_core.settings import RuntimeSettings
+from packages.core.jstudy_core.settings import (
+    RuntimeSettings,
+    RuntimeSettingsProvider,
+    load_runtime_settings_snapshot,
+)
 
 
 Runner = Callable[..., Mapping[str, Path]]
@@ -100,14 +106,30 @@ class JobWorker:
         worker_id: str | None = None,
         single_runner: Runner = run_mvp,
         outline_runner: Runner = run_course_outline,
+        settings_provider: RuntimeSettingsProvider | None = None,
     ):
         self.repository = repository
         self.settings = settings
+        self.settings_provider = settings_provider or (lambda: settings)
         self.worker_id = worker_id or f"worker-{uuid4().hex}"
         self.single_runner = single_runner
         self.outline_runner = outline_runner
 
     def run_once(self) -> bool:
+        settings = load_runtime_settings_snapshot(
+            self.settings,
+            self.settings_provider,
+        )
+        scoped_worker = JobWorker(
+            self.repository,
+            settings,
+            worker_id=self.worker_id,
+            single_runner=self.single_runner,
+            outline_runner=self.outline_runner,
+        )
+        return scoped_worker._run_once_with_snapshot()
+
+    def _run_once_with_snapshot(self) -> bool:
         now = utc_now()
         self.repository.requeue_expired_leases(now)
         self._cleanup_terminal_jobs(now)
@@ -130,10 +152,12 @@ class JobWorker:
             outputs = runner(**_filter_runner_kwargs(runner, kwargs))
             self._require_current_lease(heartbeat)
             artifacts = self._build_artifacts(job, outputs)
+            sections = self._build_sections(job, outputs)
             self.repository.complete_with_artifacts(
                 job.id,
                 self.worker_id,
                 artifacts,
+                sections,
             )
         except StaleWorkerError:
             pass
@@ -183,7 +207,11 @@ class JobWorker:
         stop = stop_event or threading.Event()
         while not stop.is_set():
             if not self.run_once():
-                stop.wait(self.settings.worker_poll_seconds)
+                settings = load_runtime_settings_snapshot(
+                    self.settings,
+                    self.settings_provider,
+                )
+                stop.wait(settings.worker_poll_seconds)
 
     def _runner_call(
         self,
@@ -415,6 +443,95 @@ class JobWorker:
                 )
             )
         return artifacts
+
+    def _build_sections(
+        self,
+        job: JobSnapshot,
+        outputs: Mapping[str, Path],
+    ) -> list[SectionInput]:
+        package_path = outputs.get("package")
+        if package_path is None:
+            raise PermanentJobError(
+                "invalid_job_output",
+                "The material package is missing.",
+            )
+        try:
+            package = json.loads(Path(package_path).read_text(encoding="utf-8"))
+            raw_sections = package["sections"]
+            if package.get("type") != "material_package":
+                raise ValueError("unexpected package type")
+            if package.get("service_mode") != job.service_mode:
+                raise ValueError("package service mode does not match job")
+            if not isinstance(raw_sections, list) or not raw_sections:
+                raise ValueError("package sections are missing")
+
+            sections = []
+            section_ids: set[str] = set()
+            positions: set[int] = set()
+            for raw in raw_sections:
+                if not isinstance(raw, dict):
+                    raise ValueError("package section must be an object")
+                section_id = str(raw.get("id") or "").strip()
+                title = str(raw.get("title") or "").strip()
+                position = raw.get("order")
+                status = str(raw.get("status") or "generated").strip()
+                quality = raw.get("quality") or {}
+                artifacts = (
+                    raw.get("artifact_filenames")
+                    or raw.get("artifact_urls")
+                    or {}
+                )
+                if (
+                    not section_id
+                    or not title
+                    or isinstance(position, bool)
+                    or not isinstance(position, int)
+                    or position < 1
+                    or not status
+                    or not isinstance(quality, dict)
+                    or not isinstance(artifacts, dict)
+                ):
+                    raise ValueError("package section contract is invalid")
+                if section_id in section_ids or position in positions:
+                    raise ValueError("package section identity is duplicated")
+                section_ids.add(section_id)
+                positions.add(position)
+                artifact_filename = str(
+                    artifacts.get("markdown") or ""
+                ).strip()
+                if artifact_filename and (
+                    "/" in artifact_filename
+                    or "\\" in artifact_filename
+                    or Path(artifact_filename).name != artifact_filename
+                ):
+                    raise ValueError("section artifact filename is invalid")
+                sections.append(
+                    SectionInput(
+                        section_id=section_id,
+                        position=position,
+                        title=title,
+                        status=status,
+                        quality_json=json.dumps(
+                            quality,
+                            ensure_ascii=False,
+                            sort_keys=True,
+                        ),
+                        artifact_filename=artifact_filename or None,
+                    )
+                )
+            return sections
+        except (
+            AttributeError,
+            KeyError,
+            OSError,
+            UnicodeError,
+            ValueError,
+            TypeError,
+        ) as exc:
+            raise PermanentJobError(
+                "invalid_job_output",
+                "The material package is invalid.",
+            ) from exc
 
     def _handle_failure(self, job_id: str, exc: Exception) -> None:
         current = self.repository.get(job_id)

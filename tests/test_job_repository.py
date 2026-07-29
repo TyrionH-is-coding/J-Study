@@ -1128,6 +1128,16 @@ class JobRepositoryContractTest(unittest.TestCase):
                     sha256="c" * 64,
                 ),
             ],
+            [
+                SectionInput(
+                    section_id="section-001",
+                    position=1,
+                    title="Unit One",
+                    status="generated",
+                    quality_json='{"evidence_count": 2}',
+                    artifact_filename="result.md",
+                )
+            ],
         )
 
         self.assertEqual(completed.state, JobState.COMPLETED)
@@ -1146,6 +1156,27 @@ class JobRepositoryContractTest(unittest.TestCase):
                     "job-1/attempts/1/output/result.json",
                 ),
             },
+        )
+        self.assertEqual(
+            [
+                (
+                    section.section_id,
+                    section.position,
+                    section.status,
+                    section.quality_json,
+                    section.artifact_filename,
+                )
+                for section in self.repository.list_sections("job-1")
+            ],
+            [
+                (
+                    "section-001",
+                    1,
+                    "generated",
+                    '{"evidence_count": 2}',
+                    "result.md",
+                )
+            ],
         )
 
     def test_complete_with_artifacts_rolls_back_on_artifact_failure(self):
@@ -1179,12 +1210,26 @@ class JobRepositoryContractTest(unittest.TestCase):
                         sha256=None,
                     )
                 ],
+                [
+                    SectionInput(
+                        section_id="section-001",
+                        position=1,
+                        title="Unit One",
+                    )
+                ],
             )
 
         job = self.repository.get("job-1")
         self.assertEqual(job.state, JobState.PACKAGING)
         self.assertEqual(job.lease_owner, "worker-1")
         self.assertEqual(self.repository.list_artifacts("job-1"), [])
+        self.assertEqual(
+            [
+                section.section_id
+                for section in self.repository.list_sections("job-1")
+            ],
+            ["SEC001", "SEC002"],
+        )
         with Session(self.engine) as session:
             last_transition = session.exec(
                 select(JobTransition)
@@ -1192,6 +1237,47 @@ class JobRepositoryContractTest(unittest.TestCase):
                 .order_by(JobTransition.sequence.desc())
             ).first()
         self.assertEqual(last_transition.to_state, JobState.PACKAGING)
+
+    def test_stale_completion_cannot_write_sections(self):
+        self.repository.create_job(self.command())
+        self.claim("worker-1")
+        for target in (
+            JobState.RETRIEVING,
+            JobState.GENERATING,
+            JobState.PACKAGING,
+        ):
+            self.repository.transition(
+                "job-1",
+                target,
+                TransitionEvent(
+                    event=f"enter_{target.value}",
+                    actor="worker",
+                    worker_id="worker-1",
+                ),
+            )
+
+        with self.assertRaises(StaleWorkerError):
+            self.repository.complete_with_artifacts(
+                "job-1",
+                "worker-2",
+                [],
+                [
+                    SectionInput(
+                        section_id="section-001",
+                        position=1,
+                        title="Stale section",
+                    )
+                ],
+            )
+
+        self.assertEqual(self.repository.get("job-1").state, JobState.PACKAGING)
+        self.assertEqual(
+            [
+                section.section_id
+                for section in self.repository.list_sections("job-1")
+            ],
+            ["SEC001", "SEC002"],
+        )
 
     def test_stale_worker_cannot_record_artifacts(self):
         self.repository.create_job(self.command())
