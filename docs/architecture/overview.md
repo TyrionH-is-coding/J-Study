@@ -203,9 +203,9 @@ PostgreSQL 与 jobs read-write volume，`jstudy-worker` 不暴露端口。Redis
 仍不在当前架构中。Pilot artifact 可继续位于挂载卷，后续再通过 storage
 boundary 迁移到 Tencent COS。
 
-Runtime settings are centralized in `packages/core/jstudy_core/settings.py`. `SILICONFLOW_API_KEY` is the primary API key source; `SILICONFLOW_API_KEY_FILE` is the file fallback. `JSTUDY_JOBS_DIR`, `JSTUDY_SOUL_PATH`, `JSTUDY_MNEMONICS_PATH`, `JSTUDY_MAX_PDF_BYTES`, `JSTUDY_JOB_RETENTION_HOURS`, `SILICONFLOW_CHAT_MODEL`, and `SILICONFLOW_EMBED_MODEL` control deploy-time paths, upload limits, optional cleanup, and model choices. `JSTUDY_MNEMONICS_PATH` is the current compatibility name for the prompt-rendered knowledge snippet file used by the MVP pipeline.
+Runtime settings are centralized in `packages/core/jstudy_core/settings.py`. `JSTUDY_DATABASE_URL`, `JSTUDY_JOBS_DIR`, and `JSTUDY_SETTINGS_DIR` are fixed process/topology settings. Provider credentials, models, MinerU settings, Soul/content paths, upload limits, and retention are admin-managed unless a corresponding nonempty process environment variable explicitly overrides them. An empty environment value falls back to shared `data/settings`; Compose therefore leaves model defaults empty. `JSTUDY_MNEMONICS_PATH` is the current compatibility name for the prompt-rendered knowledge snippet file used by the MVP pipeline.
 
-Operator-editable settings are persisted under `JSTUDY_SETTINGS_DIR`, defaulting to `data/settings`. The current files are `model_catalog.json` for LLM, embedding, and web-search profiles; `runtime.json` for RAG, parser, parser profiles, upload, and cleanup settings; `content_pack.json` for subject-pack paths, scenarios, and soul profiles; and `mnemonics.json` as the compatibility filename for structured knowledge snippet items. Environment variables remain deployment overrides and take precedence where they overlap with admin settings.
+Operator-editable settings are persisted under `JSTUDY_SETTINGS_DIR`, defaulting to `data/settings`. The current files are `model_catalog.json` for LLM, embedding, and web-search profiles; `runtime.json` for RAG, parser, parser profiles, upload, and cleanup settings; `content_pack.json` for subject-pack paths, scenarios, and soul profiles; and `mnemonics.json` as the compatibility filename for structured knowledge snippet items. The API takes a fresh snapshot for every submission, while the worker takes one for every claim; a claim already in progress keeps that snapshot. Nonempty environment overrides require a process restart to change and intentionally take precedence over the admin catalog.
 
 ## Soul Profile Library
 
@@ -248,7 +248,8 @@ API 不执行 pipeline；`jstudy-worker` 负责认领、续租、状态推进、
 但 production API/worker 不 import 或写入它。
 
 `JSTUDY_JOB_RETENTION_HOURS` defaults to `0`, which disables cleanup. Public
-pilot deployments should set it to `72` or `168`. Retention is worker-owned:
+pilot `.env` files must provide a deliberate nonzero override such as `72` or
+`168`. Retention is worker-owned:
 worker 只删除超过 TTL、terminal、无 lease 且目录安全归属于
 `JSTUDY_JOBS_DIR/{job_id}` 的 Job；active 或 leased Job 不会被清理。
 

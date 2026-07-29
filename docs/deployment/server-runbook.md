@@ -85,9 +85,9 @@ JSTUDY_API_PORT=8765
 JSTUDY_ADMIN_TOKEN=
 JSTUDY_SETTINGS_DIR=/app/data/settings
 JSTUDY_JOBS_DIR=/app/data/jobs
-JSTUDY_SOUL_PATH=/app/soul.md
-JSTUDY_MNEMONICS_PATH=/app/mnemonics.md
-JSTUDY_MAX_PDF_BYTES=52428800
+JSTUDY_SOUL_PATH=
+JSTUDY_MNEMONICS_PATH=
+JSTUDY_MAX_PDF_BYTES=
 JSTUDY_JOB_RETENTION_HOURS=72
 DATABASE_URL=postgresql+psycopg://jstudy:password@postgres:5432/jstudy
 POSTGRES_DB=jstudy
@@ -104,6 +104,9 @@ Rules:
 - Keep `DATABASE_URL`, `POSTGRES_DB`, `POSTGRES_USER`, and `POSTGRES_PASSWORD` consistent.
 - URL-encode reserved characters in the password portion of `DATABASE_URL`.
 - Treat `JSTUDY_MNEMONICS_PATH` as the current compatibility name for the prompt-rendered knowledge snippet file.
+- A nonempty provider, model, MinerU, Soul/content path, upload-limit, or retention environment variable is an explicit deployment override. It takes precedence over `data/settings` and cannot be hot-updated from the admin page.
+- Leave an admin-managed environment variable empty when `/admin/settings` should own it. The API reloads settings for each new submission and the worker for each new claim; an active claim keeps its starting snapshot.
+- Keep `JSTUDY_JOB_RETENTION_HOURS=72` nonempty for the public pilot so cleanup cannot silently fall back to the application default of `0`.
 - Keep a copy of the production `.env` outside the repository and include it in backup procedures.
 
 ## Data Volumes

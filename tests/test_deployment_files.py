@@ -1,4 +1,7 @@
 import unittest
+import json
+import os
+import subprocess
 from pathlib import Path
 import re
 
@@ -52,6 +55,23 @@ class DeploymentFilesTest(unittest.TestCase):
         self.assertIn("docker compose", runbook_text)
         self.assertIn("data/", gitignore_text)
 
+    def test_dockerfile_does_not_override_admin_managed_runtime_settings(self):
+        dockerfile_text = (ROOT / "apps" / "api" / "Dockerfile").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("JSTUDY_JOBS_DIR=/app/data/jobs", dockerfile_text)
+        for name in (
+            "JSTUDY_SOUL_PATH",
+            "JSTUDY_MNEMONICS_PATH",
+            "JSTUDY_MAX_PDF_BYTES",
+            "JSTUDY_JOB_RETENTION_HOURS",
+            "SILICONFLOW_API_KEY",
+            "SILICONFLOW_CHAT_MODEL",
+            "SILICONFLOW_EMBED_MODEL",
+        ):
+            self.assertNotIn(name, dockerfile_text)
+
     def test_compose_has_exact_api_worker_postgres_topology(self):
         compose_file = ROOT / "deploy" / "docker-compose" / "api.compose.yml"
         compose_text = compose_file.read_text(encoding="utf-8")
@@ -87,7 +107,7 @@ class DeploymentFilesTest(unittest.TestCase):
             self.assertIn(entry, api_block)
             self.assertIn(entry, worker_block)
 
-        admin_managed_overrides = (
+        explicit_runtime_overrides = (
             "SILICONFLOW_API_KEY:",
             "SILICONFLOW_API_KEY_FILE:",
             "SILICONFLOW_CHAT_MODEL:",
@@ -101,13 +121,70 @@ class DeploymentFilesTest(unittest.TestCase):
             "JSTUDY_MAX_PDF_BYTES:",
             "JSTUDY_JOB_RETENTION_HOURS:",
         )
-        for entry in admin_managed_overrides:
-            self.assertNotIn(entry, api_block)
-            self.assertNotIn(entry, worker_block)
+        for entry in explicit_runtime_overrides:
+            self.assertIn(entry, api_block)
+            self.assertIn(entry, worker_block)
+
+        self.assertIn(
+            "SILICONFLOW_CHAT_MODEL: ${SILICONFLOW_CHAT_MODEL:-}",
+            compose_text,
+        )
+        self.assertIn(
+            "SILICONFLOW_EMBED_MODEL: ${SILICONFLOW_EMBED_MODEL:-}",
+            compose_text,
+        )
 
         self.assertIn("ports:", api_block)
         self.assertIn("/api/health", api_block)
         self.assertIn("condition: service_healthy", api_block)
+
+    def test_compose_config_passes_explicit_provider_and_retention_overrides(self):
+        env = {
+            **os.environ,
+            "SILICONFLOW_API_KEY": "probe-provider-key",
+            "SILICONFLOW_CHAT_MODEL": "probe-chat-model",
+            "SILICONFLOW_EMBED_MODEL": "probe-embed-model",
+            "JSTUDY_MAX_PDF_BYTES": "123456",
+            "JSTUDY_JOB_RETENTION_HOURS": "72",
+        }
+        completed = subprocess.run(
+            [
+                "docker",
+                "compose",
+                "-f",
+                str(ROOT / "deploy" / "docker-compose" / "api.compose.yml"),
+                "config",
+                "--format",
+                "json",
+            ],
+            cwd=ROOT,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(
+            completed.returncode,
+            0,
+            completed.stdout + completed.stderr,
+        )
+        services = json.loads(completed.stdout)["services"]
+        for service_name in ("jstudy-api", "jstudy-worker"):
+            runtime = services[service_name]["environment"]
+            self.assertEqual(
+                runtime["SILICONFLOW_API_KEY"],
+                "probe-provider-key",
+            )
+            self.assertEqual(
+                runtime["SILICONFLOW_CHAT_MODEL"],
+                "probe-chat-model",
+            )
+            self.assertEqual(
+                runtime["SILICONFLOW_EMBED_MODEL"],
+                "probe-embed-model",
+            )
+            self.assertEqual(runtime["JSTUDY_MAX_PDF_BYTES"], "123456")
+            self.assertEqual(runtime["JSTUDY_JOB_RETENTION_HOURS"], "72")
 
     def test_compose_keeps_auth_environment_on_api(self):
         compose_file = ROOT / "deploy" / "docker-compose" / "api.compose.yml"

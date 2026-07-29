@@ -70,6 +70,11 @@ def env_path(name: str, default: Path | None) -> Path | None:
     return default
 
 
+def env_text(name: str, default: str) -> str:
+    value = os.getenv(name, "").strip()
+    return value or str(default).strip()
+
+
 def env_int(name: str, default: int) -> int:
     value = os.getenv(name, "").strip()
     if not value:
@@ -166,20 +171,20 @@ class RuntimeSettings:
         search_profile = active_profile(catalog, "search") or {}
         mineru_runtime = runtime["parser"]["mineru"]
         mineru_config = MinerUClientConfig(
-            api_base_url=os.getenv(
+            api_base_url=env_text(
                 MINERU_API_BASE_URL_ENV,
                 str(mineru_runtime["api_base_url"]),
-            ).strip()
+            )
             or "https://mineru.net",
-            model_version=os.getenv(
+            model_version=env_text(
                 MINERU_MODEL_VERSION_ENV,
                 str(mineru_runtime["model_version"]),
-            ).strip()
+            )
             or "vlm",
-            language=os.getenv(
+            language=env_text(
                 MINERU_LANGUAGE_ENV,
                 str(mineru_runtime["language"]),
-            ).strip()
+            )
             or "ch",
             enable_table=bool(mineru_runtime["enable_table"]),
             enable_formula=bool(mineru_runtime["enable_formula"]),
@@ -196,10 +201,10 @@ class RuntimeSettings:
                 int(mineru_runtime["max_result_bytes"]),
             ),
         )
-        mineru_api_token = os.getenv(
+        mineru_api_token = env_text(
             MINERU_API_TOKEN_ENV,
             str(mineru_runtime.get("api_token") or ""),
-        ).strip()
+        )
         api_key_path = _catalog_path(project_root, llm_profile.get("api_key_path"))
         if api_key_path is None:
             api_key_path = project_root / "siliconflow api key.txt"
@@ -219,12 +224,15 @@ class RuntimeSettings:
                 _project_path(project_root, pack.get("mnemonics_path"), "mnemonics.md"),
             ),
             api_key_path=env_path(DEFAULT_API_KEY_FILE_ENV, api_key_path),
-            chat_model=os.getenv("SILICONFLOW_CHAT_MODEL", str(llm_model.get("model") or DEFAULT_CHAT_MODEL)).strip()
+            chat_model=env_text(
+                "SILICONFLOW_CHAT_MODEL",
+                str(llm_model.get("model") or DEFAULT_CHAT_MODEL),
+            )
             or DEFAULT_CHAT_MODEL,
-            embed_model=os.getenv(
+            embed_model=env_text(
                 "SILICONFLOW_EMBED_MODEL",
                 str(embedding_model.get("model") or DEFAULT_EMBED_MODEL),
-            ).strip()
+            )
             or DEFAULT_EMBED_MODEL,
             admin_settings_dir=settings_dir,
             api_key=str(llm_profile.get("api_key") or embedding_profile.get("api_key") or "").strip(),

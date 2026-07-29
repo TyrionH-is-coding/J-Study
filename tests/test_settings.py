@@ -218,6 +218,57 @@ class SettingsTest(unittest.TestCase):
         self.assertEqual(settings.chat_model, "env-chat")
         self.assertEqual(settings.max_pdf_bytes, 12345)
 
+    def test_empty_runtime_environment_falls_back_to_admin_settings(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            service = AdminSettingsService(root / "data" / "settings")
+            payload = service.load_all()
+            payload["model_catalog"]["services"]["llm"]["profiles"][0]["api_key"] = "catalog-key"
+            payload["model_catalog"]["services"]["llm"]["profiles"][0]["models"][0]["model"] = "catalog-chat"
+            payload["model_catalog"]["services"]["embedding"]["profiles"][0]["models"][0]["model"] = "catalog-embed"
+            payload["runtime"]["jobs"]["max_pdf_bytes"] = 98765
+            payload["runtime"]["jobs"]["job_retention_hours"] = 24
+            payload["runtime"]["parser"]["mineru"]["api_token"] = "catalog-mineru-token"
+            payload["runtime"]["parser"]["mineru"]["model_version"] = "pipeline"
+            payload["runtime"]["parser"]["mineru"]["language"] = "en"
+            payload["content_pack"]["packs"][0]["soul_path"] = "content/soul.md"
+            payload["content_pack"]["packs"][0]["mnemonics_path"] = "content/mnemonics.md"
+            service.save_all(payload)
+
+            empty_overrides = {
+                "SILICONFLOW_API_KEY": "",
+                "SILICONFLOW_API_KEY_FILE": "",
+                "SILICONFLOW_CHAT_MODEL": "",
+                "SILICONFLOW_EMBED_MODEL": "",
+                "MINERU_API_BASE_URL": "",
+                "MINERU_API_TOKEN": "",
+                "MINERU_MODEL_VERSION": "",
+                "MINERU_LANGUAGE": "",
+                "JSTUDY_SOUL_PATH": "",
+                "JSTUDY_MNEMONICS_PATH": "",
+                "JSTUDY_MAX_PDF_BYTES": "",
+                "JSTUDY_JOB_RETENTION_HOURS": "",
+            }
+            with patch.dict(os.environ, empty_overrides, clear=True):
+                settings = RuntimeSettings.from_env(root)
+
+        self.assertEqual(settings.api_key, "catalog-key")
+        self.assertEqual(settings.chat_model, "catalog-chat")
+        self.assertEqual(settings.embed_model, "catalog-embed")
+        self.assertEqual(settings.max_pdf_bytes, 98765)
+        self.assertEqual(settings.job_retention_hours, 24)
+        self.assertEqual(settings.soul_path, root / "content" / "soul.md")
+        self.assertEqual(
+            settings.mnemonics_path,
+            root / "content" / "mnemonics.md",
+        )
+        self.assertEqual(settings.mineru_api_token, "catalog-mineru-token")
+        self.assertEqual(
+            settings.mineru_config.model_version,
+            "pipeline",
+        )
+        self.assertEqual(settings.mineru_config.language, "en")
+
     def test_readiness_accepts_admin_json_api_key(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

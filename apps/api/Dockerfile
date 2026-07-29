@@ -4,10 +4,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PYTHONIOENCODING=utf-8 \
     PIP_NO_CACHE_DIR=1 \
-    JSTUDY_JOBS_DIR=/app/data/jobs \
-    JSTUDY_SOUL_PATH=/app/soul.md \
-    JSTUDY_MNEMONICS_PATH=/app/mnemonics.md \
-    JSTUDY_MAX_PDF_BYTES=52428800
+    JSTUDY_JOBS_DIR=/app/data/jobs
 
 WORKDIR /app
 

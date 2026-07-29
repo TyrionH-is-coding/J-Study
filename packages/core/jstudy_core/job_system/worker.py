@@ -36,6 +36,16 @@ from packages.core.jstudy_core.settings import (
 
 Runner = Callable[..., Mapping[str, Path]]
 MAINTENANCE_BATCH_SIZE = 10
+REQUIRED_PUBLIC_ARTIFACT_KINDS = frozenset(
+    {
+        ArtifactKind.MARKDOWN,
+        ArtifactKind.EVIDENCE,
+        ArtifactKind.EVIDENCE_LINKS,
+        ArtifactKind.QUALITY,
+        ArtifactKind.TRACE,
+        ArtifactKind.PACKAGE,
+    }
+)
 
 
 class JobExecutionError(RuntimeError):
@@ -152,7 +162,22 @@ class JobWorker:
             outputs = runner(**_filter_runner_kwargs(runner, kwargs))
             self._require_current_lease(heartbeat)
             artifacts = self._build_artifacts(job, outputs)
-            sections = self._build_sections(job, outputs)
+            artifact_kinds = {artifact.kind for artifact in artifacts}
+            if not REQUIRED_PUBLIC_ARTIFACT_KINDS.issubset(artifact_kinds):
+                raise PermanentJobError(
+                    "invalid_job_output",
+                    "Required job artifacts are missing.",
+                )
+            markdown_filenames = {
+                Path(artifact.relative_path).name
+                for artifact in artifacts
+                if artifact.kind is ArtifactKind.MARKDOWN
+            }
+            sections = self._build_sections(
+                job,
+                outputs,
+                markdown_filenames,
+            )
             self.repository.complete_with_artifacts(
                 job.id,
                 self.worker_id,
@@ -448,6 +473,7 @@ class JobWorker:
         self,
         job: JobSnapshot,
         outputs: Mapping[str, Path],
+        markdown_filenames: set[str],
     ) -> list[SectionInput]:
         package_path = outputs.get("package")
         if package_path is None:
@@ -499,10 +525,12 @@ class JobWorker:
                 artifact_filename = str(
                     artifacts.get("markdown") or ""
                 ).strip()
-                if artifact_filename and (
-                    "/" in artifact_filename
+                if (
+                    not artifact_filename
+                    or "/" in artifact_filename
                     or "\\" in artifact_filename
                     or Path(artifact_filename).name != artifact_filename
+                    or artifact_filename not in markdown_filenames
                 ):
                     raise ValueError("section artifact filename is invalid")
                 sections.append(
@@ -516,7 +544,7 @@ class JobWorker:
                             ensure_ascii=False,
                             sort_keys=True,
                         ),
-                        artifact_filename=artifact_filename or None,
+                        artifact_filename=artifact_filename,
                     )
                 )
             return sections

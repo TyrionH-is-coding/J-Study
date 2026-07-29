@@ -172,8 +172,16 @@ class JobWorkerTest(unittest.TestCase):
             output_dir = kwargs["output_dir"]
             output_dir.mkdir(parents=True, exist_ok=True)
             markdown = output_dir / "result-output.md"
+            evidence = output_dir / "result-evidence.json"
+            evidence_links = output_dir / "result-evidence_links.json"
+            quality = output_dir / "result-quality.json"
+            trace = output_dir / "result-retrieval_trace.json"
             package = output_dir / "result-material-package.json"
             markdown.write_text("# Result\n", encoding="utf-8")
+            evidence.write_text("[]", encoding="utf-8")
+            evidence_links.write_text("[]", encoding="utf-8")
+            quality.write_text('{"status": "pass"}', encoding="utf-8")
+            trace.write_text("{}", encoding="utf-8")
             sections = (
                 [
                     {
@@ -213,7 +221,14 @@ class JobWorkerTest(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            return {"markdown": markdown, "package": package}
+            return {
+                "markdown": markdown,
+                "evidence": evidence,
+                "evidence_links": evidence_links,
+                "quality": quality,
+                "trace": trace,
+                "package": package,
+            }
 
         return runner
 
@@ -265,7 +280,14 @@ class JobWorkerTest(unittest.TestCase):
         }
         self.assertEqual(
             set(artifacts_by_kind),
-            {ArtifactKind.MARKDOWN, ArtifactKind.PACKAGE},
+            {
+                ArtifactKind.MARKDOWN,
+                ArtifactKind.EVIDENCE,
+                ArtifactKind.EVIDENCE_LINKS,
+                ArtifactKind.QUALITY,
+                ArtifactKind.TRACE,
+                ArtifactKind.PACKAGE,
+            },
         )
         self.assertTrue(all(artifact.byte_size > 0 for artifact in artifacts))
         self.assertTrue(all(len(artifact.sha256) == 64 for artifact in artifacts))
@@ -553,6 +575,82 @@ class JobWorkerTest(unittest.TestCase):
         self.assertEqual(self.repository.list_artifacts("job-1"), [])
         self.assertEqual(self.repository.list_sections("job-1"), [])
 
+    def test_missing_markdown_artifact_fails_without_completion(self):
+        self.create_job(max_attempts=1)
+
+        def missing_markdown(**kwargs):
+            outputs = self.output_runner([], "single_courseware")(**kwargs)
+            outputs.pop("markdown")
+            return outputs
+
+        worker = JobWorker(
+            self.repository,
+            self.settings,
+            worker_id="worker-missing-markdown",
+            single_runner=missing_markdown,
+        )
+
+        self.assertTrue(worker.run_once())
+
+        job = self.repository.get("job-1")
+        self.assertEqual(job.state, JobState.FAILED)
+        self.assertEqual(job.error_code, "invalid_job_output")
+        self.assertEqual(self.repository.list_artifacts("job-1"), [])
+        self.assertEqual(self.repository.list_sections("job-1"), [])
+
+    def test_wrong_section_markdown_filename_fails_without_completion(self):
+        self.create_job(max_attempts=1)
+
+        def wrong_filename(**kwargs):
+            outputs = self.output_runner([], "single_courseware")(**kwargs)
+            package = json.loads(
+                outputs["package"].read_text(encoding="utf-8")
+            )
+            package["sections"][0]["artifact_urls"]["markdown"] = "missing.md"
+            outputs["package"].write_text(
+                json.dumps(package),
+                encoding="utf-8",
+            )
+            return outputs
+
+        worker = JobWorker(
+            self.repository,
+            self.settings,
+            worker_id="worker-wrong-markdown",
+            single_runner=wrong_filename,
+        )
+
+        self.assertTrue(worker.run_once())
+
+        job = self.repository.get("job-1")
+        self.assertEqual(job.state, JobState.FAILED)
+        self.assertEqual(job.error_code, "invalid_job_output")
+        self.assertEqual(self.repository.list_artifacts("job-1"), [])
+        self.assertEqual(self.repository.list_sections("job-1"), [])
+
+    def test_missing_public_artifact_fails_without_completion(self):
+        self.create_job(max_attempts=1)
+
+        def missing_trace(**kwargs):
+            outputs = self.output_runner([], "single_courseware")(**kwargs)
+            outputs.pop("trace")
+            return outputs
+
+        worker = JobWorker(
+            self.repository,
+            self.settings,
+            worker_id="worker-missing-trace",
+            single_runner=missing_trace,
+        )
+
+        self.assertTrue(worker.run_once())
+
+        job = self.repository.get("job-1")
+        self.assertEqual(job.state, JobState.FAILED)
+        self.assertEqual(job.error_code, "invalid_job_output")
+        self.assertEqual(self.repository.list_artifacts("job-1"), [])
+        self.assertEqual(self.repository.list_sections("job-1"), [])
+
     def test_permanent_and_generic_failures_store_safe_errors(self):
         cases = (
             (
@@ -675,6 +773,10 @@ class JobWorkerTest(unittest.TestCase):
             },
             {
                 "job-1/attempts/2/output/result-output.md",
+                "job-1/attempts/2/output/result-evidence.json",
+                "job-1/attempts/2/output/result-evidence_links.json",
+                "job-1/attempts/2/output/result-quality.json",
+                "job-1/attempts/2/output/result-retrieval_trace.json",
                 "job-1/attempts/2/output/result-material-package.json",
             },
         )

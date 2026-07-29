@@ -180,13 +180,14 @@ Deployment should be portable across servers:
 
 - no manually installed app dependencies outside containers
 - secrets in `.env`, never in Git
-- `SILICONFLOW_API_KEY` is the deployment API key source
+- nonempty provider/model/MinerU/content/upload/retention environment variables are explicit deployment overrides; empty values fall back to shared `data/settings`
+- admin-managed settings are reloaded for each new API submission and worker claim; an active claim keeps its settings snapshot
 - `JSTUDY_ADMIN_TOKEN` should be set before exposing `/admin/settings`
 - `JSTUDY_SETTINGS_DIR` should point at a mounted persistent settings directory in containerized deployment
-- `JSTUDY_JOBS_DIR`, `JSTUDY_SOUL_PATH`, and `JSTUDY_MNEMONICS_PATH` should point at mounted deployment paths when containerized
+- `JSTUDY_JOBS_DIR` should point at a mounted deployment path when containerized
 - `JSTUDY_MNEMONICS_PATH` is a compatibility name for the prompt-rendered knowledge snippet file until the runtime contract is renamed
-- `JSTUDY_MAX_PDF_BYTES` should be set explicitly for server deployment
-- `JSTUDY_JOB_RETENTION_HOURS` should be nonzero for public testing; use `72` or `168` unless there is a specific reason to keep outputs longer
+- leave admin-managed Compose values such as model selection and `JSTUDY_MAX_PDF_BYTES` empty unless an immutable deployment override is intended
+- `JSTUDY_JOB_RETENTION_HOURS` must have a nonzero public-pilot source; `.env.example` uses `72`
 - persistent files mounted under a data volume
 - domain routes frontend at `/` and backend at `/api/...`
 - reverse proxy health checks should call `/api/health`

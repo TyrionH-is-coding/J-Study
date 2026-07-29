@@ -1351,11 +1351,13 @@ class WebMvpTest(unittest.TestCase):
             evidence = output_dir / f"{output_prefix}-evidence.json"
             evidence_links = output_dir / f"{output_prefix}-evidence_links.json"
             quality = output_dir / f"{output_prefix}-quality.json"
+            trace = output_dir / f"{output_prefix}-retrieval_trace.json"
             package = output_dir / f"{output_prefix}-package.json"
             markdown.write_text("Fact\n", encoding="utf-8")
             evidence.write_text("[]", encoding="utf-8")
             evidence_links.write_text("[]", encoding="utf-8")
             quality.write_text(json.dumps({"status": "pass"}), encoding="utf-8")
+            trace.write_text("{}", encoding="utf-8")
             package.write_text(
                 json.dumps(
                     {
@@ -1380,6 +1382,7 @@ class WebMvpTest(unittest.TestCase):
                 "evidence": evidence,
                 "evidence_links": evidence_links,
                 "quality": quality,
+                "trace": trace,
                 "package": package,
             }
 

@@ -79,10 +79,15 @@ worker 没有 HTTP liveness endpoint，也没有 `ports` 映射；其运行状�
 - PostgreSQL 数据挂载在 `data/postgres`。
 - 上传和生成 artifact 挂载在 `data/jobs`。
 - 管理员运行设置挂载在 `data/settings`。
-- Compose 不注入模型、provider key、parser、Soul/content pack、
-  `max_pdf_bytes` 或 retention 的环境覆盖值；这些可热更新字段以
-  `data/settings` 为准，使新 submission 和新 claim 无需重启即可读取更新。
-- `JSTUDY_JOB_RETENTION_HOURS` 为正数时，retention 由 worker 执行；API 不负责删除 Job。
+- Compose 将 `.env` 中的 provider、模型、MinerU、Soul/content path、
+  `max_pdf_bytes` 与 retention 显式传给 API 和 worker。非空值是部署级
+  override，优先于管理员设置且不能热更新；空值则回落到共享
+  `data/settings`。
+- API 每次新 submission 读取当前设置，worker 每次新 claim 读取当前设置；
+  已运行的 claim 保持本次 settings snapshot，不会中途突变。
+- 模型等可管理字段在 `.env.example` 中保持空，避免无意覆盖管理员设置。
+  Public pilot 例外地保留 `JSTUDY_JOB_RETENTION_HOURS=72` 作为明确的非零
+  retention 来源；retention 由 worker 执行，API 不负责删除 Job。
 - 旧 `jobs.json` 实现仍保留为 compatibility boundary，但 production API/worker 不 import 或写入它。
 
 当前 API 和 worker 会通过 SQLModel `create_all()` 建表。这只适用于数据可丢弃的 disposable pilot。开始保存持久用户数据前，必须先引入 versioned migrations，并编写迁移、回滚、备份与恢复 runbook；不能把 `create_all()` 当作生产 schema migration。
