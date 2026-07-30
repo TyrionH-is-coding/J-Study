@@ -55,20 +55,23 @@ def _messages(
             "citation",
         ],
     }
-    prompt = (
+    format_instruction = (
         "Return one JSON object matching the MaterialSection contract. "
         "Use the exact section identity and only the allowed source and evidence ids. "
         "Do not return Markdown, HTML, CSS, URLs, scripts, or wrapper text.\n"
-        f"Contract: {json.dumps(format_contract, ensure_ascii=False)}\n"
-        f"Evidence: {json.dumps(list(evidence), ensure_ascii=False)}"
+        f"Contract: {json.dumps(format_contract, ensure_ascii=False)}"
     )
+    prompt = f"Evidence: {json.dumps(list(evidence), ensure_ascii=False)}"
     if validation_summary:
         prompt += (
             "\nThe previous result was invalid. Generate a new complete object. "
             f"Safe validation summary: {validation_summary}"
         )
     return [
-        {"role": "system", "content": soul},
+        {
+            "role": "system",
+            "content": f"{soul}\n\nMandatory output format:\n{format_instruction}",
+        },
         {"role": "user", "content": prompt},
     ]
 

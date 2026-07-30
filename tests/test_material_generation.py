@@ -289,6 +289,9 @@ class StructuredGenerationTest(unittest.TestCase):
         self.assertEqual(section.quality.cited_evidence_count, 1)
         self.assertEqual(section.quality.citation_coverage, 1.0)
         provider.assert_called_once()
+        messages = provider.call_args.args[0]
+        self.assertIn("Mandatory output format", messages[0]["content"])
+        self.assertIn("MaterialSection", messages[0]["content"])
 
     @patch(
         "packages.core.jstudy_core.materials.generation.providers.generate_json_object"

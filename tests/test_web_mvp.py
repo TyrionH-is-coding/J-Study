@@ -1240,6 +1240,21 @@ class WebMvpTest(unittest.TestCase):
                 "Material package is invalid",
             )
 
+            package.pop("unexpected")
+            package["source_ids"] = ["S999"]
+            package_path.write_text(
+                json.dumps(package),
+                encoding="utf-8",
+            )
+            unknown_source_response = client.get(
+                f"/api/jobs/{job_id}/package"
+            )
+            self.assertEqual(unknown_source_response.status_code, 500)
+            self.assertEqual(
+                unknown_source_response.json()["detail"],
+                "Material package is invalid",
+            )
+
     def test_generate_job_records_owner_and_blocks_other_users(self):
         def fake_runner(**kwargs):
             output_dir = kwargs["output_dir"]

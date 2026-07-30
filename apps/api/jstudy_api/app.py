@@ -46,6 +46,9 @@ from packages.core.jstudy_core.materials.models import (
     LegacyMaterialPackageV1,
     MaterialPackageV2,
 )
+from packages.core.jstudy_core.materials.validation import (
+    validate_material_package,
+)
 from packages.core.jstudy_core.settings import (
     RuntimeSettings,
     RuntimeSettingsProvider,
@@ -775,7 +778,21 @@ def create_app(
         try:
             payload = read_json(path)
             if payload.get("schema_version") == "material-package.v2":
-                return MaterialPackageV2.model_validate(payload)
+                package = MaterialPackageV2.model_validate(payload)
+                evidence_path = ready_output_path(
+                    job,
+                    ArtifactKind.EVIDENCE,
+                    "Evidence is not ready",
+                )
+                validate_material_package(
+                    package,
+                    read_json(evidence_path),
+                    [
+                        source.source_id
+                        for source in repository.list_sources(job.id)
+                    ],
+                )
+                return package
             if "schema_version" in payload:
                 raise ValueError("unknown material package schema")
             return LegacyMaterialPackageV1.model_validate(payload)
