@@ -1,3 +1,17 @@
+from .compatibility import render_compatibility_markdown
 from .models import CitationRun, MaterialPackageV2, MaterialSection
+from .validation import (
+    MaterialValidationError,
+    audit_material_package,
+    validate_material_package,
+)
 
-__all__ = ["CitationRun", "MaterialPackageV2", "MaterialSection"]
+__all__ = [
+    "CitationRun",
+    "MaterialPackageV2",
+    "MaterialSection",
+    "MaterialValidationError",
+    "audit_material_package",
+    "render_compatibility_markdown",
+    "validate_material_package",
+]
