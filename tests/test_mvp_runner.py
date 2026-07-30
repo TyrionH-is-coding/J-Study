@@ -37,6 +37,62 @@ from packages.core.jstudy_core.pipeline import (  # noqa: E402
 )
 from packages.core.jstudy_core.providers import probe_siliconflow_provider  # noqa: E402
 from packages.core.jstudy_core.job_system.states import JobState  # noqa: E402
+from packages.core.jstudy_core.materials.models import (  # noqa: E402
+    MaterialSection,
+    SectionQuality,
+)
+
+
+def fake_section_generator(**kwargs):
+    evidence = kwargs["evidence"]
+    if not evidence:
+        return MaterialSection(
+            id=kwargs["section_id"],
+            order=kwargs["order"],
+            title=kwargs["title"],
+            status="weak_evidence",
+            quality=SectionQuality(
+                evidence_status="weak",
+                evidence_count=0,
+                cited_evidence_count=0,
+                citation_coverage=0,
+            ),
+            source_ids=[],
+            evidence_ids=[],
+            blocks=[
+                {
+                    "id": f"{kwargs['section_id']}-note",
+                    "type": "callout",
+                    "variant": "note",
+                    "runs": [{"type": "text", "text": "资料不足"}],
+                }
+            ],
+        )
+    evidence_id = evidence[0]["id"]
+    return MaterialSection(
+        id=kwargs["section_id"],
+        order=kwargs["order"],
+        title=kwargs["title"],
+        status="generated",
+        quality=SectionQuality(
+            evidence_status="sufficient",
+            evidence_count=len(evidence),
+            cited_evidence_count=1,
+            citation_coverage=1 / len(evidence),
+        ),
+        source_ids=kwargs["source_ids"],
+        evidence_ids=[item["id"] for item in evidence],
+        blocks=[
+            {
+                "id": f"{kwargs['section_id']}-paragraph",
+                "type": "paragraph",
+                "runs": [
+                    {"type": "text", "text": "Generated fact "},
+                    {"type": "citation", "evidence_id": evidence_id},
+                ],
+            }
+        ],
+    )
 
 
 class FakeHttpResponse:
@@ -335,12 +391,7 @@ content: 一嗅二视三动眼。
             with patch(
                 "packages.core.jstudy_core.pipeline.build_study_queries",
                 return_value=[StudyQuery("sample", "Sample", "alpha overview")],
-            ) as query_builder, patch("packages.core.jstudy_core.providers.generate_markdown") as generate_markdown:
-                generate_markdown.side_effect = lambda messages, api_key, model: (
-                    self.assertIn("第一章 细菌总论", messages[1]["content"])
-                    or "Fact <!-- evidence: E001 -->"
-                )
-
+            ) as query_builder:
                 outputs = run_mvp(
                     pdf_path=pdf,
                     soul_path=soul,
@@ -354,8 +405,13 @@ content: 一嗅二视三动眼。
                     embedding_cache_path=cache,
                     outline_path=outline,
                     parser_backend="pymupdf",
+                    package_id="job-single-001",
+                    section_generator=fake_section_generator,
                     routing_metadata={
-                        "scenario": {"resolved_scenario_id": "medicine-default"},
+                        "scenario": {
+                            "resolved_scenario_id": "medicine-default",
+                            "subject": "medicine",
+                        },
                         "parser_profile": {
                             "resolved_parser_profile_id": "fast",
                             "backend": "pymupdf",
@@ -378,11 +434,18 @@ content: 一嗅二视三动眼。
             self.assertEqual(trace["scenario"]["resolved_scenario_id"], "medicine-default")
             self.assertEqual(trace["parser_profile"]["resolved_parser_profile_id"], "fast")
             self.assertEqual(trace["parser"]["backend"], "pymupdf")
-            self.assertEqual(package["type"], "material_package")
+            self.assertEqual(package["schema_version"], "material-package.v2")
+            self.assertEqual(package["package_id"], "job-single-001")
             self.assertEqual(package["service_mode"], "single_courseware")
-            self.assertEqual(package["sections"][0]["title"], "完整资料")
-            self.assertEqual(package["sections"][0]["artifact_urls"]["markdown"], "case-output.md")
-            self.assertEqual(package["source_files"][0]["file_name"], "lecture.pdf")
+            self.assertEqual(package["sections"][0]["id"], "full-material")
+            self.assertEqual(package["source_ids"], ["S001"])
+            self.assertNotIn("lecture.pdf", package["source_ids"])
+            self.assertEqual(package["subject"], "medicine")
+            self.assertEqual(
+                outputs["markdown"].read_text(encoding="utf-8"),
+                "# 完整学习资料\n\n## 完整资料\n\nGenerated fact <!-- evidence: E001 -->\n",
+            )
+            self.assertEqual(quality["metrics"]["referenced_evidence_count"], 1)
             query_builder.assert_called_once()
             self.assertIn("alpha overview", query_builder.call_args.kwargs["source_text"])
             self.assertIn(outline.read_text(encoding="utf-8"), query_builder.call_args.kwargs["outline"])
@@ -425,12 +488,16 @@ content: 一嗅二视三动眼。
             mnemonics.write_text("", encoding="utf-8")
             api_key.write_text("file-key", encoding="utf-8")
 
+            generator_calls = []
+
+            def capture_generator(**kwargs):
+                generator_calls.append(kwargs)
+                return fake_section_generator(**kwargs)
+
             with patch(
                 "packages.core.jstudy_core.pipeline.build_study_queries",
                 return_value=[StudyQuery("sample", "Sample", "alpha overview")],
-            ), patch("packages.core.jstudy_core.providers.generate_markdown") as generate_markdown:
-                generate_markdown.return_value = "Fact <!-- evidence: E001 -->"
-
+            ):
                 run_mvp(
                     pdf_path=pdf,
                     soul_path=soul,
@@ -444,14 +511,15 @@ content: 一嗅二视三动眼。
                     api_key="runtime-key",
                     chat_base_url="https://chat.example/v1",
                     embed_base_url="https://embed.example/v1",
+                    section_generator=capture_generator,
                 )
 
         self.assertTrue(embed_calls)
         self.assertTrue(all(call[1] == "runtime-key" for call in embed_calls))
         self.assertTrue(all(call[3] == "https://embed.example/v1" for call in embed_calls))
-        generate_markdown.assert_called_once()
-        self.assertEqual(generate_markdown.call_args.kwargs["api_key"], "runtime-key")
-        self.assertEqual(generate_markdown.call_args.kwargs["base_url"], "https://chat.example/v1")
+        self.assertEqual(len(generator_calls), 1)
+        self.assertEqual(generator_calls[0]["api_key"], "runtime-key")
+        self.assertEqual(generator_calls[0]["base_url"], "https://chat.example/v1")
 
     @patch("packages.core.jstudy_core.providers.embed_texts")
     def test_embed_texts_cached_reuses_existing_vectors(self, embed_texts):
@@ -601,36 +669,42 @@ content: 一嗅二视三动眼。
             mnemonics.write_text("", encoding="utf-8")
             api_key.write_text("key", encoding="utf-8")
 
-            with patch("packages.core.jstudy_core.providers.generate_markdown") as generate_markdown:
-                generate_markdown.return_value = "Generated fact <!-- evidence: E001 -->"
-                outputs = run_course_outline(
-                    outline_path=outline,
-                    pdf_paths=[pdf_one, pdf_two],
-                    soul_path=soul,
-                    mnemonics_path=mnemonics,
-                    api_key_path=api_key,
-                    output_dir=output_dir,
-                    chat_model="chat",
-                    embed_model="embed",
-                    output_prefix="course",
-                    rag_config=RagConfig(top_k_candidates=2, per_query_limit=1),
-                    embedding_cache_path=cache,
-                    parser_backend="pymupdf",
-                    generation_mode="metadata-only",
-                    progress_callback=progress_states.append,
-                )
+            outputs = run_course_outline(
+                outline_path=outline,
+                pdf_paths=[pdf_one, pdf_two],
+                soul_path=soul,
+                mnemonics_path=mnemonics,
+                api_key_path=api_key,
+                output_dir=output_dir,
+                chat_model="chat",
+                embed_model="embed",
+                output_prefix="course",
+                rag_config=RagConfig(top_k_candidates=2, per_query_limit=1),
+                embedding_cache_path=cache,
+                parser_backend="pymupdf",
+                generation_mode="metadata-only",
+                package_id="job-course-001",
+                section_generator=fake_section_generator,
+                progress_callback=progress_states.append,
+            )
 
             package = json.loads(outputs["package"].read_text(encoding="utf-8"))
             evidence = json.loads(outputs["evidence"].read_text(encoding="utf-8"))
             links = json.loads(outputs["evidence_links"].read_text(encoding="utf-8"))
+            quality = json.loads(outputs["quality"].read_text(encoding="utf-8"))
 
+        self.assertEqual(package["schema_version"], "material-package.v2")
+        self.assertEqual(package["package_id"], "job-course-001")
         self.assertEqual(package["service_mode"], "course_outline")
-        self.assertEqual(package["generation_mode"], "metadata-only")
-        self.assertEqual([item["source_id"] for item in package["source_files"]], ["S001", "S002"])
+        self.assertEqual(package["source_ids"], ["S001", "S002"])
         self.assertEqual([section["title"] for section in package["sections"]], ["Unit One", "Unit Two"])
-        self.assertEqual(package["sections"][0]["artifact_filenames"]["markdown"], "course-output.md")
+        self.assertEqual(
+            [(section["id"], section["order"]) for section in package["sections"]],
+            [("section-001", 1), ("section-002", 2)],
+        )
         self.assertIn(evidence[0]["source_id"], {"S001", "S002"})
         self.assertIn("source_id", links[0]["target"])
+        self.assertEqual(quality["metrics"]["section_count"], 2)
         self.assertEqual(
             progress_states,
             [

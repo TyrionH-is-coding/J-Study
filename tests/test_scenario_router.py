@@ -75,6 +75,31 @@ class ScenarioRouterTest(unittest.TestCase):
 
         self.assertEqual(resolved.soul_profile["id"], "engineering-blank")
         self.assertEqual(resolved.soul_profile["soul_path"], "souls/engineering.md")
+        self.assertEqual(resolved.trace_metadata()["subject"], "")
+
+    def test_trace_uses_resolved_subject(self):
+        config = {
+            "default_scenario_id": "medicine-default",
+            "packs": [
+                {
+                    "id": "medicine-default",
+                    "enabled": True,
+                    "subject": "medicine-pack",
+                }
+            ],
+            "scenarios": [
+                {
+                    "id": "medicine-default",
+                    "enabled": True,
+                    "content_pack_id": "medicine-default",
+                    "subject": "medicine",
+                }
+            ],
+        }
+
+        resolved = resolve_scenario(config)
+
+        self.assertEqual(resolved.trace_metadata()["subject"], "medicine")
 
     def test_rejects_disabled_scenario(self):
         config = {

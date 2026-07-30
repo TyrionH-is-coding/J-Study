@@ -10,6 +10,20 @@ from packages.core.jstudy_core import providers
 from packages.core.jstudy_core.settings import read_api_key
 from packages.core.jstudy_core.storage import build_output_paths, write_json
 from packages.core.jstudy_core.job_system.states import JobState
+from packages.core.jstudy_core.materials.compatibility import (
+    render_compatibility_markdown,
+)
+from packages.core.jstudy_core.materials.generation import (
+    generate_material_section,
+)
+from packages.core.jstudy_core.materials.models import (
+    MaterialPackageV2,
+    MaterialSection,
+)
+from packages.core.jstudy_core.materials.validation import (
+    audit_material_package,
+    validate_material_package,
+)
 from packages.domains.medicine import (
     StudyQuery,
     audit_output_quality,
@@ -50,6 +64,7 @@ build_evidence_links = citations.build_evidence_links
 
 OUTLINE_SECTION_LIMIT = 12
 ProgressCallback = Callable[[JobState], None]
+SectionGenerator = Callable[..., MaterialSection]
 
 
 def _report_progress(
@@ -62,6 +77,40 @@ def _report_progress(
 
 def source_id_for_index(index: int) -> str:
     return f"S{index + 1:03d}"
+
+
+def _package_subject(routing_metadata: dict[str, Any] | None) -> str:
+    subject = str(
+        ((routing_metadata or {}).get("scenario") or {}).get("subject") or ""
+    ).strip()
+    return subject or "medicine"
+
+
+def _material_package(
+    *,
+    package_id: str,
+    service_mode: str,
+    title: str,
+    subject: str,
+    source_ids: list[str],
+    sections: list[MaterialSection],
+) -> MaterialPackageV2:
+    return MaterialPackageV2(
+        schema_version="material-package.v2",
+        package_id=package_id,
+        service_mode=service_mode,
+        title=title,
+        subject=subject,
+        language="zh-CN",
+        source_ids=source_ids,
+        sections=sections,
+        rendering={
+            "default_theme": {
+                "theme_id": "clinical-standard",
+                "theme_version": "1.0.0",
+            }
+        },
+    )
 
 
 def extract_pages_with_backend(
@@ -157,6 +206,8 @@ def run_mvp(
     parser_config: dict[str, Any] | None = None,
     generation_mode: str = "",
     progress_callback: ProgressCallback | None = None,
+    package_id: str | None = None,
+    section_generator: SectionGenerator | None = None,
 ) -> dict[str, Path]:
     rag_config = rag_config or RagConfig()
     embedding_cache_path = embedding_cache_path or output_dir / ".mvp_cache" / "embeddings.json"
@@ -172,6 +223,8 @@ def run_mvp(
         pages,
         max_chars=rag_config.chunk_max_chars,
         overlap=rag_config.chunk_overlap,
+        source_id="S001",
+        source_file=pdf_path.name,
     )
     if not chunks:
         raise RuntimeError("No text chunks extracted from PDF")
@@ -249,54 +302,36 @@ def run_mvp(
     )
     write_json(output_paths.evidence, evidence)
 
-    package = {
-        "type": "material_package",
-        "service_mode": "single_courseware",
-        "generation_mode": generation_mode or "",
-        "source_files": [
-            {
-                "file_name": pdf_path.name,
-                "parser_backend": parser_backend,
-            }
-        ],
-        "sections": [
-            {
-                "id": "full-material",
-                "title": "完整资料",
-                "order": 1,
-                "source_files": [pdf_path.name],
-                "evidence_ids": [item["id"] for item in evidence],
-                "artifact_urls": {
-                    "markdown": output_paths.markdown.name,
-                    "evidence": output_paths.evidence.name,
-                    "evidence_links": output_paths.evidence_links.name,
-                    "quality": output_paths.quality.name,
-                },
-            }
-        ],
-    }
-    write_json(output_paths.package, package)
-
     _report_progress(progress_callback, JobState.GENERATING)
-    messages = build_generation_prompt(
-        soul_path.read_text(encoding="utf-8"),
-        evidence,
-        mnemonic_hits,
-        outline=outline_text,
+    generate_section = section_generator or generate_material_section
+    section = generate_section(
+        section_id="full-material",
+        order=1,
+        title="完整资料",
+        soul=soul_path.read_text(encoding="utf-8"),
+        evidence=evidence,
+        source_ids=["S001"],
+        api_key=resolved_api_key,
+        model=chat_model,
+        base_url=chat_base_url,
     )
-    if chat_base_url == SILICONFLOW_BASE_URL:
-        markdown = providers.generate_markdown(messages, api_key=resolved_api_key, model=chat_model)
-    else:
-        markdown = providers.generate_markdown(
-            messages,
-            api_key=resolved_api_key,
-            model=chat_model,
-            base_url=chat_base_url,
-        )
     _report_progress(progress_callback, JobState.PACKAGING)
-    output_paths.markdown.write_text(markdown + "\n", encoding="utf-8")
+    package = _material_package(
+        package_id=package_id or output_prefix,
+        service_mode="single_courseware",
+        title="完整学习资料",
+        subject=_package_subject(routing_metadata),
+        source_ids=["S001"],
+        sections=[section],
+    )
+    validate_material_package(package, evidence, {"S001"})
+    quality = audit_material_package(package, evidence)
+    markdown = render_compatibility_markdown(package)
+
+    write_json(output_paths.package, package.model_dump(mode="json"))
+    output_paths.markdown.write_text(markdown, encoding="utf-8")
     write_json(output_paths.evidence_links, citations.build_evidence_links(markdown, evidence))
-    write_json(output_paths.quality, audit_output_quality(markdown, evidence))
+    write_json(output_paths.quality, quality)
 
     return output_paths.as_dict()
 
@@ -323,6 +358,8 @@ def run_course_outline(
     source_files: list[dict[str, Any]] | None = None,
     service_mode: str = "course_outline",
     progress_callback: ProgressCallback | None = None,
+    package_id: str | None = None,
+    section_generator: SectionGenerator | None = None,
 ) -> dict[str, Path]:
     if not pdf_paths:
         raise RuntimeError("Course Outline Mode requires at least one PDF")
@@ -401,60 +438,44 @@ def run_course_outline(
 
     output_dir.mkdir(parents=True, exist_ok=True)
     output_paths = build_output_paths(output_dir, output_prefix)
-    section_markdown_parts: list[str] = []
-    package_sections: list[dict[str, Any]] = []
+    package_sections: list[MaterialSection] = []
     soul_text = soul_path.read_text(encoding="utf-8")
+    generate_section = section_generator or generate_material_section
 
     _report_progress(progress_callback, JobState.GENERATING)
     for section, trace in zip(outline_sections, retrieval_trace):
         kept_ids = [str(chunk.get("id", "")) for chunk in trace.get("kept", [])]
         section_evidence = [evidence_by_chunk[chunk_id] for chunk_id in kept_ids if chunk_id in evidence_by_chunk]
-        if section_evidence:
-            messages = build_generation_prompt(
-                soul_text,
-                section_evidence,
-                mnemonic_hits,
-                outline=section.get("raw_text", ""),
-            )
-            if chat_base_url == SILICONFLOW_BASE_URL:
-                section_markdown = providers.generate_markdown(messages, api_key=resolved_api_key, model=chat_model)
-            else:
-                section_markdown = providers.generate_markdown(
-                    messages,
-                    api_key=resolved_api_key,
-                    model=chat_model,
-                    base_url=chat_base_url,
-                )
-            status = "generated"
-        else:
-            section_markdown = "Evidence for this outline section is currently weak."
-            status = "weak_evidence"
-        section_markdown_parts.append(f"## {section['title']}\n\n{section_markdown.strip()}")
         section_source_ids = sorted({str(item.get("source_id", "")) for item in section_evidence if item.get("source_id")})
         package_sections.append(
-            {
-                "id": section["id"],
-                "title": section["title"],
-                "order": section["order"],
-                "status": status,
-                "quality": {"evidence_count": len(section_evidence)},
-                "source_files": section_source_ids,
-                "evidence_ids": [item["id"] for item in section_evidence],
-                "artifact_filenames": {
-                    "markdown": output_paths.markdown.name,
-                    "evidence": output_paths.evidence.name,
-                    "evidence_links": output_paths.evidence_links.name,
-                    "quality": output_paths.quality.name,
-                    "package": output_paths.package.name,
-                },
-            }
+            generate_section(
+                section_id=section["id"],
+                order=section["order"],
+                title=section["title"],
+                soul=soul_text,
+                evidence=section_evidence,
+                source_ids=section_source_ids,
+                api_key=resolved_api_key,
+                model=chat_model,
+                base_url=chat_base_url,
+            )
         )
 
     _report_progress(progress_callback, JobState.PACKAGING)
-    markdown = "\n\n".join(section_markdown_parts)
-    output_paths.markdown.write_text(markdown + "\n", encoding="utf-8")
+    source_ids = [record["source_id"] for record in source_records]
+    package = _material_package(
+        package_id=package_id or output_prefix,
+        service_mode="course_outline",
+        title="课程学习资料",
+        subject=_package_subject(routing_metadata),
+        source_ids=source_ids,
+        sections=package_sections,
+    )
+    validate_material_package(package, evidence, source_ids)
+    quality = audit_material_package(package, evidence)
+    markdown = render_compatibility_markdown(package)
+    output_paths.markdown.write_text(markdown, encoding="utf-8")
     evidence_links = citations.build_evidence_links(markdown, evidence)
-    quality = audit_output_quality(markdown, evidence)
 
     write_json(output_paths.chunks, [{**asdict(chunk), "embedding_saved": False} for chunk in chunks])
     write_json(
@@ -482,14 +503,5 @@ def run_course_outline(
     write_json(output_paths.evidence, evidence)
     write_json(output_paths.evidence_links, evidence_links)
     write_json(output_paths.quality, quality)
-    write_json(
-        output_paths.package,
-        {
-            "type": "material_package",
-            "service_mode": "course_outline",
-            "generation_mode": generation_mode or "",
-            "source_files": source_records,
-            "sections": package_sections,
-        },
-    )
+    write_json(output_paths.package, package.model_dump(mode="json"))
     return output_paths.as_dict()

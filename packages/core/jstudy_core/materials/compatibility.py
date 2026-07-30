@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from html import escape
 
 from .models import InlineRun, MaterialPackageV2
 
@@ -9,13 +10,13 @@ def _render_runs(runs: Iterable[InlineRun]) -> str:
     rendered: list[str] = []
     for run in runs:
         if run.type == "text":
-            rendered.append(run.text)
+            rendered.append(escape(run.text, quote=False))
         elif run.type == "strong":
-            rendered.append(f"**{run.text}**")
+            rendered.append(f"**{escape(run.text, quote=False)}**")
         elif run.type == "emphasis":
-            rendered.append(f"*{run.text}*")
+            rendered.append(f"*{escape(run.text, quote=False)}*")
         elif run.type == "inline_code":
-            rendered.append(f"`{run.text}`")
+            rendered.append(f"`{escape(run.text, quote=False)}`")
         elif run.type == "inline_formula":
             rendered.append(f"${run.latex}$")
         else:
@@ -62,8 +63,8 @@ def _render_block(block: object) -> str:
 
 
 def render_compatibility_markdown(package: MaterialPackageV2) -> str:
-    parts = [f"# {package.title}"]
+    parts = [f"# {escape(package.title, quote=False)}"]
     for section in sorted(package.sections, key=lambda item: item.order):
-        parts.append(f"## {section.title}")
+        parts.append(f"## {escape(section.title, quote=False)}")
         parts.extend(_render_block(block) for block in section.blocks)
     return "\n\n".join(parts) + "\n"

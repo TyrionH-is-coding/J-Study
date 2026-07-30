@@ -17,6 +17,12 @@ class ScenarioResolution:
     soul_profile: dict[str, Any]
 
     def trace_metadata(self) -> dict[str, Any]:
+        subject = (
+            self.scenario.get("subject")
+            or self.content_pack.get("subject")
+            or self.soul_profile.get("subject")
+            or ""
+        )
         return {
             "requested_scenario_id": self.requested_scenario_id,
             "resolved_scenario_id": self.scenario_id,
@@ -25,6 +31,7 @@ class ScenarioResolution:
             "soul_profile_id": self.soul_profile.get("id", ""),
             "rag_profile": self.scenario.get("rag_profile", ""),
             "domain_rules": self.scenario.get("domain_rules", []),
+            "subject": subject,
         }
 
 

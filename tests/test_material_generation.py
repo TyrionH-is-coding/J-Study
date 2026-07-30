@@ -194,6 +194,30 @@ $$
 
         self.assertLess(markdown.index("## 绪论"), markdown.index("## 第二章"))
 
+    def test_text_runs_are_not_treated_as_raw_html(self):
+        payload = valid_package_payload()
+        payload["sections"][0]["blocks"] = [
+            {
+                "id": "paragraph-unsafe",
+                "type": "paragraph",
+                "runs": [
+                    {
+                        "type": "text",
+                        "text": "<script>alert('x')</script> & text",
+                    }
+                ],
+            }
+        ]
+        package = MaterialPackageV2.model_validate(payload)
+
+        markdown = render_compatibility_markdown(package)
+
+        self.assertNotIn("<script>", markdown)
+        self.assertIn(
+            "&lt;script&gt;alert('x')&lt;/script&gt; &amp; text",
+            markdown,
+        )
+
 
 def generated_section_payload() -> dict:
     return {
