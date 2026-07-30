@@ -1,6 +1,10 @@
 import copy
 import unittest
+from unittest.mock import patch
 
+from packages.core.jstudy_core.materials.generation import (
+    generate_material_section,
+)
 from packages.core.jstudy_core.materials.compatibility import (
     render_compatibility_markdown,
 )
@@ -11,6 +15,10 @@ from packages.core.jstudy_core.materials.validation import (
     validate_material_package,
 )
 from tests.test_material_models import valid_package_payload
+from packages.core.jstudy_core.providers import (
+    ProviderJSONError,
+    generate_json_object,
+)
 
 
 def evidence_items() -> list[dict]:
@@ -185,6 +193,195 @@ $$
         markdown = render_compatibility_markdown(package)
 
         self.assertLess(markdown.index("## 绪论"), markdown.index("## 第二章"))
+
+
+def generated_section_payload() -> dict:
+    return {
+        "id": "section-001",
+        "order": 1,
+        "title": "绪论",
+        "status": "generated",
+        "quality": {
+            "evidence_status": "failed",
+            "evidence_count": 999,
+            "cited_evidence_count": 999,
+            "citation_coverage": 0.0,
+        },
+        "source_ids": ["S001"],
+        "evidence_ids": ["E001"],
+        "blocks": [
+            {
+                "id": "paragraph-001",
+                "type": "paragraph",
+                "runs": [
+                    {"type": "text", "text": "事实"},
+                    {"type": "citation", "evidence_id": "E001"},
+                ],
+            }
+        ],
+    }
+
+
+class StructuredGenerationTest(unittest.TestCase):
+    @patch("packages.core.jstudy_core.providers.siliconflow_post")
+    def test_json_provider_requests_json_object_mode(self, post):
+        post.return_value = {
+            "choices": [{"message": {"content": '{"answer": "ok"}'}}]
+        }
+
+        result = generate_json_object(
+            [{"role": "user", "content": "return json"}],
+            api_key="test-key",
+            model="test-model",
+        )
+
+        self.assertEqual(result, {"answer": "ok"})
+        request_payload = post.call_args.args[1]
+        self.assertEqual(
+            request_payload["response_format"],
+            {"type": "json_object"},
+        )
+
+    @patch(
+        "packages.core.jstudy_core.materials.generation.providers.generate_json_object"
+    )
+    def test_valid_json_returns_typed_section_with_direct_quality(self, provider):
+        provider.return_value = generated_section_payload()
+
+        section = generate_material_section(
+            section_id="section-001",
+            order=1,
+            title="绪论",
+            soul="teaching rules",
+            evidence=evidence_items()[:1],
+            source_ids=["S001"],
+            api_key="test-key",
+            model="test-model",
+        )
+
+        self.assertEqual(section.id, "section-001")
+        self.assertEqual(section.quality.evidence_status, "sufficient")
+        self.assertEqual(section.quality.evidence_count, 1)
+        self.assertEqual(section.quality.cited_evidence_count, 1)
+        self.assertEqual(section.quality.citation_coverage, 1.0)
+        provider.assert_called_once()
+
+    @patch(
+        "packages.core.jstudy_core.materials.generation.providers.generate_json_object"
+    )
+    def test_malformed_json_receives_exactly_one_repair_call(self, provider):
+        provider.side_effect = [
+            ProviderJSONError("invalid_json"),
+            generated_section_payload(),
+        ]
+
+        section = generate_material_section(
+            section_id="section-001",
+            order=1,
+            title="绪论",
+            soul="teaching rules",
+            evidence=evidence_items()[:1],
+            source_ids=["S001"],
+            api_key="test-key",
+            model="test-model",
+        )
+
+        self.assertEqual(section.status, "generated")
+        self.assertEqual(provider.call_count, 2)
+        repair_messages = provider.call_args_list[1].args[0]
+        self.assertIn("invalid_json", repair_messages[-1]["content"])
+
+    @patch(
+        "packages.core.jstudy_core.materials.generation.providers.generate_json_object"
+    )
+    def test_schema_invalid_result_is_repaired_with_safe_summary(self, provider):
+        invalid = generated_section_payload()
+        invalid["blocks"][0]["unexpected"] = "PRIVATE-MODEL-TEXT"
+        provider.side_effect = [invalid, generated_section_payload()]
+
+        section = generate_material_section(
+            section_id="section-001",
+            order=1,
+            title="绪论",
+            soul="teaching rules",
+            evidence=evidence_items()[:1],
+            source_ids=["S001"],
+            api_key="credential-must-not-appear",
+            model="test-model",
+        )
+
+        self.assertEqual(section.status, "generated")
+        repair_messages = provider.call_args_list[1].args[0]
+        repair_text = repair_messages[-1]["content"]
+        self.assertIn("extra_forbidden", repair_text)
+        self.assertNotIn("PRIVATE-MODEL-TEXT", repair_text)
+        self.assertNotIn("credential-must-not-appear", repair_text)
+
+    @patch(
+        "packages.core.jstudy_core.materials.generation.providers.generate_json_object"
+    )
+    def test_second_invalid_result_returns_deterministic_failed_section(self, provider):
+        provider.side_effect = [
+            {"raw": "FIRST-PRIVATE-TEXT"},
+            {"raw": "SECOND-PRIVATE-TEXT"},
+        ]
+
+        section = generate_material_section(
+            section_id="section-001",
+            order=1,
+            title="绪论",
+            soul="teaching rules",
+            evidence=evidence_items()[:1],
+            source_ids=["S001"],
+            api_key="test-key",
+            model="test-model",
+        )
+
+        self.assertEqual(provider.call_count, 2)
+        self.assertEqual(section.status, "failed")
+        self.assertEqual(section.blocks, [])
+        dumped = str(section.model_dump())
+        self.assertNotIn("FIRST-PRIVATE-TEXT", dumped)
+        self.assertNotIn("SECOND-PRIVATE-TEXT", dumped)
+
+    @patch(
+        "packages.core.jstudy_core.materials.generation.providers.generate_json_object"
+    )
+    def test_provider_exceptions_propagate_for_worker_retry(self, provider):
+        provider.side_effect = RuntimeError("provider unavailable")
+
+        with self.assertRaisesRegex(RuntimeError, "provider unavailable"):
+            generate_material_section(
+                section_id="section-001",
+                order=1,
+                title="绪论",
+                soul="teaching rules",
+                evidence=evidence_items()[:1],
+                source_ids=["S001"],
+                api_key="test-key",
+                model="test-model",
+            )
+        provider.assert_called_once()
+
+    @patch(
+        "packages.core.jstudy_core.materials.generation.providers.generate_json_object"
+    )
+    def test_no_evidence_returns_deterministic_weak_section_without_provider(self, provider):
+        section = generate_material_section(
+            section_id="section-001",
+            order=1,
+            title="绪论",
+            soul="teaching rules",
+            evidence=[],
+            source_ids=[],
+            api_key="test-key",
+            model="test-model",
+        )
+
+        self.assertEqual(section.status, "weak_evidence")
+        self.assertEqual(section.quality.evidence_status, "weak")
+        self.assertEqual(section.blocks[0].type, "callout")
+        provider.assert_not_called()
 
 
 if __name__ == "__main__":

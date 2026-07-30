@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from typing import Any
 
-from .models import CitationRun, MaterialPackageV2
+from .models import CitationRun, MaterialPackageV2, MaterialSection
 
 
 class MaterialValidationError(ValueError):
@@ -12,21 +12,29 @@ class MaterialValidationError(ValueError):
         self.code = code
 
 
+def citation_ids_for_section(section: MaterialSection) -> Iterable[str]:
+    for block in section.blocks:
+        if block.type in {"heading", "paragraph", "callout"}:
+            run_groups = [block.runs]
+        elif block.type == "list":
+            run_groups = block.items
+        elif block.type == "table":
+            run_groups = [
+                *block.headers,
+                *(cell for row in block.rows for cell in row),
+            ]
+        else:
+            run_groups = []
+        for runs in run_groups:
+            for run in runs:
+                if isinstance(run, CitationRun):
+                    yield run.evidence_id
+
+
 def _citation_ids(package: MaterialPackageV2) -> Iterable[tuple[str, str]]:
     for section in package.sections:
-        for block in section.blocks:
-            if block.type in {"heading", "paragraph", "callout"}:
-                run_groups = [block.runs]
-            elif block.type == "list":
-                run_groups = block.items
-            elif block.type == "table":
-                run_groups = [*block.headers, *(cell for row in block.rows for cell in row)]
-            else:
-                run_groups = []
-            for runs in run_groups:
-                for run in runs:
-                    if isinstance(run, CitationRun):
-                        yield section.id, run.evidence_id
+        for evidence_id in citation_ids_for_section(section):
+            yield section.id, evidence_id
 
 
 def validate_material_package(

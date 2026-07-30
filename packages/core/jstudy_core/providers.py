@@ -14,6 +14,10 @@ DEFAULT_EMBED_MODEL = "BAAI/bge-m3"
 SILICONFLOW_BASE_URL = "https://api.siliconflow.cn/v1"
 
 
+class ProviderJSONError(ValueError):
+    pass
+
+
 def siliconflow_post(
     endpoint: str,
     payload: dict[str, Any],
@@ -180,6 +184,41 @@ def generate_markdown(
         return response["choices"][0]["message"]["content"].strip()
     except (KeyError, IndexError, TypeError) as exc:
         raise RuntimeError(f"Unexpected chat response shape: {response}") from exc
+
+
+def generate_json_object(
+    messages: list[dict[str, str]],
+    api_key: str,
+    model: str = DEFAULT_CHAT_MODEL,
+    base_url: str = SILICONFLOW_BASE_URL,
+) -> dict[str, Any]:
+    response = siliconflow_post(
+        "chat/completions",
+        {
+            "model": model,
+            "messages": messages,
+            "temperature": 0.15,
+            "max_tokens": 6000,
+            "response_format": {"type": "json_object"},
+        },
+        api_key,
+        timeout=240,
+        retries=1,
+        base_url=base_url,
+    )
+    try:
+        content = response["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError) as exc:
+        raise ProviderJSONError("unexpected_response_shape") from exc
+    if not isinstance(content, str):
+        raise ProviderJSONError("unexpected_response_shape")
+    try:
+        parsed = json.loads(content)
+    except json.JSONDecodeError as exc:
+        raise ProviderJSONError("invalid_json") from exc
+    if not isinstance(parsed, dict):
+        raise ProviderJSONError("json_root_not_object")
+    return parsed
 
 
 def probe_siliconflow_provider(
