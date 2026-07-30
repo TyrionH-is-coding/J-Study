@@ -108,31 +108,29 @@ Acceptance:
 - admin invite management remains protected by `JSTUDY_ADMIN_TOKEN`
 - auth behavior is covered by automated tests before server deployment
 
-## Phase 2: Frontend MVP - Course Outline foundation done
+## Phase 2: Frontend foundation rebuilt; business workflows pending
 
-Goal: replace the temporary built-in HTML with a real frontend.
+Goal: maintain a reproducible Next.js foundation before reconnecting product workflows.
 
 Deliverables:
 
-- `apps/web` with Next.js App Router, TypeScript, Tailwind, shadcn/ui, and TanStack Query - done
-- approved Clinical Workbench visual baseline - done
-- login, registration, cookie session guard, and logout - done
-- mode selector exposing only Course Outline Mode - done
-- outline plus repeated PDF upload page - done
-- queued, running, completed, and failed job states - done
-- sectioned generated Markdown reader - done
-- source-specific PDF page preview panel - done
-- evidence button to `source_id + page` jump inside the preview - done
-- temporary backend UI has a small frontend-ready reader bridge: job id visibility, Markdown download link, quality badge, KaTeX rendering, and citation-to-source-preview jump
+- `apps/web` with Next.js App Router, TypeScript, Tailwind, shadcn/ui configuration, and TanStack Query - done
+- shared application shell and explicit route placeholders - done
+- centralized relative `/api/*` request boundary - done
+- unit, production-build, and three-viewport browser verification - done
+- formal brand and visual language - pending
+- login, registration, cookie session guard, and logout - pending
+- Course Outline upload and job polling - pending
+- generated material reader and source-specific PDF preview - pending
+- citation-to-source-preview interaction - pending
 
 Acceptance:
 
-- unauthenticated users see the login/register flow
-- user can upload an outline with one or more PDFs from the frontend
-- blank General, Engineering, and Law scenarios remain hidden; scenario selection is not exposed in the first Course Outline UI
-- generated output displays cleanly
-- clicking "依据 E001" scrolls only the source preview area
-- frontend and backend run locally together
+- all six foundation routes open directly
+- route placeholders do not present fake forms or sample business data
+- browser API calls are constrained to the relative `/api/*` boundary
+- primary application shell has no horizontal overflow at required viewports
+- business workflow completion is not claimed until it is reimplemented and tested
 
 ## Phase 3: Single-Server Deployment
 
