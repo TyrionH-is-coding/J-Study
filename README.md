@@ -37,10 +37,11 @@ The current backend can:
 - build RAG study queries from the uploaded PDF text and optional outline
 - retrieve evidence chunks with embedding + BM25/RRF
 - retrieve related knowledge snippets from the current legacy `mnemonics.md` prompt-rendered seed file
-- generate Markdown study material using the selected scenario's soul profile
+- generate strictly validated `material-package.v2` sections for both current service modes using the selected scenario's soul profile
+- derive compatibility Markdown and its evidence links deterministically from the validated package instead of generating an independent Markdown response
 - emit evidence links so the UI can jump from evidence ids to the correct source PDF page
 
-This is still a single-machine MVP. It does not yet include object storage, a production task queue, database-backed job records, or a separate frontend app.
+This is still a single-server pilot architecture. PostgreSQL-backed Job records, an independent Worker, and `apps/web` now exist; object storage, versioned database migrations, and a production queue broker remain pending.
 
 ## Repository Status
 
@@ -144,7 +145,7 @@ Use `/api/readiness?probe_provider=true` during deployment to run a live Silicon
 `POST /api/generate` accepts optional `scenario_id`, `parser_profile_id`, `mode`, and `service_mode` form fields. Missing scenario and parser values resolve to the admin-configured defaults. Empty `service_mode` or `single_courseware` keeps the existing `pdf=<one PDF>` path. `service_mode=course_outline` requires `outline=<.md/.txt/.pdf>` and at least one repeated `pdfs=<PDF>` upload. `mode` is stored as generation metadata for frontend experiments, but it does not replace service mode, subject scenario, or parser profile behavior. `scenario_id` resolves `content_pack_id`, `prompt_profile`, and the matching `soul_profile`, so different subjects can use different soul files without changing code.
 `parser_profile_id=fast` maps to PyMuPDF. The reserved `quality` profile maps to MinerU, is hidden from normal users at first, and should be enabled only after MinerU is configured.
 Job、source、section、artifact 和 transition 已由 SQLModel 持久化到 PostgreSQL；独立 `jstudy-worker` 通过 lease 认领并执行 queued Job，API 只负责 durable submission 和 owner-scoped read。旧 `jobs.json` 代码仍保留为 compatibility boundary，但 production API/worker 不 import 或写入它。
-Completed jobs expose retrieval diagnostics at `/api/jobs/{job_id}/trace`, material-package metadata at `/api/jobs/{job_id}/package`, and a Markdown attachment at `/api/jobs/{job_id}/export`. Source previews are available through the legacy first-source endpoints `/api/jobs/{job_id}/pdf-info` and `/api/jobs/{job_id}/pdf-page/{page}.png`, plus source-specific endpoints `/api/jobs/{job_id}/pdfs`, `/api/jobs/{job_id}/pdfs/{source_id}/pdf-info`, and `/api/jobs/{job_id}/pdfs/{source_id}/pdf-page/{page}.png`.
+Completed jobs expose retrieval diagnostics at `/api/jobs/{job_id}/trace`, the owner-scoped and schema-validated `material-package.v2` payload at `/api/jobs/{job_id}/package`, and a deterministic compatibility Markdown attachment at `/api/jobs/{job_id}/export`. The package endpoint continues to read the bounded legacy v1 contract during migration. Source previews are available through the legacy first-source endpoints `/api/jobs/{job_id}/pdf-info` and `/api/jobs/{job_id}/pdf-page/{page}.png`, plus source-specific endpoints `/api/jobs/{job_id}/pdfs`, `/api/jobs/{job_id}/pdfs/{source_id}/pdf-info`, and `/api/jobs/{job_id}/pdfs/{source_id}/pdf-page/{page}.png`.
 
 User auth:
 

@@ -79,7 +79,16 @@ Task 0006 当前边界：
 - 旧 `jobs.json` 仅保留 compatibility boundary，production 不 import；
 - SQLModel `create_all()` 仅用于 disposable pilot；
 - 持久数据上线前仍必须交付 versioned migrations 和迁移/回滚/备份 runbook；
-- HTML、`material-package.v2` 与 MinerU pipeline 切换仍属于后续任务。
+- HTML 与 MinerU pipeline 切换仍属于后续任务。
+
+Task 0007 当前边界：
+
+- `single_courseware` 与 `course_outline` 新 Job 均生成严格校验的 `material-package.v2`；
+- citation/source/evidence 交叉引用与质量指标直接从 typed blocks 计算；
+- JSON 格式或 schema 失败最多进行一次受控修复；
+- Markdown 由 v2 确定性派生并继续满足现有 `/output` 与 `/export` 兼容合同；
+- Worker 原子持久化 v2 sections/artifacts/completion，package API 保持 owner check 并继续读取 legacy v1；
+- 未实施 React/HTML renderer、HTML export、MinerU pipeline switch、Markdown 删除或数据库迁移。
 
 Implementation order is controlled by:
 
@@ -189,8 +198,8 @@ Deliverables:
 - backend request contract that records service mode separately from
   `scenario_id` - currently done for `course_outline`; legacy
   `parser_profile_id` is scheduled for removal
-- package-output contract for multi-section material - backend foundation done for `course_outline`
-- section-level evidence, source-file metadata, and quality status model - backend foundation done for `course_outline`
+- package-output contract for multi-section material - strict v2 backend contract done for `single_courseware` and `course_outline`
+- section-level blocks, structural citations, source/evidence identities, and direct quality status - backend v2 done for both implemented modes
 - full-export contract that can assemble all sections into one complete document
 
 Acceptance:
@@ -252,9 +261,9 @@ Deliverables:
 - outline upload and deterministic parsing workflow - backend done
 - outline-node section plan - backend done
 - retrieval across all uploaded courseware per outline node - backend first version done
-- evidence coverage report per outline node - package status first version done
+- evidence coverage report per outline node - typed block/citation audit done
 - section-by-section web browsing - done in `apps/web`
-- full course-material Markdown export - backend first version done
+- full course-material Markdown export - deterministically derived from v2
 
 Acceptance:
 

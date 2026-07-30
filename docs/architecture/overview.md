@@ -38,15 +38,16 @@ The first backend reorganization steps are implemented. Further steps should spl
 ```text
 Upload single PDF or course outline + multiple PDFs + optional scenario
 -> scenario and soul profile resolution
--> MinerU document parsing and normalization
+-> selected parser profile, with PyMuPDF still the public default
 -> chunks with page metadata
 -> source/outline-driven retrieval query planner
 -> embedding + lexical retrieval
 -> evidence selection
 -> approved knowledge snippet retrieval
--> domain prompt/template
--> LLM generation
--> Markdown + evidence + evidence links + quality report
+-> structured section generation with at most one format repair
+-> validated material-package.v2 blocks and citation runs
+-> direct package quality audit
+-> deterministic compatibility Markdown + evidence links
 -> frontend reader with source-page citation jumps
 ```
 
@@ -59,16 +60,16 @@ parser infrastructure.
 - `batch_courseware`: multiple PDFs, optional user notes or loose outline, one material package. The web app should browse the package by chapter or topic and should also export the complete package as one document.
 - `course_outline`: course outline plus all courseware for a full course, one material package. The backend contract is implemented with required outline upload, repeated `pdfs`, source identities such as `S001`, and section package metadata. The formal `apps/web` workflow now covers upload, polling, section browsing, source-specific page preview, citation jump, and full Markdown export.
 
-Batch Courseware Mode and Course Outline Mode should share the same package-output contract:
+The two currently implemented service modes now use the same v2 package-output contract. Batch Courseware remains pending:
 
 ```text
-material_package
+material-package.v2
 -> sections[]
-   -> section title and order
-   -> source files and pages used as evidence
-   -> generated markdown for this section
-   -> evidence links and quality report for this section
--> full export assembled from sections
+   -> stable section id, title, order, and status
+   -> source_ids and evidence_ids
+   -> typed blocks and structural citation runs
+   -> direct evidence quality metrics
+-> deterministic compatibility Markdown assembled from sections
 ```
 
 The difference is planning. Batch Courseware Mode can derive sections from uploaded file order, detected headings, or inferred topics. Course Outline Mode follows the uploaded outline first and marks sections with weak evidence in the package instead of silently inventing support.
@@ -263,9 +264,11 @@ worker 只删除超过 TTL、terminal、无 lease 且目录安全归属于
 
 Uploaded PDFs stay on local disk during the pilot because citation preview needs the original source file. This is acceptable for a small trial only with nonzero retention. When J-Study needs persistent user history, course libraries, or formal multi-user accounts, uploaded PDFs and generated artifacts should move to Tencent COS or equivalent object storage, with metadata kept in a database and lifecycle rules enforced outside the app process.
 
-Completed jobs expose the retrieval trace through `GET /api/jobs/{job_id}/trace`. This returns the selected chunks, query traces, RAG settings, source file metadata, and knowledge snippet hits already written by the pipeline so backend quality issues can be reviewed without shell access to the server. Completed jobs expose `material_package` metadata through `GET /api/jobs/{job_id}/package`; single-courseware jobs use one compatibility section, while course-outline jobs include ordered outline sections, source files, evidence ids, section status, quality summaries, and artifact filenames. `GET /api/jobs/{job_id}/export` downloads the generated Markdown with the same owner checks as the other job artifacts. Multi-PDF jobs should use source-specific preview endpoints under `/api/jobs/{job_id}/pdfs/{source_id}/...`; old `/pdf-info` and `/pdf-page/{page}.png` endpoints remain first-source compatibility aliases.
+Completed jobs expose the retrieval trace through `GET /api/jobs/{job_id}/trace`. This returns the selected chunks, query traces, RAG settings, source file metadata, and knowledge snippet hits already written by the pipeline so backend quality issues can be reviewed without shell access to the server. `GET /api/jobs/{job_id}/package` returns a strictly validated `material-package.v2` for new jobs and keeps a bounded legacy v1 read branch during migration. Single-courseware jobs keep section id `full-material`; course-outline jobs keep deterministic outline section ids and order. The endpoint remains owner-scoped and never returns malformed persisted v2 as an unvalidated response. `GET /api/jobs/{job_id}/export` downloads Markdown deterministically derived from v2 with the same owner checks as the other job artifacts. Multi-PDF jobs should use source-specific preview endpoints under `/api/jobs/{job_id}/pdfs/{source_id}/...`; old `/pdf-info` and `/pdf-page/{page}.png` endpoints remain first-source compatibility aliases.
 
-The generated quality report checks whether hidden evidence comments exist, whether cited evidence IDs are valid, whether retrieved evidence was left unused, whether implementation-facing wording leaked into the output, and whether each markdown section has citation coverage. Missing section citations are warnings so the MVP can surface review risk without blocking otherwise valid output.
+The generated quality report traverses typed blocks and citation runs directly. Unknown source, evidence, or citation identities are validation errors; unused evidence, weak-evidence sections, and failed sections remain explicit issues. Markdown is not parsed to calculate v2 quality.
+
+This task did not add an HTML renderer or export path, switch the generation pipeline to MinerU, remove Markdown, or introduce a database migration.
 
 ## Current Technical Debt
 
