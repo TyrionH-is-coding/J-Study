@@ -55,6 +55,9 @@ mvp-v*-retrieval_trace.json
 # Local imported tooling
 ima/
 
+# Local isolated worktrees
+.worktrees/
+
 # OS and editor files
 .DS_Store
 Thumbs.db
