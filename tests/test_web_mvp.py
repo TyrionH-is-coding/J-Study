@@ -1332,6 +1332,51 @@ class WebMvpTest(unittest.TestCase):
 
         self.assertEqual(response.status_code, 403)
 
+    def test_generate_accepts_public_mineru_profile_from_environment_snapshot(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "soul.md").write_text("soul", encoding="utf-8")
+            (root / "mnemonics.md").write_text("mnemonics", encoding="utf-8")
+            service = AdminSettingsService(root / "data" / "settings")
+            payload = service.load_all()
+            profile = payload["model_catalog"]["services"]["llm"]["profiles"][0]
+            profile["api_key"] = "configured-test-key"
+            quality = next(
+                item
+                for item in payload["runtime"]["parser_profiles"]["profiles"]
+                if item["id"] == "quality"
+            )
+            quality["enabled"] = True
+            quality["visible_to_users"] = True
+            quality["requires_admin"] = False
+            payload["runtime"]["parser"]["mineru"]["api_token"] = ""
+            service.save_all(payload)
+
+            with patch.dict(
+                os.environ,
+                {
+                    "MINERU_API_TOKEN": "environment-mineru-token",
+                },
+                clear=True,
+            ):
+                settings = RuntimeSettings.from_env(root)
+                client = TestClient(create_app(settings=settings))
+                self.register_user(client)
+                response = client.post(
+                    "/api/generate",
+                    data={"parser_profile_id": "quality"},
+                    files={
+                        "pdf": (
+                            "lecture.pdf",
+                            self.make_pdf_bytes(),
+                            "application/pdf",
+                        )
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "queued")
+
     def test_durable_repository_persists_completed_job_status_between_app_instances(self):
         def fake_runner(
             pdf_path,

@@ -116,6 +116,9 @@ class DeploymentFilesTest(unittest.TestCase):
             "MINERU_API_TOKEN:",
             "MINERU_MODEL_VERSION:",
             "MINERU_LANGUAGE:",
+            "MINERU_POLL_INTERVAL_SECONDS:",
+            "MINERU_DEADLINE_SECONDS:",
+            "MINERU_MAX_RESULT_BYTES:",
             "JSTUDY_SOUL_PATH:",
             "JSTUDY_MNEMONICS_PATH:",
             "JSTUDY_MAX_PDF_BYTES:",
@@ -138,53 +141,72 @@ class DeploymentFilesTest(unittest.TestCase):
         self.assertIn("/api/health", api_block)
         self.assertIn("condition: service_healthy", api_block)
 
-    def test_compose_config_passes_explicit_provider_and_retention_overrides(self):
-        env = {
-            **os.environ,
-            "SILICONFLOW_API_KEY": "probe-provider-key",
-            "SILICONFLOW_CHAT_MODEL": "probe-chat-model",
-            "SILICONFLOW_EMBED_MODEL": "probe-embed-model",
-            "JSTUDY_MAX_PDF_BYTES": "123456",
-            "JSTUDY_JOB_RETENTION_HOURS": "72",
-        }
-        completed = subprocess.run(
-            [
-                "docker",
-                "compose",
-                "-f",
-                str(ROOT / "deploy" / "docker-compose" / "api.compose.yml"),
-                "config",
-                "--format",
-                "json",
-            ],
-            cwd=ROOT,
-            env=env,
-            capture_output=True,
-            text=True,
-            check=False,
+    def test_compose_config_preserves_nonempty_and_empty_runtime_overrides(self):
+        cases = (
+            {
+                "SILICONFLOW_API_KEY": "probe-provider-key",
+                "SILICONFLOW_API_KEY_FILE": "probe-provider-key-file",
+                "SILICONFLOW_CHAT_MODEL": "probe-chat-model",
+                "SILICONFLOW_EMBED_MODEL": "probe-embed-model",
+                "MINERU_API_BASE_URL": "https://api.mineru.net",
+                "MINERU_API_TOKEN": "probe-mineru-token",
+                "MINERU_MODEL_VERSION": "pipeline",
+                "MINERU_LANGUAGE": "en",
+                "MINERU_POLL_INTERVAL_SECONDS": "3",
+                "MINERU_DEADLINE_SECONDS": "600",
+                "MINERU_MAX_RESULT_BYTES": "1048576",
+                "JSTUDY_MAX_PDF_BYTES": "123456",
+                "JSTUDY_JOB_RETENTION_HOURS": "72",
+            },
+            {
+                "SILICONFLOW_API_KEY": "",
+                "SILICONFLOW_API_KEY_FILE": "",
+                "SILICONFLOW_CHAT_MODEL": "",
+                "SILICONFLOW_EMBED_MODEL": "",
+                "MINERU_API_BASE_URL": "",
+                "MINERU_API_TOKEN": "",
+                "MINERU_MODEL_VERSION": "",
+                "MINERU_LANGUAGE": "",
+                "MINERU_POLL_INTERVAL_SECONDS": "",
+                "MINERU_DEADLINE_SECONDS": "",
+                "MINERU_MAX_RESULT_BYTES": "",
+                "JSTUDY_MAX_PDF_BYTES": "",
+                "JSTUDY_JOB_RETENTION_HOURS": "",
+            },
         )
-        self.assertEqual(
-            completed.returncode,
-            0,
-            completed.stdout + completed.stderr,
-        )
-        services = json.loads(completed.stdout)["services"]
-        for service_name in ("jstudy-api", "jstudy-worker"):
-            runtime = services[service_name]["environment"]
-            self.assertEqual(
-                runtime["SILICONFLOW_API_KEY"],
-                "probe-provider-key",
-            )
-            self.assertEqual(
-                runtime["SILICONFLOW_CHAT_MODEL"],
-                "probe-chat-model",
-            )
-            self.assertEqual(
-                runtime["SILICONFLOW_EMBED_MODEL"],
-                "probe-embed-model",
-            )
-            self.assertEqual(runtime["JSTUDY_MAX_PDF_BYTES"], "123456")
-            self.assertEqual(runtime["JSTUDY_JOB_RETENTION_HOURS"], "72")
+        for expected in cases:
+            with self.subTest(empty=not bool(expected["SILICONFLOW_API_KEY"])):
+                completed = subprocess.run(
+                    [
+                        "docker",
+                        "compose",
+                        "-f",
+                        str(
+                            ROOT
+                            / "deploy"
+                            / "docker-compose"
+                            / "api.compose.yml"
+                        ),
+                        "config",
+                        "--format",
+                        "json",
+                    ],
+                    cwd=ROOT,
+                    env={**os.environ, **expected},
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertEqual(
+                    completed.returncode,
+                    0,
+                    completed.stdout + completed.stderr,
+                )
+                services = json.loads(completed.stdout)["services"]
+                for service_name in ("jstudy-api", "jstudy-worker"):
+                    runtime = services[service_name]["environment"]
+                    for name, value in expected.items():
+                        self.assertEqual(runtime[name], value)
 
     def test_compose_keeps_auth_environment_on_api(self):
         compose_file = ROOT / "deploy" / "docker-compose" / "api.compose.yml"
@@ -215,6 +237,22 @@ class DeploymentFilesTest(unittest.TestCase):
         )
         for text in required_text:
             self.assertIn(text, runbook)
+
+        server_runbook = (
+            ROOT / "docs" / "deployment" / "server-runbook.md"
+        ).read_text(encoding="utf-8")
+        for text in (
+            "PostgreSQL + API + Worker",
+            "jstudy-worker",
+            "queued",
+            "completed",
+            "failed",
+        ):
+            self.assertIn(text, server_runbook)
+        self.assertNotIn(
+            "Redis, a worker, and object storage are not required",
+            server_runbook,
+        )
 
     def test_architecture_and_roadmap_describe_durable_worker_boundary(self):
         architecture = (ROOT / "docs" / "architecture" / "overview.md").read_text(

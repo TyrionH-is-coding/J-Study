@@ -19,6 +19,7 @@ from packages.core.jstudy_core.auth_db import (
     create_application_tables,
     create_auth_engine,
 )
+from packages.core.jstudy_core.admin_settings import AdminSettingsService
 from packages.core.jstudy_core.job_system.models import (
     ArtifactKind,
     Job,
@@ -517,6 +518,126 @@ class JobWorkerTest(unittest.TestCase):
         )
         self.assertEqual(calls[1]["soul_path"], new_soul)
         self.assertEqual(calls[1]["mnemonics_path"], new_mnemonics)
+
+    def test_runner_credential_matches_readiness_priority(self):
+        admin_key_file = self.root / "admin-key.txt"
+        env_key_file = self.root / "env-key.txt"
+        admin_key_file.write_text("admin-file-value", encoding="utf-8")
+        env_key_file.write_text("env-file-value", encoding="utf-8")
+        settings = replace(
+            self.settings,
+            api_key="admin-inline-value",
+            api_key_path=admin_key_file,
+        )
+        cases = (
+            (
+                "environment inline",
+                {
+                    "SILICONFLOW_API_KEY": "env-inline-value",
+                    "SILICONFLOW_API_KEY_FILE": str(env_key_file),
+                },
+                "env-inline-value",
+            ),
+            (
+                "environment file",
+                {
+                    "SILICONFLOW_API_KEY": "",
+                    "SILICONFLOW_API_KEY_FILE": str(env_key_file),
+                },
+                "env-file-value",
+            ),
+            (
+                "admin fallback",
+                {
+                    "SILICONFLOW_API_KEY": "",
+                    "SILICONFLOW_API_KEY_FILE": "",
+                },
+                "admin-inline-value",
+            ),
+        )
+
+        for index, (label, environment, expected) in enumerate(cases, start=1):
+            with self.subTest(label=label):
+                job_id = f"credential-job-{index}"
+                self.create_job(job_id=job_id)
+                readiness_keys = []
+                calls = []
+
+                def probe(api_key, chat_model, embed_model):
+                    readiness_keys.append(api_key)
+                    return {
+                        "name": "provider_connectivity",
+                        "status": "ok",
+                        "detail": "reachable",
+                    }
+
+                with mock.patch.dict(os.environ, environment, clear=True):
+                    settings.readiness(
+                        probe_provider=True,
+                        provider_probe=probe,
+                    )
+                    worker = JobWorker(
+                        self.repository,
+                        settings,
+                        worker_id=f"credential-worker-{index}",
+                        single_runner=self.output_runner(
+                            calls,
+                            "single_courseware",
+                        ),
+                    )
+                    self.assertTrue(worker.run_once())
+
+                self.assertEqual(readiness_keys, [expected])
+                self.assertEqual(calls[0]["api_key"], expected)
+
+    def test_worker_routes_mineru_with_merged_environment_parser_config(self):
+        service = AdminSettingsService(self.root / "data" / "settings")
+        payload = service.load_all()
+        quality = next(
+            profile
+            for profile in payload["runtime"]["parser_profiles"]["profiles"]
+            if profile["id"] == "quality"
+        )
+        quality["enabled"] = True
+        payload["runtime"]["parser"]["mineru"]["api_token"] = "admin-token"
+        service.save_all(payload)
+        self.create_job(
+            job_id="mineru-job",
+            parser_profile_id="quality",
+        )
+        calls = []
+
+        with mock.patch.dict(
+            os.environ,
+            {
+                "MINERU_API_BASE_URL": "https://api.mineru.net",
+                "MINERU_API_TOKEN": "env-token",
+                "MINERU_MODEL_VERSION": "pipeline",
+                "MINERU_LANGUAGE": "en",
+            },
+            clear=True,
+        ):
+            settings = RuntimeSettings.from_env(
+                self.root,
+                jobs_root=self.jobs_root,
+            )
+            worker = JobWorker(
+                self.repository,
+                settings,
+                worker_id="mineru-worker",
+                single_runner=self.output_runner(
+                    calls,
+                    "single_courseware",
+                ),
+            )
+            self.assertTrue(worker.run_once())
+
+        self.assertEqual(calls[0]["parser_backend"], "mineru")
+        mineru = calls[0]["parser_config"]["mineru"]
+        self.assertEqual(mineru["api_base_url"], "https://api.mineru.net")
+        self.assertEqual(mineru["api_token"], "env-token")
+        self.assertEqual(mineru["model_version"], "pipeline")
+        self.assertEqual(mineru["language"], "en")
 
     def test_retryable_failure_requeues_then_exhausts_attempts(self):
         self.create_job(max_attempts=2)

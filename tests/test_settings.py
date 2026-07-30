@@ -269,6 +269,146 @@ class SettingsTest(unittest.TestCase):
         )
         self.assertEqual(settings.mineru_config.language, "en")
 
+    def test_readiness_credential_priority_matches_environment_and_admin_sources(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            admin_key_file = root / "admin-key.txt"
+            env_key_file = root / "env-key.txt"
+            admin_key_file.write_text("admin-file-value", encoding="utf-8")
+            env_key_file.write_text("env-file-value", encoding="utf-8")
+            service = AdminSettingsService(root / "data" / "settings")
+            payload = service.load_all()
+            profile = payload["model_catalog"]["services"]["llm"]["profiles"][0]
+            profile["api_key"] = "admin-inline-value"
+            profile["api_key_path"] = admin_key_file.name
+            service.save_all(payload)
+
+            cases = (
+                (
+                    "environment inline",
+                    {
+                        "SILICONFLOW_API_KEY": "env-inline-value",
+                        "SILICONFLOW_API_KEY_FILE": str(env_key_file),
+                    },
+                    "env-inline-value",
+                ),
+                (
+                    "environment file",
+                    {
+                        "SILICONFLOW_API_KEY": "",
+                        "SILICONFLOW_API_KEY_FILE": str(env_key_file),
+                    },
+                    "env-file-value",
+                ),
+                (
+                    "admin fallback",
+                    {
+                        "SILICONFLOW_API_KEY": "",
+                        "SILICONFLOW_API_KEY_FILE": "",
+                    },
+                    "admin-inline-value",
+                ),
+            )
+            for label, environment, expected in cases:
+                with self.subTest(label=label):
+                    captured = []
+
+                    def probe(api_key, chat_model, embed_model):
+                        captured.append(api_key)
+                        return {
+                            "name": "provider_connectivity",
+                            "status": "ok",
+                            "detail": "reachable",
+                        }
+
+                    with patch.dict(os.environ, environment, clear=True):
+                        settings = RuntimeSettings.from_env(root)
+                        settings.readiness(
+                            probe_provider=True,
+                            provider_probe=probe,
+                        )
+
+                    self.assertEqual(captured, [expected])
+
+    def test_mineru_environment_only_values_are_merged_into_parser_contract(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch.dict(
+                os.environ,
+                {
+                    "MINERU_API_BASE_URL": "https://api.mineru.net",
+                    "MINERU_API_TOKEN": "env-token",
+                    "MINERU_MODEL_VERSION": "pipeline",
+                    "MINERU_LANGUAGE": "en",
+                },
+                clear=True,
+            ):
+                settings = RuntimeSettings.from_env(root)
+
+        mineru = settings.parser_config["mineru"]
+        self.assertEqual(mineru["api_base_url"], "https://api.mineru.net")
+        self.assertEqual(mineru["api_token"], "env-token")
+        self.assertEqual(mineru["model_version"], "pipeline")
+        self.assertEqual(mineru["language"], "en")
+
+    def test_mineru_environment_values_override_admin_parser_contract(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            service = AdminSettingsService(root / "data" / "settings")
+            payload = service.load_all()
+            admin_mineru = payload["runtime"]["parser"]["mineru"]
+            admin_mineru["api_base_url"] = "https://mineru.net"
+            admin_mineru["api_token"] = "admin-token"
+            admin_mineru["model_version"] = "vlm"
+            admin_mineru["language"] = "ch"
+            service.save_all(payload)
+
+            with patch.dict(
+                os.environ,
+                {
+                    "MINERU_API_BASE_URL": "https://api.mineru.net",
+                    "MINERU_API_TOKEN": "env-token",
+                    "MINERU_MODEL_VERSION": "pipeline",
+                    "MINERU_LANGUAGE": "en",
+                },
+                clear=True,
+            ):
+                settings = RuntimeSettings.from_env(root)
+
+        mineru = settings.parser_config["mineru"]
+        self.assertEqual(mineru["api_base_url"], "https://api.mineru.net")
+        self.assertEqual(mineru["api_token"], "env-token")
+        self.assertEqual(mineru["model_version"], "pipeline")
+        self.assertEqual(mineru["language"], "en")
+
+    def test_empty_mineru_environment_falls_back_to_admin_parser_contract(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            service = AdminSettingsService(root / "data" / "settings")
+            payload = service.load_all()
+            admin_mineru = payload["runtime"]["parser"]["mineru"]
+            admin_mineru["api_token"] = "admin-token"
+            admin_mineru["model_version"] = "pipeline"
+            admin_mineru["language"] = "en"
+            service.save_all(payload)
+
+            with patch.dict(
+                os.environ,
+                {
+                    "MINERU_API_BASE_URL": "",
+                    "MINERU_API_TOKEN": "",
+                    "MINERU_MODEL_VERSION": "",
+                    "MINERU_LANGUAGE": "",
+                },
+                clear=True,
+            ):
+                settings = RuntimeSettings.from_env(root)
+
+        mineru = settings.parser_config["mineru"]
+        self.assertEqual(mineru["api_token"], "admin-token")
+        self.assertEqual(mineru["model_version"], "pipeline")
+        self.assertEqual(mineru["language"], "en")
+
     def test_readiness_accepts_admin_json_api_key(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

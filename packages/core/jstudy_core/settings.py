@@ -205,6 +205,20 @@ class RuntimeSettings:
             MINERU_API_TOKEN_ENV,
             str(mineru_runtime.get("api_token") or ""),
         )
+        parser_config = dict(runtime["parser"])
+        parser_config["mineru"] = {
+            **mineru_runtime,
+            "api_base_url": mineru_config.api_base_url,
+            "api_token": mineru_api_token,
+            "model_version": mineru_config.model_version,
+            "language": mineru_config.language,
+            "enable_table": mineru_config.enable_table,
+            "enable_formula": mineru_config.enable_formula,
+            "is_ocr": mineru_config.is_ocr,
+            "poll_interval_seconds": mineru_config.poll_interval_seconds,
+            "deadline_seconds": mineru_config.deadline_seconds,
+            "max_result_bytes": mineru_config.max_result_bytes,
+        }
         api_key_path = _catalog_path(project_root, llm_profile.get("api_key_path"))
         if api_key_path is None:
             api_key_path = project_root / "siliconflow api key.txt"
@@ -241,7 +255,7 @@ class RuntimeSettings:
             embed_base_url=str(embedding_profile.get("base_url") or SILICONFLOW_BASE_URL).strip()
             or SILICONFLOW_BASE_URL,
             rag_config=RagConfig(**runtime["rag"]),
-            parser_config=runtime["parser"],
+            parser_config=parser_config,
             mineru_config=mineru_config,
             mineru_api_token=mineru_api_token,
             content_pack=pack,
@@ -330,15 +344,13 @@ class RuntimeSettings:
         return {"name": name, "status": "ok", "detail": str(path)}
 
     def _api_key_check(self) -> dict[str, str]:
-        if os.getenv(DEFAULT_API_KEY_ENV, "").strip():
-            return {"name": "api_key", "status": "ok", "detail": DEFAULT_API_KEY_ENV}
-        if self.api_key:
-            return {"name": "api_key", "status": "ok", "detail": "admin settings"}
-        try:
-            read_api_key(self.api_key_path)
-        except RuntimeError as exc:
-            return {"name": "api_key", "status": "error", "detail": str(exc)}
-        source = str(self.api_key_path)
+        api_key, source, error = self._effective_credential()
+        if not api_key:
+            return {
+                "name": "api_key",
+                "status": "error",
+                "detail": error or "API key is missing",
+            }
         return {"name": "api_key", "status": "ok", "detail": source}
 
     def _max_pdf_bytes_check(self) -> dict[str, str]:
@@ -361,7 +373,7 @@ class RuntimeSettings:
         return {"name": "job_retention_hours", "status": "ok", "detail": detail}
 
     def _provider_connectivity_check(self, provider_probe: ProviderProbe) -> dict[str, Any]:
-        api_key = self._effective_api_key()
+        api_key = self.effective_api_key()
         if not api_key:
             return {"name": "provider_connectivity", "status": "error", "detail": "API key is missing"}
 
@@ -370,16 +382,33 @@ class RuntimeSettings:
         except Exception as exc:
             return {"name": "provider_connectivity", "status": "error", "detail": str(exc)[:200]}
 
-    def _effective_api_key(self) -> str:
+    def effective_api_key(self) -> str:
+        return self._effective_credential()[0]
+
+    def _effective_credential(self) -> tuple[str, str, str]:
         env_key = os.getenv(DEFAULT_API_KEY_ENV, "").strip()
         if env_key:
-            return env_key
+            return env_key, DEFAULT_API_KEY_ENV, ""
+        env_key_file = os.getenv(DEFAULT_API_KEY_FILE_ENV, "").strip()
+        if env_key_file:
+            try:
+                return (
+                    _read_api_key_file(Path(env_key_file)),
+                    DEFAULT_API_KEY_FILE_ENV,
+                    "",
+                )
+            except RuntimeError as exc:
+                return "", DEFAULT_API_KEY_FILE_ENV, str(exc)
         if self.api_key:
-            return self.api_key
+            return self.api_key, "admin settings", ""
         try:
-            return read_api_key(self.api_key_path)
-        except RuntimeError:
-            return ""
+            return (
+                _read_api_key_file(self.api_key_path),
+                str(self.api_key_path),
+                "",
+            )
+        except RuntimeError as exc:
+            return "", str(self.api_key_path or ""), str(exc)
 
 
 RuntimeSettingsProvider = Callable[[], RuntimeSettings]
@@ -420,10 +449,18 @@ def read_api_key(path: Path | None, env_var: str = DEFAULT_API_KEY_ENV) -> str:
     if env_key:
         return env_key
 
+    return _read_api_key_file(path, missing_prefix=f"{env_var} is not set and ")
+
+
+def _read_api_key_file(
+    path: Path | None,
+    *,
+    missing_prefix: str = "",
+) -> str:
     if path is None:
-        raise RuntimeError(f"{env_var} is not set and no API key file was provided")
+        raise RuntimeError(f"{missing_prefix}no API key file was provided")
     if not path.exists():
-        raise RuntimeError(f"{env_var} is not set and API key file was not found: {path}")
+        raise RuntimeError(f"{missing_prefix}API key file was not found: {path}")
 
     key = path.read_text(encoding="utf-8").strip()
     if not key:

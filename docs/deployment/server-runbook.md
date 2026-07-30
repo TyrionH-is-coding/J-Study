@@ -21,11 +21,12 @@ https://domain.example/api/... -> backend
 
 ## Target Services
 
-Current backend-only phase:
+Current required pilot backend topology (`PostgreSQL + API + Worker`):
 
 ```text
-jstudy-api
 postgres
+jstudy-api
+jstudy-worker
 ```
 
 Frontend deployment phase:
@@ -35,6 +36,7 @@ reverse-proxy
 jstudy-web
 jstudy-api
 postgres
+jstudy-worker
 ```
 
 Future production phase:
@@ -43,13 +45,13 @@ Future production phase:
 reverse-proxy
 jstudy-web
 jstudy-api
-worker
+jstudy-worker
 postgres
 redis
 object-storage integration
 ```
 
-Redis, a worker, and object storage are not required for the first pilot unless usage proves they reduce operational risk.
+PostgreSQL, `jstudy-api`, and `jstudy-worker` are required for the first pilot. Redis and object storage remain optional until usage justifies them.
 
 ## Server Prerequisites
 
@@ -81,6 +83,13 @@ SILICONFLOW_API_KEY=
 SILICONFLOW_API_KEY_FILE=
 SILICONFLOW_CHAT_MODEL=
 SILICONFLOW_EMBED_MODEL=
+MINERU_API_BASE_URL=
+MINERU_API_TOKEN=
+MINERU_MODEL_VERSION=
+MINERU_LANGUAGE=
+MINERU_POLL_INTERVAL_SECONDS=
+MINERU_DEADLINE_SECONDS=
+MINERU_MAX_RESULT_BYTES=
 JSTUDY_API_PORT=8765
 JSTUDY_ADMIN_TOKEN=
 JSTUDY_SETTINGS_DIR=/app/data/settings
@@ -104,6 +113,8 @@ Rules:
 - Keep `DATABASE_URL`, `POSTGRES_DB`, `POSTGRES_USER`, and `POSTGRES_PASSWORD` consistent.
 - URL-encode reserved characters in the password portion of `DATABASE_URL`.
 - Treat `JSTUDY_MNEMONICS_PATH` as the current compatibility name for the prompt-rendered knowledge snippet file.
+- Provider credential priority is nonempty `SILICONFLOW_API_KEY`, then nonempty `SILICONFLOW_API_KEY_FILE`, then the admin inline key, then the admin/default key file. Readiness, API submission snapshots, Worker claims, and pipeline execution use this same result.
+- MinerU environment values are merged into the parser snapshot consumed by API availability checks and Worker runner configuration. This does not switch the current pipeline or parser default.
 - A nonempty provider, model, MinerU, Soul/content path, upload-limit, or retention environment variable is an explicit deployment override. It takes precedence over `data/settings` and cannot be hot-updated from the admin page.
 - Leave an admin-managed environment variable empty when `/admin/settings` should own it. The API reloads settings for each new submission and the worker for each new claim; an active claim keeps its starting snapshot.
 - Keep `JSTUDY_JOB_RETENTION_HOURS=72` nonempty for the public pilot so cleanup cannot silently fall back to the application default of `0`.
@@ -157,6 +168,7 @@ Expected full service responsibilities:
 - `jstudy-web`: Next.js frontend.
 - `jstudy-api`: FastAPI backend.
 - `postgres`: user, invite, session, and job metadata persistence.
+- `jstudy-worker`: claim queued Jobs, execute generation, publish terminal state, and enforce retention.
 
 ## Reverse Proxy Routing
 
@@ -186,7 +198,7 @@ cd /opt/jstudy/app
 cp .env.example .env
 # edit .env: set SILICONFLOW_API_KEY, JSTUDY_ADMIN_TOKEN, POSTGRES_PASSWORD,
 # DATABASE_URL, JSTUDY_SESSION_SECRET, and JSTUDY_INVITE_REQUIRED
-docker compose -f deploy/docker-compose/api.compose.yml up -d --build
+docker compose -f deploy/docker-compose/api.compose.yml up -d --build postgres jstudy-api jstudy-worker
 ```
 
 Verify:
@@ -199,6 +211,19 @@ curl "http://127.0.0.1:8765/api/readiness?probe_provider=true"
 
 The readiness response must be `ready` before pilot users submit PDFs.
 Keep `JSTUDY_INVITE_REQUIRED=true` for normal pilot access. For a small private test, `JSTUDY_INVITE_REQUIRED=false` allows registration without invite codes; restore it before opening registration more broadly. When invite registration is enabled, create at least one reusable invite code from `/admin/settings?admin_token=...` before testing registration.
+
+Readiness is not sufficient because the API only admits and queues work. After
+registering or logging in a smoke-test user:
+
+1. Submit one small test PDF through `POST /api/generate` and record its `job_id`.
+2. Poll `GET /api/jobs/{job_id}` with the same authenticated session.
+3. Confirm the Job leaves `queued`, proving `jstudy-worker` claimed it.
+4. Confirm the Job reaches `completed` or `failed`; a terminal `failed` result is
+   acceptable for topology verification only when its safe error is understood.
+5. Inspect `docker compose -f deploy/docker-compose/api.compose.yml logs --tail=200 jstudy-worker`.
+
+A Job that remains `queued` fails deployment acceptance even when `/api/health`
+and `/api/readiness` pass.
 
 The first Tencent Cloud backend-only trial record is tracked in
 [`tencent-cloud-trial-2026-06-15.md`](tencent-cloud-trial-2026-06-15.md).
@@ -214,15 +239,15 @@ Planned sequence:
 
 1. Pull the reviewed branch or release tag.
 2. Create or update `.env`.
-3. Start Postgres.
-4. Start backend.
+3. Start PostgreSQL, API, and Worker.
+4. Verify `jstudy-worker` is running and connected to the shared database and jobs volume.
 5. Verify `/api/health` and `/api/readiness`.
 6. Create at least one invite code from the admin panel when `JSTUDY_INVITE_REQUIRED=true`.
 7. Start frontend.
 8. Start or reload reverse proxy.
 9. Verify HTTPS domain routes.
 10. Register a test user, using the invite code when `JSTUDY_INVITE_REQUIRED=true`.
-11. Upload a small test PDF and verify citation preview.
+11. Upload a small test PDF, verify it leaves `queued` and reaches `completed` or `failed`, then verify citation preview for a completed Job.
 
 Expected commands will be finalized after `app.compose.yml` and migrations exist.
 
@@ -294,6 +319,7 @@ Minimal pilot checks:
 ```bash
 docker compose -f deploy/docker-compose/app.compose.yml ps
 docker compose -f deploy/docker-compose/app.compose.yml logs --tail=200 jstudy-api
+docker compose -f deploy/docker-compose/app.compose.yml logs --tail=200 jstudy-worker
 docker compose -f deploy/docker-compose/app.compose.yml logs --tail=200 postgres
 ```
 

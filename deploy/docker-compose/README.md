@@ -7,6 +7,7 @@
 - `jstudy-worker`：认领 Job、续租、调用现有 pipeline、登记 artifact，并执行 Job retention 清理。worker 不暴露端口。
 
 API 与 worker 使用同一 `jstudy-backend:pilot` 镜像、同一数据库配置，并以读写方式挂载同一个 jobs volume 和 settings volume。
+PostgreSQL、API 与 Worker 都是当前 pilot 的必需服务；缺少 Worker 时 Job 只会停留在 `queued`，也不会执行 retention。
 
 ## 启动
 
@@ -73,6 +74,10 @@ curl "http://127.0.0.1:8765/api/readiness?probe_provider=true"
 ```
 
 worker 没有 HTTP liveness endpoint，也没有 `ports` 映射；其运行状态通过容器状态、日志以及 Job lease/transition 观测。
+健康与 readiness 通过后，还必须提交一个小型测试 Job，并轮询
+`GET /api/jobs/{job_id}`，确认其离开 `queued` 并最终进入 `completed` 或
+`failed`；同时检查 `jstudy-worker` 日志。仅 API health/readiness 通过不构成
+部署验收。
 
 ## 持久化与清理
 
@@ -83,6 +88,11 @@ worker 没有 HTTP liveness endpoint，也没有 `ports` 映射；其运行状�
   `max_pdf_bytes` 与 retention 显式传给 API 和 worker。非空值是部署级
   override，优先于管理员设置且不能热更新；空值则回落到共享
   `data/settings`。
+- Provider credential 的统一优先级为：非空 `SILICONFLOW_API_KEY` >
+  非空 `SILICONFLOW_API_KEY_FILE` > admin inline key > admin/default key file。
+  API readiness、submission snapshot、Worker claim 与 pipeline 使用同一结果。
+- MinerU 环境值合并进 API 与 Worker 共同消费的 parser snapshot；这不切换
+  当前 pipeline 或 parser 默认值。
 - API 每次新 submission 读取当前设置，worker 每次新 claim 读取当前设置；
   已运行的 claim 保持本次 settings snapshot，不会中途突变。
 - 模型等可管理字段在 `.env.example` 中保持空，避免无意覆盖管理员设置。

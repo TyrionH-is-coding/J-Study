@@ -323,7 +323,7 @@ class JobWorker:
             "output_prefix": "result",
             "rag_config": self.settings.rag_config,
             "embedding_cache_path": output_dir.parent / "embedding-cache.json",
-            "api_key": self.settings.api_key or None,
+            "api_key": self.settings.effective_api_key() or None,
             "chat_base_url": self.settings.chat_base_url,
             "embed_base_url": self.settings.embed_base_url,
             "parser_backend": parser_backend,
