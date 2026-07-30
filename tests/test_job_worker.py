@@ -233,6 +233,87 @@ class JobWorkerTest(unittest.TestCase):
 
         return runner
 
+    def v2_output_runner(self, calls, expected_mode):
+        legacy_runner = self.output_runner(calls, expected_mode)
+
+        def runner(**kwargs):
+            outputs = legacy_runner(**kwargs)
+            evidence = [
+                {
+                    "id": "E001",
+                    "source_id": "S001",
+                    "source_file": "lecture.pdf",
+                    "page": 1,
+                    "chunk_id": "S001-C001",
+                    "excerpt": "Fact",
+                }
+            ]
+            outputs["evidence"].write_text(
+                json.dumps(evidence),
+                encoding="utf-8",
+            )
+            sections = [
+                {
+                    "id": (
+                        "full-material"
+                        if expected_mode == "single_courseware"
+                        else "section-001"
+                    ),
+                    "order": 1,
+                    "title": (
+                        "完整资料"
+                        if expected_mode == "single_courseware"
+                        else "Unit One"
+                    ),
+                    "status": "generated",
+                    "quality": {
+                        "evidence_status": "sufficient",
+                        "evidence_count": 1,
+                        "cited_evidence_count": 1,
+                        "citation_coverage": 1.0,
+                    },
+                    "source_ids": ["S001"],
+                    "evidence_ids": ["E001"],
+                    "blocks": [
+                        {
+                            "id": "paragraph-001",
+                            "type": "paragraph",
+                            "runs": [
+                                {"type": "text", "text": "Fact "},
+                                {
+                                    "type": "citation",
+                                    "evidence_id": "E001",
+                                },
+                            ],
+                        }
+                    ],
+                }
+            ]
+            outputs["package"].write_text(
+                json.dumps(
+                    {
+                        "schema_version": "material-package.v2",
+                        "package_id": kwargs["package_id"],
+                        "service_mode": expected_mode,
+                        "title": "学习资料",
+                        "subject": "medicine",
+                        "language": "zh-CN",
+                        "source_ids": ["S001"],
+                        "sections": sections,
+                        "rendering": {
+                            "default_theme": {
+                                "theme_id": "clinical-standard",
+                                "theme_version": "1.0.0",
+                            }
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            return outputs
+
+        return runner
+
     def transitions(self, job_id="job-1"):
         with Session(self.engine) as session:
             return list(
@@ -695,6 +776,112 @@ class JobWorkerTest(unittest.TestCase):
         self.assertEqual(job.error_code, "invalid_job_output")
         self.assertEqual(self.repository.list_artifacts("job-1"), [])
         self.assertEqual(self.repository.list_sections("job-1"), [])
+
+    def test_v2_package_completes_atomically_and_uses_job_package_id(self):
+        self.create_job()
+        calls = []
+        worker = JobWorker(
+            self.repository,
+            self.settings,
+            worker_id="worker-v2",
+            single_runner=self.v2_output_runner(
+                calls,
+                "single_courseware",
+            ),
+        )
+
+        self.assertTrue(worker.run_once())
+
+        job = self.repository.get("job-1")
+        sections = self.repository.list_sections("job-1")
+        self.assertEqual(job.state, JobState.COMPLETED)
+        self.assertEqual(calls[0]["package_id"], "job-1")
+        self.assertEqual(len(self.repository.list_artifacts("job-1")), 6)
+        self.assertEqual(
+            [
+                (
+                    section.section_id,
+                    section.position,
+                    section.status,
+                    json.loads(section.quality_json),
+                    section.artifact_filename,
+                )
+                for section in sections
+            ],
+            [
+                (
+                    "full-material",
+                    1,
+                    "generated",
+                    {
+                        "citation_coverage": 1.0,
+                        "cited_evidence_count": 1,
+                        "evidence_count": 1,
+                        "evidence_status": "sufficient",
+                    },
+                    "result-output.md",
+                )
+            ],
+        )
+
+    def test_invalid_v2_packages_fail_without_artifacts_or_sections(self):
+        cases = {
+            "wrong-package-id": lambda package: package.update(
+                {"package_id": "another-job"}
+            ),
+            "wrong-service-mode": lambda package: package.update(
+                {"service_mode": "course_outline"}
+            ),
+            "unknown-source": lambda package: package.update(
+                {"source_ids": ["S999"]}
+            ),
+            "unknown-evidence": lambda package: package["sections"][0].update(
+                {"evidence_ids": ["E999"]}
+            ),
+            "duplicate-section": lambda package: package["sections"].append(
+                dict(package["sections"][0])
+            ),
+            "malformed": lambda package: package.update(
+                {"unexpected": "field"}
+            ),
+        }
+        for index, (name, mutate) in enumerate(cases.items(), start=1):
+            with self.subTest(name=name):
+                job_id = f"invalid-v2-{index}"
+                self.create_job(job_id=job_id, max_attempts=1)
+
+                def invalid_runner(
+                    _mutate=mutate,
+                    _mode="single_courseware",
+                    **kwargs,
+                ):
+                    outputs = self.v2_output_runner([], _mode)(**kwargs)
+                    package = json.loads(
+                        outputs["package"].read_text(encoding="utf-8")
+                    )
+                    _mutate(package)
+                    outputs["package"].write_text(
+                        json.dumps(package),
+                        encoding="utf-8",
+                    )
+                    return outputs
+
+                worker = JobWorker(
+                    self.repository,
+                    self.settings,
+                    worker_id=f"worker-{job_id}",
+                    single_runner=invalid_runner,
+                )
+                self.assertTrue(worker.run_once())
+
+                job = self.repository.get(job_id)
+                self.assertEqual(job.state, JobState.FAILED)
+                self.assertEqual(job.error_code, "invalid_job_output")
+                self.assertEqual(
+                    self.repository.list_artifacts(job_id),
+                    [],
+                )
+                self.assertEqual(self.repository.list_sections(job_id), [])
 
     def test_missing_markdown_artifact_fails_without_completion(self):
         self.create_job(max_attempts=1)

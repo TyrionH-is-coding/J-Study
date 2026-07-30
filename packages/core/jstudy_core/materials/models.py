@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -184,3 +184,38 @@ class MaterialPackageV2(StrictModel):
         if len(self.source_ids) != len(set(self.source_ids)):
             raise ValueError("source ids must be unique")
         return self
+
+
+class LegacySourceFile(StrictModel):
+    source_id: str | None = None
+    file_name: str
+    page_count: int | None = None
+    parser_backend: str | None = None
+
+
+class LegacyArtifactReferences(StrictModel):
+    markdown: str
+    evidence: str | None = None
+    evidence_links: str | None = None
+    quality: str | None = None
+    package: str | None = None
+
+
+class LegacyMaterialSectionV1(StrictModel):
+    id: str
+    title: str
+    order: int
+    status: str = "generated"
+    quality: dict[str, Any] = Field(default_factory=dict)
+    source_files: list[str] = Field(default_factory=list)
+    evidence_ids: list[str] = Field(default_factory=list)
+    artifact_filenames: LegacyArtifactReferences | None = None
+    artifact_urls: LegacyArtifactReferences | None = None
+
+
+class LegacyMaterialPackageV1(StrictModel):
+    type: Literal["material_package"]
+    service_mode: Literal["single_courseware", "course_outline"]
+    generation_mode: str = ""
+    source_files: list[LegacySourceFile] = Field(default_factory=list)
+    sections: list[LegacyMaterialSectionV1] = Field(min_length=1)

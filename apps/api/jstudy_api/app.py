@@ -42,6 +42,10 @@ from packages.core.jstudy_core.parser_profile_router import (
     resolve_parser_profile,
 )
 from packages.core.jstudy_core.scenario_router import ScenarioRoutingError, resolve_scenario
+from packages.core.jstudy_core.materials.models import (
+    LegacyMaterialPackageV1,
+    MaterialPackageV2,
+)
 from packages.core.jstudy_core.settings import (
     RuntimeSettings,
     RuntimeSettingsProvider,
@@ -760,12 +764,26 @@ def create_app(
         path = ready_output_path(job, ArtifactKind.TRACE, "Retrieval trace is not ready")
         return public_trace_payload(read_json(path))
 
-    @app.get("/api/jobs/{job_id}/package")
+    @app.get(
+        "/api/jobs/{job_id}/package",
+        response_model=MaterialPackageV2 | LegacyMaterialPackageV1,
+    )
     def job_package(job_id: str, request: Request, response: Response) -> Any:
         set_private_cache(response)
         job = job_or_404(job_id, current_user_or_401(request))
         path = ready_output_path(job, ArtifactKind.PACKAGE, "Material package is not ready")
-        return read_json(path)
+        try:
+            payload = read_json(path)
+            if payload.get("schema_version") == "material-package.v2":
+                return MaterialPackageV2.model_validate(payload)
+            if "schema_version" in payload:
+                raise ValueError("unknown material package schema")
+            return LegacyMaterialPackageV1.model_validate(payload)
+        except (AttributeError, OSError, TypeError, UnicodeError, ValueError) as exc:
+            raise HTTPException(
+                status_code=500,
+                detail="Material package is invalid",
+            ) from exc
 
     @app.get("/api/jobs/{job_id}/export")
     def job_export(job_id: str, request: Request) -> Response:

@@ -26,6 +26,10 @@ from packages.core.jstudy_core.job_system.repository import (
 from packages.core.jstudy_core.job_system.states import JobState
 from packages.core.jstudy_core.parser_profile_router import resolve_parser_profile
 from packages.core.jstudy_core.pipeline import run_course_outline, run_mvp
+from packages.core.jstudy_core.materials.models import MaterialPackageV2
+from packages.core.jstudy_core.materials.validation import (
+    validate_material_package,
+)
 from packages.core.jstudy_core.scenario_router import resolve_scenario
 from packages.core.jstudy_core.settings import (
     RuntimeSettings,
@@ -321,6 +325,7 @@ class JobWorker:
             "chat_model": self.settings.chat_model,
             "embed_model": self.settings.embed_model,
             "output_prefix": "result",
+            "package_id": job.id,
             "rag_config": self.settings.rag_config,
             "embedding_cache_path": output_dir.parent / "embedding-cache.json",
             "api_key": self.settings.effective_api_key() or None,
@@ -483,6 +488,90 @@ class JobWorker:
             )
         try:
             package = json.loads(Path(package_path).read_text(encoding="utf-8"))
+            if package.get("schema_version") == "material-package.v2":
+                return self._build_v2_sections(
+                    job,
+                    outputs,
+                    package,
+                    markdown_filenames,
+                )
+            if "schema_version" in package:
+                raise ValueError("unknown material package schema")
+            return self._build_legacy_sections(
+                job,
+                package,
+                markdown_filenames,
+            )
+        except (
+            AttributeError,
+            KeyError,
+            OSError,
+            UnicodeError,
+            ValueError,
+            TypeError,
+        ) as exc:
+            raise PermanentJobError(
+                "invalid_job_output",
+                "The material package is invalid.",
+            ) from exc
+
+    def _build_v2_sections(
+        self,
+        job: JobSnapshot,
+        outputs: Mapping[str, Path],
+        payload: dict[str, Any],
+        markdown_filenames: set[str],
+    ) -> list[SectionInput]:
+        package = MaterialPackageV2.model_validate(payload)
+        if package.package_id != job.id:
+            raise ValueError("package id does not match job")
+        if package.service_mode != job.service_mode:
+            raise ValueError("package service mode does not match job")
+        if len(markdown_filenames) != 1:
+            raise ValueError("v2 package requires one compatibility Markdown")
+        evidence_path = outputs.get("evidence")
+        if evidence_path is None:
+            raise ValueError("package evidence is missing")
+        evidence = json.loads(Path(evidence_path).read_text(encoding="utf-8"))
+        if not isinstance(evidence, list):
+            raise ValueError("package evidence must be a list")
+        allowed_source_ids = [
+            source.source_id
+            for source in self.repository.list_sources(job.id)
+        ]
+        validate_material_package(
+            package,
+            evidence,
+            allowed_source_ids,
+        )
+        markdown_filename = next(iter(markdown_filenames))
+        return [
+            SectionInput(
+                section_id=section.id,
+                position=section.order,
+                title=section.title,
+                status=section.status,
+                quality_json=json.dumps(
+                    section.quality.model_dump(mode="json"),
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ),
+                artifact_filename=markdown_filename,
+            )
+            for section in sorted(
+                package.sections,
+                key=lambda item: item.order,
+            )
+        ]
+
+    def _build_legacy_sections(
+        self,
+        job: JobSnapshot,
+        package: dict[str, Any],
+        markdown_filenames: set[str],
+    ) -> list[SectionInput]:
+        # Legacy v1 remains readable during the Package v2 migration.
+        try:
             raw_sections = package["sections"]
             if package.get("type") != "material_package":
                 raise ValueError("unexpected package type")
@@ -556,10 +645,7 @@ class JobWorker:
             ValueError,
             TypeError,
         ) as exc:
-            raise PermanentJobError(
-                "invalid_job_output",
-                "The material package is invalid.",
-            ) from exc
+            raise ValueError("legacy material package is invalid") from exc
 
     def _handle_failure(self, job_id: str, exc: Exception) -> None:
         current = self.repository.get(job_id)

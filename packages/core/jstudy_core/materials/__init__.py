@@ -1,6 +1,11 @@
 from .compatibility import render_compatibility_markdown
 from .generation import generate_material_section
-from .models import CitationRun, MaterialPackageV2, MaterialSection
+from .models import (
+    CitationRun,
+    LegacyMaterialPackageV1,
+    MaterialPackageV2,
+    MaterialSection,
+)
 from .validation import (
     MaterialValidationError,
     audit_material_package,
@@ -9,6 +14,7 @@ from .validation import (
 
 __all__ = [
     "CitationRun",
+    "LegacyMaterialPackageV1",
     "MaterialPackageV2",
     "MaterialSection",
     "MaterialValidationError",

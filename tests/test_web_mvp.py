@@ -30,6 +30,88 @@ class WebMvpTest(unittest.TestCase):
             page.insert_text((40, 80), f"Page {page_no}")
         return doc.tobytes()
 
+    def v2_runner(self, **kwargs):
+        output_dir = kwargs["output_dir"]
+        output_prefix = kwargs["output_prefix"]
+        output_dir.mkdir(parents=True, exist_ok=True)
+        paths = {
+            "markdown": output_dir / f"{output_prefix}-output.md",
+            "evidence": output_dir / f"{output_prefix}-evidence.json",
+            "evidence_links": output_dir
+            / f"{output_prefix}-evidence_links.json",
+            "quality": output_dir / f"{output_prefix}-quality.json",
+            "trace": output_dir / f"{output_prefix}-retrieval_trace.json",
+            "package": output_dir / f"{output_prefix}-package.json",
+        }
+        paths["markdown"].write_text(
+            "# 学习资料\n\n## 完整资料\n\nFact <!-- evidence: E001 -->\n",
+            encoding="utf-8",
+        )
+        evidence = [
+            {
+                "id": "E001",
+                "source_id": "S001",
+                "source_file": "lecture.pdf",
+                "page": 1,
+                "chunk_id": "S001-C001",
+                "excerpt": "Fact",
+            }
+        ]
+        paths["evidence"].write_text(json.dumps(evidence), encoding="utf-8")
+        paths["evidence_links"].write_text("[]", encoding="utf-8")
+        paths["quality"].write_text('{"status":"pass"}', encoding="utf-8")
+        paths["trace"].write_text("{}", encoding="utf-8")
+        paths["package"].write_text(
+            json.dumps(
+                {
+                    "schema_version": "material-package.v2",
+                    "package_id": kwargs["package_id"],
+                    "service_mode": "single_courseware",
+                    "title": "学习资料",
+                    "subject": "medicine",
+                    "language": "zh-CN",
+                    "source_ids": ["S001"],
+                    "sections": [
+                        {
+                            "id": "full-material",
+                            "order": 1,
+                            "title": "完整资料",
+                            "status": "generated",
+                            "quality": {
+                                "evidence_status": "sufficient",
+                                "evidence_count": 1,
+                                "cited_evidence_count": 1,
+                                "citation_coverage": 1.0,
+                            },
+                            "source_ids": ["S001"],
+                            "evidence_ids": ["E001"],
+                            "blocks": [
+                                {
+                                    "id": "paragraph-001",
+                                    "type": "paragraph",
+                                    "runs": [
+                                        {"type": "text", "text": "Fact "},
+                                        {
+                                            "type": "citation",
+                                            "evidence_id": "E001",
+                                        },
+                                    ],
+                                }
+                            ],
+                        }
+                    ],
+                    "rendering": {
+                        "default_theme": {
+                            "theme_id": "clinical-standard",
+                            "theme_version": "1.0.0",
+                        }
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        return paths
+
     def ready_settings(
         self,
         root: Path,
@@ -1097,6 +1179,66 @@ class WebMvpTest(unittest.TestCase):
         self.assertEqual(pdf_info["page_count"], 2)
         self.assertEqual(page_png.headers["content-type"], "image/png")
         self.assertTrue(page_png.content.startswith(b"\x89PNG"))
+
+    def test_package_endpoint_validates_v2_and_publishes_openapi_contract(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            settings = self.ready_settings(root)
+            client = TestClient(create_app(settings=settings))
+            self.register_user(client)
+            response = client.post(
+                "/api/generate",
+                files={
+                    "pdf": (
+                        "lecture.pdf",
+                        self.make_pdf_bytes(),
+                        "application/pdf",
+                    )
+                },
+            )
+            self.assertEqual(response.status_code, 200)
+            job_id = response.json()["job_id"]
+            self.run_next_job(client, settings, self.v2_runner)
+
+            package_response = client.get(f"/api/jobs/{job_id}/package")
+            package = package_response.json()
+            openapi = client.get("/openapi.json").json()
+
+            self.assertEqual(package_response.status_code, 200)
+            self.assertEqual(
+                package["schema_version"],
+                "material-package.v2",
+            )
+            self.assertEqual(package["package_id"], job_id)
+            schemas = openapi["components"]["schemas"]
+            for name in (
+                "MaterialPackageV2",
+                "MaterialSection",
+                "ParagraphBlock",
+                "CitationRun",
+            ):
+                self.assertIn(name, schemas)
+
+            package_path = (
+                settings.jobs_root
+                / job_id
+                / "attempts"
+                / "1"
+                / "output"
+                / "result-package.json"
+            )
+            package["unexpected"] = "field"
+            package_path.write_text(
+                json.dumps(package),
+                encoding="utf-8",
+            )
+
+            invalid_response = client.get(f"/api/jobs/{job_id}/package")
+            self.assertEqual(invalid_response.status_code, 500)
+            self.assertEqual(
+                invalid_response.json()["detail"],
+                "Material package is invalid",
+            )
 
     def test_generate_job_records_owner_and_blocks_other_users(self):
         def fake_runner(**kwargs):
