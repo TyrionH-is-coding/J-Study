@@ -388,7 +388,12 @@ class JobRepository:
             updated_at=created_at,
         )
         session.add(job)
-        for source in command.sources:
+        for index, source in enumerate(command.sources, start=1):
+            display_title = (
+                source.display_title.strip()
+                or Path(source.original_filename).stem.strip()
+                or source.source_id
+            )
             session.add(
                 JobSource(
                     job_id=job.id,
@@ -399,8 +404,8 @@ class JobRepository:
                     byte_size=source.byte_size,
                     sha256=source.sha256,
                     page_count=source.page_count,
-                    display_title=source.display_title,
-                    display_order=source.display_order,
+                    display_title=display_title,
+                    display_order=source.display_order or index,
                     primary_outline_section_id=(
                         source.primary_outline_section_id
                     ),

@@ -15,6 +15,9 @@ class OutputPaths:
     markdown: Path
     quality: Path
     package: Path
+    manifest: Path
+    learning_map: Path
+    coverage: Path
 
     def as_dict(self) -> dict[str, Path]:
         return {
@@ -25,6 +28,9 @@ class OutputPaths:
             "markdown": self.markdown,
             "quality": self.quality,
             "package": self.package,
+            "manifest": self.manifest,
+            "learning_map": self.learning_map,
+            "coverage": self.coverage,
         }
 
 
@@ -37,6 +43,9 @@ def build_output_paths(output_dir: Path, output_prefix: str) -> OutputPaths:
         markdown=output_dir / f"{output_prefix}-output.md",
         quality=output_dir / f"{output_prefix}-quality.json",
         package=output_dir / f"{output_prefix}-package.json",
+        manifest=output_dir / f"{output_prefix}-courseware-manifest.json",
+        learning_map=output_dir / f"{output_prefix}-learning-map.json",
+        coverage=output_dir / f"{output_prefix}-coverage-ledger.json",
     )
 
 

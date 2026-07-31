@@ -25,6 +25,9 @@ class ArtifactKind(StrEnum):
     MARKDOWN = "markdown"
     QUALITY = "quality"
     PACKAGE = "package"
+    MANIFEST = "manifest"
+    LEARNING_MAP = "learning_map"
+    COVERAGE = "coverage"
 
 
 WINDOWS_RESERVED_NAMES = {

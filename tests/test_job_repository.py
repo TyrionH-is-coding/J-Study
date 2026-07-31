@@ -173,6 +173,9 @@ class JobModelContractTest(unittest.TestCase):
             "markdown",
             "quality",
             "package",
+            "manifest",
+            "learning_map",
+            "coverage",
         }
         self.assertEqual(
             {kind.value for kind in job_models.ArtifactKind},
@@ -329,7 +332,8 @@ class JobModelContractTest(unittest.TestCase):
             (
                 "CREATE TYPE job_artifact_kind AS ENUM "
                 "('chunks', 'trace', 'evidence', 'evidence_links', "
-                "'markdown', 'quality', 'package')"
+                "'markdown', 'quality', 'package', 'manifest', "
+                "'learning_map', 'coverage')"
             ),
         )
 

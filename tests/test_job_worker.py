@@ -20,6 +20,11 @@ from packages.core.jstudy_core.auth_db import (
     create_application_tables,
     create_auth_engine,
 )
+from packages.core.jstudy_core.documents import (
+    ParsedBlock,
+    ParsedDocument,
+    ParsedPage,
+)
 from packages.core.jstudy_core.admin_settings import AdminSettingsService
 from packages.core.jstudy_core.job_system.models import (
     ArtifactKind,
@@ -81,6 +86,46 @@ class LeaseErrorRepository(JobRepository):
         raise RuntimeError("database unavailable")
 
 
+class FakeDocumentService:
+    def __init__(self):
+        self.calls = []
+
+    def parse(self, sources, *, artifact_root):
+        self.calls.append((sources, artifact_root))
+        return [
+            ParsedDocument(
+                contract_version="1",
+                source_id=source.source_id,
+                source_file=source.pdf_path.name,
+                source_sha256=source.sha256,
+                parser_name="mineru",
+                parser_version="v4",
+                parser_model="vlm",
+                page_count=1,
+                pages=[
+                    ParsedPage(
+                        page_number=1,
+                        text="Courseware fact",
+                        markdown="Courseware fact",
+                        blocks=[
+                            ParsedBlock(
+                                block_id=(
+                                    f"{source.source_id}-P001-B001"
+                                ),
+                                kind="text",
+                                text="Courseware fact",
+                                markdown="Courseware fact",
+                            )
+                        ],
+                    )
+                ],
+                warnings=[],
+                provider_trace_id="mock-trace",
+            )
+            for source in sources
+        ]
+
+
 class JobWorkerTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -122,6 +167,14 @@ class JobWorkerTest(unittest.TestCase):
         )
         self.settings.soul_path.write_text("soul", encoding="utf-8")
         self.settings.mnemonics_path.write_text("", encoding="utf-8")
+        self.default_document_service = FakeDocumentService()
+        service_patch = mock.patch.object(
+            JobWorker,
+            "_create_document_service",
+            return_value=self.default_document_service,
+        )
+        service_patch.start()
+        self.addCleanup(service_patch.stop)
 
     def create_job(
         self,
@@ -397,6 +450,9 @@ class JobWorkerTest(unittest.TestCase):
                 ArtifactKind.QUALITY,
                 ArtifactKind.TRACE,
                 ArtifactKind.PACKAGE,
+                ArtifactKind.MANIFEST,
+                ArtifactKind.LEARNING_MAP,
+                ArtifactKind.COVERAGE,
             },
         )
         self.assertTrue(all(artifact.byte_size > 0 for artifact in artifacts))
@@ -430,6 +486,55 @@ class JobWorkerTest(unittest.TestCase):
                     "result-output.md",
                 )
             ],
+        )
+
+    def test_worker_parses_once_and_persists_sequence_artifacts(self):
+        self.create_job()
+        document_service = FakeDocumentService()
+        calls = []
+        runner = self.v2_output_runner(calls, "single_courseware")
+        worker = JobWorker(
+            self.repository,
+            self.settings,
+            worker_id="worker-sequence",
+            single_runner=runner,
+            document_service=document_service,
+        )
+
+        self.assertTrue(worker.run_once())
+
+        self.assertEqual(len(document_service.calls), 1)
+        self.assertEqual(
+            [item.source_id for item in document_service.calls[0][0]],
+            ["S001"],
+        )
+        self.assertEqual(
+            [item.source_id for item in calls[0]["parsed_documents"]],
+            ["S001"],
+        )
+        self.assertEqual(
+            calls[0]["courseware_manifest"].schema_version,
+            "courseware-manifest.v1",
+        )
+        self.assertEqual(
+            calls[0]["learning_map"].schema_version,
+            "learning-map.v1",
+        )
+        self.assertEqual(
+            calls[0]["coverage_ledger"].schema_version,
+            "coverage-ledger.v1",
+        )
+        artifact_kinds = {
+            artifact.kind
+            for artifact in self.repository.list_artifacts("job-1")
+        }
+        self.assertTrue(
+            {
+                ArtifactKind.MANIFEST,
+                ArtifactKind.LEARNING_MAP,
+                ArtifactKind.COVERAGE,
+            }
+            <= artifact_kinds
         )
 
     def test_course_outline_selects_outline_runner_and_preserves_sources(self):
@@ -620,7 +725,7 @@ class JobWorkerTest(unittest.TestCase):
         self.assertEqual(calls[1]["chat_model"], "chat-new")
         self.assertEqual(calls[1]["embed_model"], "embed-new")
         self.assertEqual(calls[1]["rag_config"].top_k_candidates, 7)
-        self.assertEqual(calls[1]["parser_backend"], "pymupdf")
+        self.assertEqual(calls[1]["parser_backend"], "mineru")
         self.assertEqual(
             calls[1]["routing_metadata"]["scenario"]["resolved_scenario_id"],
             "new-scenario",
@@ -824,7 +929,7 @@ class JobWorkerTest(unittest.TestCase):
         sections = self.repository.list_sections("job-1")
         self.assertEqual(job.state, JobState.COMPLETED)
         self.assertEqual(calls[0]["package_id"], "job-1")
-        self.assertEqual(len(self.repository.list_artifacts("job-1")), 6)
+        self.assertEqual(len(self.repository.list_artifacts("job-1")), 9)
         self.assertEqual(
             [
                 (
@@ -1215,6 +1320,9 @@ class JobWorkerTest(unittest.TestCase):
                 "job-1/attempts/2/output/result-quality.json",
                 "job-1/attempts/2/output/result-retrieval_trace.json",
                 "job-1/attempts/2/output/result-material-package.json",
+                "job-1/attempts/2/output/result-courseware-manifest.json",
+                "job-1/attempts/2/output/result-learning-map.json",
+                "job-1/attempts/2/output/result-coverage-ledger.json",
             },
         )
 

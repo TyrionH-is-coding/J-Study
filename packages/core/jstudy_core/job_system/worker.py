@@ -6,6 +6,7 @@ import json
 import mimetypes
 import shutil
 import threading
+import httpx
 from collections.abc import Callable, Mapping
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -24,8 +25,26 @@ from packages.core.jstudy_core.job_system.repository import (
     resolve_job_path,
 )
 from packages.core.jstudy_core.job_system.states import JobState
-from packages.core.jstudy_core.parser_profile_router import resolve_parser_profile
 from packages.core.jstudy_core.pipeline import run_course_outline, run_mvp
+from packages.core.jstudy_core.courseware import (
+    build_courseware_manifest,
+    plan_learning_map,
+)
+from packages.core.jstudy_core.documents import (
+    DocumentServiceError,
+    DocumentSource,
+    MinerUDocumentService,
+    read_text_outline,
+)
+from packages.core.jstudy_core.documents.mineru_client import (
+    MinerUPrecisionClient,
+    MinerUProtocolError,
+    MinerUProviderError,
+    MinerUTimeoutError,
+)
+from packages.core.jstudy_core.documents.mineru_normalizer import (
+    MinerUNormalizationError,
+)
 from packages.core.jstudy_core.materials.models import (
     LegacyMaterialPackageV1,
     MaterialPackageV2,
@@ -42,6 +61,7 @@ from packages.core.jstudy_core.settings import (
     RuntimeSettingsProvider,
     load_runtime_settings_snapshot,
 )
+from packages.core.jstudy_core.storage import write_json
 
 
 Runner = Callable[..., Mapping[str, Path]]
@@ -55,6 +75,9 @@ REQUIRED_PUBLIC_ARTIFACT_KINDS = frozenset(
         ArtifactKind.QUALITY,
         ArtifactKind.TRACE,
         ArtifactKind.PACKAGE,
+        ArtifactKind.MANIFEST,
+        ArtifactKind.LEARNING_MAP,
+        ArtifactKind.COVERAGE,
     }
 )
 
@@ -146,6 +169,7 @@ class JobWorker:
         single_runner: Runner = run_mvp,
         outline_runner: Runner = run_course_outline,
         settings_provider: RuntimeSettingsProvider | None = None,
+        document_service: Any | None = None,
     ):
         self.repository = repository
         self.settings = settings
@@ -153,6 +177,7 @@ class JobWorker:
         self.worker_id = worker_id or f"worker-{uuid4().hex}"
         self.single_runner = single_runner
         self.outline_runner = outline_runner
+        self.document_service = document_service
 
     def run_once(self) -> bool:
         settings = load_runtime_settings_snapshot(
@@ -165,6 +190,7 @@ class JobWorker:
             worker_id=self.worker_id,
             single_runner=self.single_runner,
             outline_runner=self.outline_runner,
+            document_service=self.document_service,
         )
         return scoped_worker._run_once_with_snapshot()
 
@@ -187,8 +213,14 @@ class JobWorker:
         )
         heartbeat.start()
         try:
-            runner, kwargs = self._runner_call(job, heartbeat)
-            outputs = runner(**_filter_runner_kwargs(runner, kwargs))
+            runner, kwargs, sequence_outputs = self._runner_call(
+                job,
+                heartbeat,
+            )
+            outputs = {
+                **runner(**_filter_runner_kwargs(runner, kwargs)),
+                **sequence_outputs,
+            }
             self._require_current_lease(heartbeat)
             artifacts = self._build_artifacts(job, outputs)
             artifact_kinds = {artifact.kind for artifact in artifacts}
@@ -271,7 +303,7 @@ class JobWorker:
         self,
         job: JobSnapshot,
         heartbeat: _LeaseHeartbeat,
-    ) -> tuple[Runner, dict[str, Any]]:
+    ) -> tuple[Runner, dict[str, Any], dict[str, Path]]:
         sources = self.repository.list_sources(job.id)
         if not sources:
             raise PermanentJobError(
@@ -319,7 +351,6 @@ class JobWorker:
                 "The job service mode is unsupported.",
             )
 
-        parser_backend, parser_metadata = self._parser_routing(job)
         soul_path, mnemonics_path, scenario_metadata = self._content_routing(job)
 
         def progress_callback(state: JobState) -> None:
@@ -339,6 +370,105 @@ class JobWorker:
                 ),
             )
 
+        progress_callback(JobState.PARSING)
+        document_sources = [
+            DocumentSource(
+                source_id=source.source_id,
+                pdf_path=pdf_path,
+                sha256=source.sha256,
+            )
+            for source, pdf_path in zip(sources, pdf_paths, strict=True)
+        ]
+        outline_text = None
+        outline_sha256 = None
+        outline_filename = None
+        parse_sources = list(document_sources)
+        if outline_path is not None:
+            outline_filename = outline_path.name
+            outline_sha256 = hashlib.sha256(
+                outline_path.read_bytes()
+            ).hexdigest()
+            if outline_path.suffix.lower() == ".pdf":
+                parse_sources.append(
+                    DocumentSource(
+                        source_id="__outline__",
+                        pdf_path=outline_path,
+                        sha256=outline_sha256,
+                    )
+                )
+            else:
+                outline_text = read_text_outline(
+                    outline_path,
+                    max_bytes=self.settings.max_outline_bytes,
+                )
+
+        service = self.document_service or self._create_document_service()
+        try:
+            parsed = service.parse(
+                parse_sources,
+                artifact_root=output_dir.parent / "mineru",
+            )
+        except MinerUTimeoutError as exc:
+            raise RetryableJobError(
+                "mineru_timeout",
+                "MinerU parsing timed out.",
+            ) from exc
+        except MinerUProviderError as exc:
+            raise RetryableJobError(
+                "mineru_provider_error",
+                "MinerU parsing is temporarily unavailable.",
+            ) from exc
+        except (
+            DocumentServiceError,
+            MinerUProtocolError,
+            MinerUNormalizationError,
+            ValueError,
+        ) as exc:
+            raise PermanentJobError(
+                getattr(exc, "code", "invalid_mineru_output"),
+                "MinerU output is invalid.",
+            ) from exc
+
+        parsed_by_id = {item.source_id: item for item in parsed}
+        if "__outline__" in parsed_by_id:
+            outline_document = parsed_by_id.pop("__outline__")
+            outline_text = "\n".join(
+                page.text for page in outline_document.pages if page.text
+            )
+        parsed_documents = [
+            parsed_by_id[source.source_id] for source in sources
+        ]
+        manifest = build_courseware_manifest(
+            job_id=job.id,
+            service_mode=job.service_mode,
+            sources=sources,
+            outline_filename=outline_filename,
+            outline_sha256=outline_sha256,
+            outline_text=outline_text,
+        )
+        learning_map, coverage_ledger = plan_learning_map(
+            manifest,
+            parsed_documents,
+        )
+        output_dir.mkdir(parents=True, exist_ok=True)
+        sequence_outputs = {
+            "manifest": output_dir / "result-courseware-manifest.json",
+            "learning_map": output_dir / "result-learning-map.json",
+            "coverage": output_dir / "result-coverage-ledger.json",
+        }
+        write_json(
+            sequence_outputs["manifest"],
+            manifest.model_dump(mode="json"),
+        )
+        write_json(
+            sequence_outputs["learning_map"],
+            learning_map.model_dump(mode="json"),
+        )
+        write_json(
+            sequence_outputs["coverage"],
+            coverage_ledger.model_dump(mode="json"),
+        )
+
         kwargs = {
             "pdf_path": pdf_paths[0],
             "pdf_paths": pdf_paths,
@@ -356,10 +486,14 @@ class JobWorker:
             "api_key": self.settings.effective_api_key() or None,
             "chat_base_url": self.settings.chat_base_url,
             "embed_base_url": self.settings.embed_base_url,
-            "parser_backend": parser_backend,
+            "parser_backend": "mineru",
             "routing_metadata": {
                 "scenario": scenario_metadata,
-                "parser_profile": parser_metadata,
+                "parser_profile": {
+                    "requested_parser_profile_id": job.parser_profile_id,
+                    "resolved_parser_profile_id": "mineru",
+                    "backend": "mineru",
+                },
             },
             "parser_config": self.settings.parser_config,
             "generation_mode": job.generation_mode or "",
@@ -372,33 +506,30 @@ class JobWorker:
                 for source in sources
             ],
             "progress_callback": progress_callback,
+            "parsed_documents": parsed_documents,
+            "courseware_manifest": manifest,
+            "learning_map": learning_map,
+            "coverage_ledger": coverage_ledger,
         }
-        return runner, kwargs
+        return runner, kwargs, sequence_outputs
 
-    def _parser_routing(
-        self,
-        job: JobSnapshot,
-    ) -> tuple[str, dict[str, Any]]:
-        config = self.settings.parser_profiles_config
-        if not config.get("profiles"):
-            return "pymupdf", {
-                "requested_parser_profile_id": job.parser_profile_id,
-                "resolved_parser_profile_id": job.parser_profile_id,
-                "backend": "pymupdf",
-            }
-        try:
-            resolution = resolve_parser_profile(
-                config,
-                job.parser_profile_id,
-                is_admin=True,
-                parser_config=self.settings.parser_config,
-            )
-        except Exception as exc:
+    def _create_document_service(self) -> MinerUDocumentService:
+        if not self.settings.mineru_api_token.strip():
             raise PermanentJobError(
-                "invalid_parser_profile",
-                "The parser profile is unavailable.",
-            ) from exc
-        return resolution.backend, resolution.trace_metadata()
+                "mineru_not_configured",
+                "MinerU is not configured.",
+            )
+        client = MinerUPrecisionClient(
+            token=self.settings.mineru_api_token,
+            config=self.settings.mineru_config,
+            client=httpx.Client(),
+        )
+        return MinerUDocumentService(
+            client,
+            parser_version="v4",
+            parser_model=self.settings.mineru_config.model_version,
+        )
+
 
     def _content_routing(
         self,
