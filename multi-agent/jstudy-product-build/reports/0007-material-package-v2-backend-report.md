@@ -18,6 +18,8 @@
   - `7a71086 修复：加强资料包读取与格式指令`
 - Corrective baseline：`c5fab8ff33a0333e2e5dccaa8816ed61b191beb2`
 - Fresh review verdict：`REVISE`
+- 第二轮 corrective baseline：`fdb32428abcd0c511bf472b2dc3099870afa9cee`
+- 第二轮 fresh review verdict：`REVISE`
 - 最终 SHA：本报告所在提交不能在提交自身中自指，以 Supervisor 回报中的完整 SHA 为准。
 
 ## 2. Summary
@@ -32,6 +34,8 @@
 - Worker 将 `job.id` 传为 `package_id`，用共享 v2 contract 和 Job-owned source/evidence 再校验；sections、artifacts 与 completed transition 继续通过既有 lease-protected transaction 原子写入。
 - Worker 保留小型 legacy v1 分支；v2 wrong package/service identity、unknown source/evidence、duplicate identity、quality/status 不一致或 malformed schema 均以 `invalid_job_output` 失败，不提交 artifacts/sections。
 - `GET /api/jobs/{job_id}/package` 保持 owner check 与 private cache，返回 validated v2 或 bounded legacy v1。Worker/API 使用同一个最多 `2 MiB` 的 package artifact reader；legacy v1 限制为最多 `120` sections/source files、每 section 最多 `120` source files、`1000` evidence ids、`64` quality keys 和 `32 KiB` quality JSON，另有限定 id/title/status/filename 长度。
+- Worker 在 package artifact 完整哈希前应用同一个 `2 MiB` 上限；hash helper 使用 `64 KiB` 分块，超限时最多读取 `2 MiB + 64 KiB`，随后以 permanent `invalid_job_output` 失败。
+- shared package reader 将 UTF-8、JSON syntax、非 object root 和 JSON recursion/depth failure 统一归一化为安全 `MaterialValidationError(code="invalid_package_json")`。Worker 不重试，API 保持安全 `500 / Material package is invalid`。
 - API readback 通过共享入口同时核对 persisted v2 的 `package_id`、`service_mode`、Job-owned sources/evidence 与确定性 quality/status；内部异常仍统一返回安全的 `500 / Material package is invalid`。
 - 兼容 Markdown 对普通文本与标题中的 HTML-like 内容做转义；结构化 citation 仍确定性转成 `<!-- evidence: E001 -->`，保持现有 citation jump 和 `/output`、`/export` 合同。
 
@@ -71,6 +75,15 @@
 - `tests/test_web_mvp.py`
 - `multi-agent/jstudy-product-build/reports/0007-material-package-v2-backend-report.md`
 
+### 第二轮 Corrective Patch 精确文件
+
+- `packages/core/jstudy_core/job_system/worker.py`
+- `packages/core/jstudy_core/materials/validation.py`
+- `tests/test_job_worker.py`
+- `tests/test_material_generation.py`
+- `tests/test_web_mvp.py`
+- `multi-agent/jstudy-product-build/reports/0007-material-package-v2-backend-report.md`
+
 ## 4. Verification
 
 - Phase 1 RED：`tests.test_material_models` 因 `packages.core.jstudy_core.materials` 不存在而导入失败；实现后 `5/5` GREEN。
@@ -89,8 +102,16 @@
   - models/generation focused：`28/28` 通过，包括 provider coercion 失败只进行一次 repair；
   - Worker/API focused：`4/4` 通过，invalid output 不落 artifacts/sections，API 只返回安全错误；
   - shared validator 的 Job/package/section source、duplicate evidence、identity、quality/status 组合回归全部通过。
+- 第二轮 corrective RED：
+  - 旧 `_build_artifacts()` 在 package size validation 前完整读取并哈希超限文件；
+  - shared reader 对约 `1100` 层 JSON 直接抛出 `RecursionError`；
+  - Worker 在 `max_attempts=2` 时将该错误归为 retryable `worker_error`，API 也未稳定返回安全 500。
+- 第二轮 corrective GREEN：
+  - bounded hash、shared reader、Worker、API focused：`6/6` 通过；
+  - 受控 stream 证明超限 package 的读取位置不超过 `MATERIAL_PACKAGE_MAX_BYTES + ARTIFACT_HASH_CHUNK_BYTES`；
+  - Worker 深嵌套 JSON 回归确认 `failed / invalid_job_output`、`attempt_count=1`，且无 artifacts/sections。
 - `python -m compileall -q apps packages`：通过。
-- `python -m unittest discover -s tests -v`：`328/328` 通过。
+- `python -m unittest discover -s tests -v`：`332/332` 通过。
 - `npm run lint`：通过。
 - `npm run typecheck`：通过。
 - `npm run test`：Vitest `2` 个文件，`5/5` 通过。
@@ -104,6 +125,7 @@
 - 未进行真实 SiliconFlow JSON-mode 请求；JSON request/response、repair 次数和异常边界均使用 deterministic mock 验证，部署阶段仍需 live provider smoke。
 - 未重复执行真实 PostgreSQL/API/Worker 容器 smoke；原子完成与 stale lease 由 repository/Worker 自动测试验证，但不以 SQLite 结果宣称 PostgreSQL 实机验证。
 - legacy v1 仅提供迁移期 bounded read；package artifact 最大 `2 MiB`，上限不是通用迁移框架。新 Job 一律生成 v2，legacy 删除仍需单独审查。
+- package hash 与后续 validation 读取之间仍存在理论 TOCTOU；当前 job-owned output root 按受信单写者边界处理。本轮未扩展为敌对并发文件系统、不可变 artifact 或 repository/storage 重构。
 - `failed` section 是可持久化的 package-level 质量状态，不自动改写为 Worker 基础设施错误；消费者应读取 package/quality issues。
 - Markdown 仍是六类必需公开 artifact 之一，只能由 v2 派生；本任务未删除旧 Markdown helper 或 compatibility API。
 - 未实施 React/HTML renderer、HTML export、视觉主题、Batch Courseware、MinerU pipeline switch、数据库迁移、部署或 CLI cleanup。

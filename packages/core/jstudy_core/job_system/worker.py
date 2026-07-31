@@ -9,7 +9,7 @@ import threading
 from collections.abc import Callable, Mapping
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO
 from uuid import uuid4
 
 from packages.core.jstudy_core.job_system.models import ArtifactKind, utc_now
@@ -31,6 +31,8 @@ from packages.core.jstudy_core.materials.models import (
     MaterialPackageV2,
 )
 from packages.core.jstudy_core.materials.validation import (
+    MATERIAL_PACKAGE_MAX_BYTES,
+    MaterialValidationError,
     read_material_package_payload,
     validate_material_package,
 )
@@ -44,6 +46,7 @@ from packages.core.jstudy_core.settings import (
 
 Runner = Callable[..., Mapping[str, Path]]
 MAINTENANCE_BATCH_SIZE = 10
+ARTIFACT_HASH_CHUNK_BYTES = 64 * 1024
 REQUIRED_PUBLIC_ARTIFACT_KINDS = frozenset(
     {
         ArtifactKind.MARKDOWN,
@@ -54,6 +57,24 @@ REQUIRED_PUBLIC_ARTIFACT_KINDS = frozenset(
         ArtifactKind.PACKAGE,
     }
 )
+
+
+def _hash_artifact_stream(
+    handle: BinaryIO,
+    *,
+    max_bytes: int | None = None,
+) -> tuple[str, int]:
+    digest = hashlib.sha256()
+    byte_size = 0
+    while chunk := handle.read(ARTIFACT_HASH_CHUNK_BYTES):
+        byte_size += len(chunk)
+        if max_bytes is not None and byte_size > max_bytes:
+            raise MaterialValidationError(
+                "package_too_large",
+                "material package exceeds the migration read limit",
+            )
+        digest.update(chunk)
+    return digest.hexdigest(), byte_size
 
 
 class JobExecutionError(RuntimeError):
@@ -458,12 +479,21 @@ class JobWorker:
                     "invalid_job_output",
                     "A job artifact is invalid.",
                 )
-            digest = hashlib.sha256()
-            byte_size = 0
-            with verified_path.open("rb") as handle:
-                for chunk in iter(lambda: handle.read(64 * 1024), b""):
-                    digest.update(chunk)
-                    byte_size += len(chunk)
+            try:
+                with verified_path.open("rb") as handle:
+                    sha256, byte_size = _hash_artifact_stream(
+                        handle,
+                        max_bytes=(
+                            MATERIAL_PACKAGE_MAX_BYTES
+                            if kind is ArtifactKind.PACKAGE
+                            else None
+                        ),
+                    )
+            except MaterialValidationError as exc:
+                raise PermanentJobError(
+                    "invalid_job_output",
+                    "The material package is invalid.",
+                ) from exc
             artifacts.append(
                 ArtifactInput(
                     kind=kind,
@@ -473,7 +503,7 @@ class JobWorker:
                         or "application/octet-stream"
                     ),
                     byte_size=byte_size,
-                    sha256=digest.hexdigest(),
+                    sha256=sha256,
                 )
             )
         return artifacts

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import os
 import shutil
@@ -34,10 +35,16 @@ from packages.core.jstudy_core.job_system.repository import (
 )
 from packages.core.jstudy_core.job_system.states import JobState
 from packages.core.jstudy_core.job_system.worker import (
+    ARTIFACT_HASH_CHUNK_BYTES,
     JobWorker,
     PermanentJobError,
     RetryableJobError,
+    _hash_artifact_stream,
     _filter_runner_kwargs,
+)
+from packages.core.jstudy_core.materials.validation import (
+    MATERIAL_PACKAGE_MAX_BYTES,
+    MaterialValidationError,
 )
 from packages.core.jstudy_core.settings import RuntimeSettings
 
@@ -156,6 +163,27 @@ class JobWorkerTest(unittest.TestCase):
                     ),
                 ),
             )
+        )
+
+    def test_package_hash_stops_after_one_probe_chunk(self):
+        stream = io.BytesIO(
+            b"x"
+            * (
+                MATERIAL_PACKAGE_MAX_BYTES
+                + ARTIFACT_HASH_CHUNK_BYTES * 3
+            )
+        )
+
+        with self.assertRaises(MaterialValidationError) as context:
+            _hash_artifact_stream(
+                stream,
+                max_bytes=MATERIAL_PACKAGE_MAX_BYTES,
+            )
+
+        self.assertEqual(context.exception.code, "package_too_large")
+        self.assertLessEqual(
+            stream.tell(),
+            MATERIAL_PACKAGE_MAX_BYTES + ARTIFACT_HASH_CHUNK_BYTES,
         )
 
     def output_runner(self, calls, expected_mode):
@@ -954,6 +982,35 @@ class JobWorkerTest(unittest.TestCase):
                 self.assertEqual(job.error_code, "invalid_job_output")
                 self.assertEqual(self.repository.list_artifacts(job_id), [])
                 self.assertEqual(self.repository.list_sections(job_id), [])
+
+    def test_deep_package_json_is_permanent_without_retry(self):
+        self.create_job(max_attempts=2)
+
+        def deep_package(**kwargs):
+            outputs = self.output_runner(
+                [],
+                "single_courseware",
+            )(**kwargs)
+            outputs["package"].write_text(
+                '{"nested":' * 1100 + "null" + "}" * 1100,
+                encoding="utf-8",
+            )
+            return outputs
+
+        worker = JobWorker(
+            self.repository,
+            self.settings,
+            worker_id="worker-deep-package",
+            single_runner=deep_package,
+        )
+        self.assertTrue(worker.run_once())
+
+        job = self.repository.get("job-1")
+        self.assertEqual(job.state, JobState.FAILED)
+        self.assertEqual(job.attempt_count, 1)
+        self.assertEqual(job.error_code, "invalid_job_output")
+        self.assertEqual(self.repository.list_artifacts("job-1"), [])
+        self.assertEqual(self.repository.list_sections("job-1"), [])
 
     def test_missing_markdown_artifact_fails_without_completion(self):
         self.create_job(max_attempts=1)

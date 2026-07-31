@@ -1352,6 +1352,45 @@ class WebMvpTest(unittest.TestCase):
                 "Material package is invalid",
             )
 
+    def test_package_endpoint_normalizes_deep_json_failure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            settings = self.ready_settings(root)
+            client = TestClient(create_app(settings=settings))
+            self.register_user(client)
+            response = client.post(
+                "/api/generate",
+                files={
+                    "pdf": (
+                        "lecture.pdf",
+                        self.make_pdf_bytes(),
+                        "application/pdf",
+                    )
+                },
+            )
+            job_id = response.json()["job_id"]
+            self.run_next_job(client, settings, self.v2_runner)
+            package_path = (
+                settings.jobs_root
+                / job_id
+                / "attempts"
+                / "1"
+                / "output"
+                / "result-package.json"
+            )
+            package_path.write_text(
+                '{"nested":' * 1100 + "null" + "}" * 1100,
+                encoding="utf-8",
+            )
+
+            invalid_response = client.get(f"/api/jobs/{job_id}/package")
+
+            self.assertEqual(invalid_response.status_code, 500)
+            self.assertEqual(
+                invalid_response.json()["detail"],
+                "Material package is invalid",
+            )
+
     def test_generate_job_records_owner_and_blocks_other_users(self):
         def fake_runner(**kwargs):
             output_dir = kwargs["output_dir"]

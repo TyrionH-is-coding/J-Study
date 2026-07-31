@@ -28,9 +28,18 @@ def read_material_package_payload(path: str | Path) -> dict[str, Any]:
             "package_too_large",
             "material package exceeds the migration read limit",
         )
-    payload = json.loads(raw.decode("utf-8"))
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+    except (json.JSONDecodeError, RecursionError, UnicodeError) as exc:
+        raise MaterialValidationError(
+            "invalid_package_json",
+            "material package JSON is invalid",
+        ) from exc
     if not isinstance(payload, dict):
-        raise ValueError("material package must be an object")
+        raise MaterialValidationError(
+            "invalid_package_json",
+            "material package JSON must be an object",
+        )
     return payload
 
 

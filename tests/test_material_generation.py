@@ -1,4 +1,6 @@
 import copy
+from pathlib import Path
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -12,6 +14,7 @@ from packages.core.jstudy_core.materials.models import MaterialPackageV2
 from packages.core.jstudy_core.materials.validation import (
     MaterialValidationError,
     audit_material_package,
+    read_material_package_payload,
     validate_material_package,
 )
 from tests.test_material_models import valid_package_payload
@@ -43,6 +46,19 @@ def evidence_items() -> list[dict]:
 
 
 class MaterialValidationTest(unittest.TestCase):
+    def test_package_reader_normalizes_deep_json_failure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "package.json"
+            path.write_text(
+                '{"nested":' * 1100 + "null" + "}" * 1100,
+                encoding="utf-8",
+            )
+
+            with self.assertRaises(MaterialValidationError) as context:
+                read_material_package_payload(path)
+
+        self.assertEqual(context.exception.code, "invalid_package_json")
+
     def assert_validation_code(
         self,
         payload: dict,
