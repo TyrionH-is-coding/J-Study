@@ -1075,6 +1075,80 @@ class WebMvpTest(unittest.TestCase):
             [("section-001", 1, "generated", {"evidence_count": 1})],
         )
 
+    def test_coverage_endpoint_rejects_learning_unit_identity_mismatch(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            settings = self.ready_settings(root)
+            client = TestClient(create_app(settings=settings))
+            self.register_user(client)
+            generated = client.post(
+                "/api/generate",
+                files={
+                    "pdf": (
+                        "lecture.pdf",
+                        self.make_pdf_bytes(),
+                        "application/pdf",
+                    )
+                },
+            )
+            job_id = generated.json()["job_id"]
+            self.run_next_job(client, settings, self.v2_runner)
+            repository = client.app.state.job_repository
+            learning_artifact = next(
+                item
+                for item in repository.list_artifacts(job_id)
+                if item.kind.value == "learning_map"
+            )
+            learning_path = settings.jobs_root / learning_artifact.relative_path
+            learning_payload = json.loads(
+                learning_path.read_text(encoding="utf-8")
+            )
+            learning_payload["units"][0]["order"] = 2
+            learning_path.write_text(
+                json.dumps(learning_payload),
+                encoding="utf-8",
+            )
+            invalid_map = client.get(f"/api/jobs/{job_id}/learning-map")
+            learning_payload["units"][0]["order"] = 1
+            learning_payload["units"][0]["page_end"] = 999
+            learning_path.write_text(
+                json.dumps(learning_payload),
+                encoding="utf-8",
+            )
+            invalid_span = client.get(f"/api/jobs/{job_id}/learning-map")
+            learning_payload["units"][0]["page_end"] = 1
+            learning_path.write_text(
+                json.dumps(learning_payload),
+                encoding="utf-8",
+            )
+            coverage_artifact = next(
+                item
+                for item in repository.list_artifacts(job_id)
+                if item.kind.value == "coverage"
+            )
+            coverage_path = settings.jobs_root / coverage_artifact.relative_path
+            payload = json.loads(coverage_path.read_text(encoding="utf-8"))
+            payload["entries"][0]["learning_unit_id"] = "unit-999"
+            coverage_path.write_text(
+                json.dumps(payload),
+                encoding="utf-8",
+            )
+
+            response = client.get(f"/api/jobs/{job_id}/coverage")
+
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(response.json()["detail"], "Coverage ledger is invalid")
+        self.assertEqual(invalid_map.status_code, 500)
+        self.assertEqual(
+            invalid_map.json()["detail"],
+            "Learning map is invalid",
+        )
+        self.assertEqual(invalid_span.status_code, 500)
+        self.assertEqual(
+            invalid_span.json()["detail"],
+            "Learning map is invalid",
+        )
+
     def test_generate_job_exposes_output_and_evidence_contracts(self):
         captured = {}
 

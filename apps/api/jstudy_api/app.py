@@ -41,6 +41,7 @@ from packages.core.jstudy_core.courseware import (
     CoursewareManifestV1,
     CoverageLedgerV1,
     LearningMapV1,
+    validate_courseware_coordination,
 )
 from packages.core.jstudy_core.scenario_router import ScenarioRoutingError, resolve_scenario
 from packages.core.jstudy_core.materials.models import (
@@ -871,11 +872,39 @@ def create_app(
             "Learning map is not ready",
         )
         try:
-            return read_sync_artifact(
+            learning_map = read_sync_artifact(
                 path,
                 LearningMapV1,
                 expected_manifest_id=job.id,
             )
+            manifest = read_sync_artifact(
+                ready_output_path(
+                    job,
+                    ArtifactKind.MANIFEST,
+                    "Courseware manifest is not ready",
+                ),
+                CoursewareManifestV1,
+                expected_manifest_id=job.id,
+            )
+            coverage = read_sync_artifact(
+                ready_output_path(
+                    job,
+                    ArtifactKind.COVERAGE,
+                    "Coverage ledger is not ready",
+                ),
+                CoverageLedgerV1,
+                expected_manifest_id=job.id,
+            )
+            validate_courseware_coordination(
+                manifest,
+                learning_map,
+                coverage,
+                source_page_counts={
+                    source.source_id: source.page_count
+                    for source in repository.list_sources(job.id)
+                },
+            )
+            return learning_map
         except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
             raise HTTPException(
                 status_code=500,
@@ -899,11 +928,39 @@ def create_app(
             "Coverage ledger is not ready",
         )
         try:
-            return read_sync_artifact(
+            coverage = read_sync_artifact(
                 path,
                 CoverageLedgerV1,
                 expected_manifest_id=job.id,
             )
+            manifest = read_sync_artifact(
+                ready_output_path(
+                    job,
+                    ArtifactKind.MANIFEST,
+                    "Courseware manifest is not ready",
+                ),
+                CoursewareManifestV1,
+                expected_manifest_id=job.id,
+            )
+            learning_map = read_sync_artifact(
+                ready_output_path(
+                    job,
+                    ArtifactKind.LEARNING_MAP,
+                    "Learning map is not ready",
+                ),
+                LearningMapV1,
+                expected_manifest_id=job.id,
+            )
+            validate_courseware_coordination(
+                manifest,
+                learning_map,
+                coverage,
+                source_page_counts={
+                    source.source_id: source.page_count
+                    for source in repository.list_sources(job.id)
+                },
+            )
+            return coverage
         except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
             raise HTTPException(
                 status_code=500,

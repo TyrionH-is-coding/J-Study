@@ -2,7 +2,7 @@
 
 ## Summary
 
-J-Study is a single-server MVP that should evolve into a formally structured product. The current backend now has canonical package paths: `apps/api/jstudy_api/app.py` serves the FastAPI MVP, `apps/api/jstudy_api/ui.py` owns the temporary built-in user UI, `apps/api/jstudy_api/admin_ui.py` owns the temporary backend-served admin settings page, `packages/core/jstudy_core/pipeline.py` orchestrates the generation pipeline, `packages/core/jstudy_core/cli.py` owns the legacy CLI entrypoint implementation, `packages/core/jstudy_core/admin_settings.py` owns JSON-backed runtime admin settings, `packages/core/jstudy_core/scenario_router.py` owns learning-scenario resolution, `packages/core/jstudy_core/parser_profile_router.py` owns user-facing parser-profile resolution, `packages/core/jstudy_core/citations.py` owns evidence and citation-link contracts, `packages/core/jstudy_core/jobs.py` owns the MVP job lifecycle and JSON persistence, `packages/core/jstudy_core/providers.py` owns SiliconFlow-compatible chat and embedding calls, `packages/core/jstudy_core/settings.py` owns runtime resolution and deployment overrides, `packages/core/jstudy_core/storage.py` owns local output file contracts, `packages/parsers` owns document parsing, `packages/retrieval` owns chunking and hybrid retrieval, and `packages/domains/medicine.py` owns the first subject pack. Root-level `web_mvp.py` and `mvp_runner.py` remain compatibility shims for old commands.
+J-Study is a single-server MVP that should evolve into a formally structured product. The current backend now has canonical package paths: `apps/api/jstudy_api/app.py` serves the FastAPI MVP, `apps/api/jstudy_api/ui.py` owns the temporary built-in user UI, `apps/api/jstudy_api/admin_ui.py` owns the temporary backend-served admin settings page, `packages/core/jstudy_core/pipeline.py` orchestrates sequence-first generation, `packages/core/jstudy_core/courseware` owns manifest/map/coverage contracts and planning, `packages/core/jstudy_core/documents` owns normalized document contracts and the MinerU document service, `packages/core/jstudy_core/job_system` owns durable jobs and the independent Worker, `packages/core/jstudy_core/citations.py` owns evidence and citation-link contracts, `packages/core/jstudy_core/providers.py` owns SiliconFlow-compatible model calls, `packages/core/jstudy_core/settings.py` owns runtime resolution and deployment overrides, `packages/core/jstudy_core/storage.py` owns local output file contracts, and `packages/parsers` owns MinerU transport plus PyMuPDF utilities. Root-level `web_mvp.py` and `mvp_runner.py` remain compatibility shims for old commands.
 
 The architecture should support vertical depth rather than only broad generality. DeepTutor is the reference for mature RAG and configuration patterns, but J-Study's quality advantage should come from subject-specific soul profiles and a reviewed knowledge snippet ecosystem. Those libraries can stay thin while the service is being made deployable; the architecture must make them easy to expand later without rewriting the platform.
 
@@ -35,27 +35,26 @@ The first backend reorganization steps are implemented. Further steps should spl
 
 ## Runtime Flow
 
-The current implementation and approved target must be distinguished.
-
-Current implementation:
+Current sequence-first implementation:
 
 ```text
 Upload single PDF or course outline + multiple PDFs + optional scenario
 -> scenario and soul profile resolution
--> selected parser profile, with PyMuPDF still the public default
--> chunks with page metadata
--> source/outline-driven retrieval query planner
--> embedding + lexical retrieval
--> evidence selection
--> approved knowledge snippet retrieval
+-> stable source identity and display-order snapshot
+-> one batched MinerU Precision Extract request per Job
+-> normalized ParsedDocument records in requested source order
+-> deterministic courseware-manifest.v1
+-> continuous learning-map.v1 units in source/page/block order
+-> coverage-ledger.v1 for every normalized block
+-> unit-local primary evidence
 -> structured section generation with at most one format repair
 -> validated material-package.v2 blocks and citation runs
 -> direct package quality audit
 -> deterministic compatibility Markdown + evidence links
--> temporary API artifacts; formal frontend business pages remain pending
+-> owner-scoped synchronization artifact APIs
 ```
 
-Approved courseware-synchronized target:
+Next product layer:
 
 ```text
 Upload outline + courseware
@@ -124,8 +123,9 @@ The platform should expose stable routing hooks for vertical assets. A new subje
 ## Document Parser Boundary
 
 The approved target uses MinerU for all product text and structure extraction.
-Users do not select a parser or parser tier. The current PyMuPDF extraction path
-is a temporary migration implementation, not the target product contract.
+Users do not select a parser or parser tier. The Worker now routes both
+implemented service modes through MinerU; empty, `fast`, and `quality` remain
+request aliases only and do not change parser execution.
 
 MinerU output must be normalized into the versioned J-Study document contract
 before retrieval. The contract preserves:
@@ -154,7 +154,7 @@ The full migration design is defined in
 
 ## Retrieval Layer
 
-The current MVP retrieval approach is:
+The retained optional retrieval toolkit is:
 
 - page-aware chunking
 - deterministic query planning from the current PDF text and optional outline
@@ -166,7 +166,6 @@ The current MVP retrieval approach is:
 
 This lives in `packages/retrieval/` so it can be reused across domains.
 
-This current Top-K path is not the approved complete-material generator.
 Sequence-first generation consumes every usable MinerU block through continuous
 learning units. Hybrid retrieval remains available for:
 
@@ -290,7 +289,7 @@ The MVP hook should collect raw feedback into an admin-visible candidate pool on
 
 The admin surface is available at `GET /admin/settings`, backed by `GET/PUT /api/admin/settings` and `POST /api/admin/settings/test/{llm|embedding|search}`. Set `JSTUDY_ADMIN_TOKEN` in server deployments so only operators can read or write model keys and runtime settings.
 
-The backend exposes `GET /api/health` for reverse proxy and container liveness checks. `GET /api/readiness` reports whether runtime paths, prompt files, API key configuration, and PDF upload limits are ready for job execution. `GET /api/readiness?probe_provider=true` also performs a live SiliconFlow chat and embedding probe for deployment verification. `GET /api/options` returns public scenarios and parser profiles. `POST /api/generate` accepts empty or `single_courseware` `service_mode` with `pdf=<one PDF>`, and accepts `service_mode=course_outline` with required `outline=<.md/.txt/.pdf>` plus repeated `pdfs=<PDF>` uploads. It also accepts optional `scenario_id`, `parser_profile_id`, and metadata-only `mode`, rejects files above `JSTUDY_MAX_PDF_BYTES`, and returns `503` with readiness details when required runtime configuration is missing. The current `mode` field is metadata only; it is intentionally separate from service mode, subject scenario, and parser profile.
+The backend exposes `GET /api/health` for reverse proxy and container liveness checks. `GET /api/readiness` reports whether runtime paths, prompt files, API key configuration, and PDF upload limits are ready for job execution. `GET /api/readiness?probe_provider=true` also performs a live SiliconFlow chat and embedding probe for deployment verification. `GET /api/options` returns public scenarios without parser profiles. `POST /api/generate` accepts empty or `single_courseware` `service_mode` with `pdf=<one PDF>`, and accepts `service_mode=course_outline` with required `outline=<.md/.txt/.pdf>` plus repeated `pdfs=<PDF>` uploads. New clients omit `parser_profile_id`; empty, `fast`, and `quality` are bounded migration aliases, unknown values are rejected, and the Worker always uses MinerU. The metadata-only `mode` remains separate from service mode and subject scenario.
 
 Dynamic API responses that drive polling and runtime state use `Cache-Control: no-store`. Uploaded/generated job artifacts such as markdown output, evidence JSON, material-package JSON, retrieval trace, PDF metadata, original PDF, Markdown export, and rendered PDF page PNGs use `Cache-Control: private, max-age=0, must-revalidate` so browsers can revalidate private previews without serving stale job state.
 
@@ -315,11 +314,13 @@ worker 只删除超过 TTL、terminal、无 lease 且目录安全归属于
 
 Uploaded PDFs stay on local disk during the pilot because citation preview needs the original source file. This is acceptable for a small trial only with nonzero retention. When J-Study needs persistent user history, course libraries, or formal multi-user accounts, uploaded PDFs and generated artifacts should move to Tencent COS or equivalent object storage, with metadata kept in a database and lifecycle rules enforced outside the app process.
 
-Completed jobs expose the retrieval trace through `GET /api/jobs/{job_id}/trace`. This returns the selected chunks, query traces, RAG settings, source file metadata, and knowledge snippet hits already written by the pipeline so backend quality issues can be reviewed without shell access to the server. `GET /api/jobs/{job_id}/package` returns a strictly validated `material-package.v2` for new jobs and keeps a bounded legacy v1 read branch during migration. Single-courseware jobs keep section id `full-material`; course-outline jobs keep deterministic outline section ids and order. The endpoint remains owner-scoped and never returns malformed persisted v2 as an unvalidated response. `GET /api/jobs/{job_id}/export` downloads Markdown deterministically derived from v2 with the same owner checks as the other job artifacts. Multi-PDF jobs should use source-specific preview endpoints under `/api/jobs/{job_id}/pdfs/{source_id}/...`; old `/pdf-info` and `/pdf-page/{page}.png` endpoints remain first-source compatibility aliases.
+Completed jobs expose bounded strict `courseware-manifest.v1`, `learning-map.v1`, and `coverage-ledger.v1` through owner-scoped `/manifest`, `/learning-map`, and `/coverage` endpoints. Job status links these artifacts; source payloads preserve stable `source_id` separately from `original_filename`, `display_title`, and `display_order`. `GET /api/jobs/{job_id}/package` returns a strictly validated `material-package.v2` and keeps a bounded legacy v1 read branch. `GET /api/jobs/{job_id}/export` downloads deterministic compatibility Markdown. Multi-PDF previews use source-specific `/api/jobs/{job_id}/pdfs/{source_id}/...` endpoints; old first-source aliases remain compatible.
 
 The generated quality report traverses typed blocks and citation runs directly. Unknown source, evidence, or citation identities are validation errors; unused evidence, weak-evidence sections, and failed sections remain explicit issues. Markdown is not parsed to calculate v2 quality.
 
-This task did not add an HTML renderer or export path, switch the generation pipeline to MinerU, remove Markdown, or introduce a database migration.
+Task 0008 did not add the organizer UI/API, an HTML renderer, remove Markdown,
+introduce a database migration, or deploy the service. Existing disposable
+pilot databases require reset because the source table gained display metadata.
 
 ## Current Technical Debt
 

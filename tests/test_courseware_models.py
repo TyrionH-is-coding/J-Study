@@ -139,6 +139,38 @@ class CoursewareModelsTest(unittest.TestCase):
         with self.assertRaises(ValidationError):
             CoverageLedgerV1.model_validate(payload)
 
+    def test_coverage_rejects_block_source_and_page_mismatch(self):
+        for field, value in (
+            ("source_id", "S999"),
+            ("page_number", 99),
+        ):
+            payload = coverage_payload()
+            payload["entries"][0][field] = value
+            with self.subTest(field=field):
+                with self.assertRaises(ValidationError):
+                    CoverageLedgerV1.model_validate(payload)
+
+    def test_coverage_rejects_ignored_reason_metric_mismatch(self):
+        payload = coverage_payload()
+        payload["entries"][0].update(
+            {
+                "disposition": "ignored",
+                "reason": "cover_page",
+                "learning_unit_id": None,
+            }
+        )
+        payload["metrics"].update(
+            {
+                "used_block_count": 0,
+                "ignored_block_count": 1,
+                "coverage_rate": 0.0,
+                "ignored_reason_counts": {"wrong_reason": 1},
+            }
+        )
+
+        with self.assertRaises(ValidationError):
+            CoverageLedgerV1.model_validate(payload)
+
     def test_strict_integer_and_boolean_coercion_is_rejected(self):
         manifest = manifest_payload()
         manifest["sources"][0]["display_order"] = "2"

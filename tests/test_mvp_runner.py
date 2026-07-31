@@ -275,7 +275,15 @@ class MvpRunnerTest(unittest.TestCase):
             soul = root / "soul.md"
             mnemonics = root / "mnemonics.md"
             soul.write_text("soul", encoding="utf-8")
-            mnemonics.write_text("", encoding="utf-8")
+            mnemonics.write_text(
+                "---\n"
+                "id: M001\n"
+                "title: Source sequence\n"
+                "keywords: S002,page\n"
+                "source: test\n"
+                "content: Sequence hint.\n",
+                encoding="utf-8",
+            )
             with (
                 patch(
                     "packages.core.jstudy_core.pipeline.extract_pdf_pages",
@@ -325,6 +333,30 @@ class MvpRunnerTest(unittest.TestCase):
             [["S002"], ["S002"], ["S001"]],
         )
         self.assertEqual(trace["generation_strategy"], "sequence-first")
+        self.assertEqual(
+            [
+                (
+                    item["source_id"],
+                    item["original_filename"],
+                    item["file_name"],
+                    item["page_count"],
+                    item["parser_backend"],
+                )
+                for item in trace["source_files"]
+            ],
+            [
+                ("S002", "early.pdf", "early.pdf", 2, "mineru"),
+                ("S001", "late.pdf", "late.pdf", 2, "mineru"),
+            ],
+        )
+        self.assertEqual(trace["mnemonic_hits"][0]["id"], "M001")
+        source_files = {
+            item["source_id"]: item["source_file"] for item in evidence
+        }
+        self.assertEqual(
+            source_files,
+            {"S001": "late.pdf", "S002": "early.pdf"},
+        )
         self.assertTrue(
             all(item["relation"] == "primary" for item in evidence)
         )
@@ -837,6 +869,8 @@ content: 一嗅二视三动眼。
                 "page": 7,
                 "chunk_id": "C002",
                 "excerpt": "beta",
+                "relation": "cross_source",
+                "navigation_policy": "non_interactive",
             },
         ]
 
@@ -847,6 +881,11 @@ content: 一嗅二视三动眼。
         self.assertEqual(links[0]["target"]["source_file"], "lecture-02.pdf")
         self.assertEqual(links[0]["target"]["page"], 7)
         self.assertEqual(links[0]["target"]["quote"], "beta")
+        self.assertEqual(links[0]["target"]["relation"], "cross_source")
+        self.assertEqual(
+            links[0]["target"]["navigation_policy"],
+            "non_interactive",
+        )
         self.assertEqual(links[2]["occurrence"], 2)
 
     def test_parse_outline_sections_extracts_headings_and_numbered_lines(self):

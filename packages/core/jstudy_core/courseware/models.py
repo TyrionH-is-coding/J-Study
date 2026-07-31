@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 import math
 import re
 from typing import Literal
@@ -145,6 +146,13 @@ class CoverageEntry(StrictModel):
 
     @model_validator(mode="after")
     def validate_entry(self) -> "CoverageEntry":
+        match = BLOCK_ID_PATTERN.fullmatch(self.block_id)
+        if match is None:
+            raise ValueError("coverage block identity is invalid")
+        if match.group("source_id") != self.source_id:
+            raise ValueError("coverage block source identity is invalid")
+        if int(match.group("page")) != self.page_number:
+            raise ValueError("coverage block page identity is invalid")
         if self.disposition == "used" and self.learning_unit_id is None:
             raise ValueError("used blocks require a learning unit")
         if self.disposition != "used" and self.learning_unit_id is not None:
@@ -222,4 +230,13 @@ class CoverageLedgerV1(StrictModel):
             or self.metrics.unsupported_block_count != counts["unsupported"]
         ):
             raise ValueError("coverage metrics do not match ledger entries")
+        ignored_reasons = Counter(
+            item.reason
+            for item in self.entries
+            if item.disposition == "ignored"
+        )
+        if self.metrics.ignored_reason_counts != dict(ignored_reasons):
+            raise ValueError(
+                "ignored reason metrics do not match ledger entries"
+            )
         return self

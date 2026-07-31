@@ -37,9 +37,11 @@ from packages.core.jstudy_core.documents import (
     read_text_outline,
 )
 from packages.core.jstudy_core.documents.mineru_client import (
+    MinerUPermanentProviderError,
     MinerUPrecisionClient,
     MinerUProtocolError,
     MinerUProviderError,
+    MinerURetryableProviderError,
     MinerUTimeoutError,
 )
 from packages.core.jstudy_core.documents.mineru_normalizer import (
@@ -413,10 +415,18 @@ class JobWorker:
                 "mineru_timeout",
                 "MinerU parsing timed out.",
             ) from exc
-        except MinerUProviderError as exc:
+        except MinerURetryableProviderError as exc:
             raise RetryableJobError(
                 "mineru_provider_error",
                 "MinerU parsing is temporarily unavailable.",
+            ) from exc
+        except (
+            MinerUPermanentProviderError,
+            MinerUProviderError,
+        ) as exc:
+            raise PermanentJobError(
+                getattr(exc, "code", "mineru_provider_rejected"),
+                "MinerU rejected the parsing request.",
             ) from exc
         except (
             DocumentServiceError,

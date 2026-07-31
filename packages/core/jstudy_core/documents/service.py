@@ -11,7 +11,12 @@ from .mineru_client import (
 )
 from .mineru_normalizer import normalize_mineru_zip
 from .models import ParsedDocument
-from .pdf_utility import PdfValidationError, pdf_page_count, validate_pdf
+from .pdf_utility import (
+    PdfValidationError,
+    pdf_page_count,
+    pdf_sha256,
+    validate_pdf,
+)
 
 
 class DocumentServiceError(RuntimeError):
@@ -20,6 +25,10 @@ class DocumentServiceError(RuntimeError):
 
 class OutlineTextError(DocumentServiceError):
     code = "invalid_outline"
+
+
+class SourceIdentityError(DocumentServiceError):
+    code = "source_identity_mismatch"
 
 
 @dataclass(frozen=True)
@@ -59,7 +68,13 @@ class MinerUDocumentService:
         for source in sources:
             try:
                 validate_pdf(source.pdf_path)
+                if pdf_sha256(source.pdf_path) != source.sha256:
+                    raise SourceIdentityError(
+                        "source PDF no longer matches its admission identity"
+                    )
                 page_counts[source.source_id] = pdf_page_count(source.pdf_path)
+            except SourceIdentityError:
+                raise
             except PdfValidationError as exc:
                 raise DocumentServiceError("source PDF is invalid") from exc
 

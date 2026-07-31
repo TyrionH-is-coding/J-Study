@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from packages.core.jstudy_core.courseware.planning import (
     build_courseware_manifest,
     plan_learning_map,
+    validate_courseware_coordination,
 )
 from packages.core.jstudy_core.documents import (
     ParsedBlock,
@@ -168,6 +169,72 @@ class CoursewarePlanningTest(unittest.TestCase):
                 + coverage.metrics.unsupported_block_count
             ),
         )
+
+        validate_courseware_coordination(
+            manifest,
+            learning_map,
+            coverage,
+            documents=documents,
+        )
+        invalid = coverage.model_copy(deep=True)
+        invalid.entries[1] = invalid.entries[1].model_copy(
+            update={"learning_unit_id": "unit-999"}
+        )
+        with self.assertRaisesRegex(
+            ValueError,
+            "coverage used blocks do not match learning units",
+        ):
+            validate_courseware_coordination(
+                manifest,
+                learning_map,
+                invalid,
+                documents=documents,
+            )
+
+        reversed_sources = learning_map.model_copy(deep=True)
+        first_order = reversed_sources.units[0].order
+        last_order = reversed_sources.units[-1].order
+        reversed_sources.units[0] = reversed_sources.units[0].model_copy(
+            update={"order": last_order}
+        )
+        reversed_sources.units[-1] = reversed_sources.units[-1].model_copy(
+            update={"order": first_order}
+        )
+        with self.assertRaisesRegex(ValueError, "learning map order"):
+            validate_courseware_coordination(
+                manifest,
+                reversed_sources,
+                coverage,
+                documents=documents,
+            )
+
+        reversed_blocks = learning_map.model_copy(deep=True)
+        reversed_blocks.units[0] = reversed_blocks.units[0].model_copy(
+            update={
+                "block_ids": list(
+                    reversed(reversed_blocks.units[0].block_ids)
+                )
+            }
+        )
+        with self.assertRaisesRegex(ValueError, "block order"):
+            validate_courseware_coordination(
+                manifest,
+                reversed_blocks,
+                coverage,
+                documents=documents,
+            )
+
+        invalid_span = learning_map.model_copy(deep=True)
+        invalid_span.units[0] = invalid_span.units[0].model_copy(
+            update={"page_end": 999}
+        )
+        with self.assertRaisesRegex(ValueError, "page span"):
+            validate_courseware_coordination(
+                manifest,
+                invalid_span,
+                coverage,
+                documents=documents,
+            )
 
 
 if __name__ == "__main__":

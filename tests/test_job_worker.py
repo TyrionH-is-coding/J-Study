@@ -25,6 +25,10 @@ from packages.core.jstudy_core.documents import (
     ParsedDocument,
     ParsedPage,
 )
+from packages.core.jstudy_core.documents.mineru_client import (
+    MinerUPermanentProviderError,
+    MinerURetryableProviderError,
+)
 from packages.core.jstudy_core.admin_settings import AdminSettingsService
 from packages.core.jstudy_core.job_system.models import (
     ArtifactKind,
@@ -124,6 +128,14 @@ class FakeDocumentService:
             )
             for source in sources
         ]
+
+
+class FailingDocumentService:
+    def __init__(self, error):
+        self.error = error
+
+    def parse(self, sources, *, artifact_root):
+        raise self.error
 
 
 class JobWorkerTest(unittest.TestCase):
@@ -536,6 +548,38 @@ class JobWorkerTest(unittest.TestCase):
             }
             <= artifact_kinds
         )
+
+    def test_mineru_provider_errors_have_permanent_and_retryable_job_semantics(self):
+        self.create_job(job_id="permanent", max_attempts=2)
+        permanent = JobWorker(
+            self.repository,
+            self.settings,
+            worker_id="worker-permanent",
+            document_service=FailingDocumentService(
+                MinerUPermanentProviderError("rejected")
+            ),
+        )
+        self.assertTrue(permanent.run_once())
+        permanent_job = self.repository.get("permanent")
+        self.assertEqual(permanent_job.state, JobState.FAILED)
+        self.assertEqual(
+            permanent_job.error_code,
+            "mineru_provider_rejected",
+        )
+
+        self.create_job(job_id="retryable", max_attempts=2)
+        retryable = JobWorker(
+            self.repository,
+            self.settings,
+            worker_id="worker-retryable",
+            document_service=FailingDocumentService(
+                MinerURetryableProviderError("unavailable")
+            ),
+        )
+        self.assertTrue(retryable.run_once())
+        retryable_job = self.repository.get("retryable")
+        self.assertEqual(retryable_job.state, JobState.QUEUED)
+        self.assertEqual(retryable_job.attempt_count, 1)
 
     def test_course_outline_selects_outline_runner_and_preserves_sources(self):
         self.create_job(service_mode="course_outline")

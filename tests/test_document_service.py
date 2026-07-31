@@ -9,9 +9,11 @@ from packages.core.jstudy_core.documents.mineru_client import (
     MinerUArtifact,
     MinerUTimeoutError,
 )
+from packages.core.jstudy_core.documents.pdf_utility import pdf_sha256
 from packages.core.jstudy_core.documents.service import (
     DocumentSource,
     MinerUDocumentService,
+    SourceIdentityError,
     OutlineTextError,
     read_text_outline,
 )
@@ -48,8 +50,8 @@ class DocumentServiceTest(unittest.TestCase):
             make_pdf(first, 2)
             make_pdf(second, 1)
             sources = [
-                DocumentSource("S002", second, "b" * 64),
-                DocumentSource("S001", first, "a" * 64),
+                DocumentSource("S002", second, pdf_sha256(second)),
+                DocumentSource("S001", first, pdf_sha256(first)),
             ]
             client = FakeClient(
                 [
@@ -121,9 +123,29 @@ class DocumentServiceTest(unittest.TestCase):
             )
             with self.assertRaises(MinerUTimeoutError):
                 service.parse(
-                    [DocumentSource("S001", pdf, "a" * 64)],
+                    [DocumentSource("S001", pdf, pdf_sha256(pdf))],
                     artifact_root=root / "artifacts",
                 )
+
+    def test_rejects_source_content_that_no_longer_matches_admission_hash(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            pdf = root / "source.pdf"
+            make_pdf(pdf, 1)
+            client = FakeClient()
+            service = MinerUDocumentService(
+                client,
+                parser_version="v4",
+                parser_model="vlm",
+            )
+
+            with self.assertRaises(SourceIdentityError):
+                service.parse(
+                    [DocumentSource("S001", pdf, "0" * 64)],
+                    artifact_root=root / "artifacts",
+                )
+
+        self.assertEqual(client.calls, [])
 
     def test_text_outline_is_bounded_and_strict_utf8(self):
         with tempfile.TemporaryDirectory() as tmp:

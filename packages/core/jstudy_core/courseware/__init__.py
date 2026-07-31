@@ -9,7 +9,11 @@ from .models import (
     ManifestSource,
     OutlineSection,
 )
-from .planning import build_courseware_manifest, plan_learning_map
+from .planning import (
+    build_courseware_manifest,
+    plan_learning_map,
+    validate_courseware_coordination,
+)
 
 __all__ = [
     "CoursewareManifestV1",
@@ -23,4 +27,5 @@ __all__ = [
     "OutlineSection",
     "build_courseware_manifest",
     "plan_learning_map",
+    "validate_courseware_coordination",
 ]

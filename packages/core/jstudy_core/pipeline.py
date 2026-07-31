@@ -11,6 +11,7 @@ from packages.core.jstudy_core.courseware import (
     CoursewareManifestV1,
     CoverageLedgerV1,
     LearningMapV1,
+    validate_courseware_coordination,
 )
 from packages.core.jstudy_core.documents import ParsedDocument
 from packages.core.jstudy_core.settings import read_api_key
@@ -127,6 +128,7 @@ def _run_sequence_first(
     learning_map: LearningMapV1,
     coverage_ledger: CoverageLedgerV1,
     soul_path: Path,
+    mnemonics_path: Path,
     api_key_path: Path,
     output_dir: Path,
     chat_model: str,
@@ -137,14 +139,16 @@ def _run_sequence_first(
     progress_callback: ProgressCallback | None,
     package_id: str | None,
     section_generator: SectionGenerator | None,
+    rag_config: RagConfig,
 ) -> dict[str, Path]:
     if courseware_manifest.service_mode != service_mode:
         raise ValueError("manifest service mode does not match runner")
-    if (
-        learning_map.manifest_id != courseware_manifest.manifest_id
-        or coverage_ledger.manifest_id != courseware_manifest.manifest_id
-    ):
-        raise ValueError("sequence artifacts do not share one manifest")
+    validate_courseware_coordination(
+        courseware_manifest,
+        learning_map,
+        coverage_ledger,
+        documents=parsed_documents,
+    )
     documents = {item.source_id: item for item in parsed_documents}
     if set(documents) != {
         item.source_id for item in courseware_manifest.sources
@@ -156,6 +160,10 @@ def _run_sequence_first(
         for page in document.pages:
             for block in page.blocks:
                 block_index[block.block_id] = (document, page, block)
+    source_filenames = {
+        item.source_id: item.original_filename
+        for item in courseware_manifest.sources
+    }
 
     _report_progress(progress_callback, JobState.RETRIEVING)
     evidence = []
@@ -169,7 +177,7 @@ def _run_sequence_first(
             item = {
                 "id": f"E{len(evidence) + 1:03d}",
                 "source_id": document.source_id,
-                "source_file": document.source_file,
+                "source_file": source_filenames[document.source_id],
                 "page": page.page_number,
                 "chunk_id": block.block_id,
                 "excerpt": citations.clean_quote(
@@ -185,6 +193,19 @@ def _run_sequence_first(
 
     resolved_api_key = api_key or read_api_key(api_key_path)
     soul = soul_path.read_text(encoding="utf-8")
+    mnemonics = parse_mnemonics(
+        mnemonics_path.read_text(encoding="utf-8")
+    )
+    mnemonic_hits = retrieve_mnemonics(
+        "\n".join(
+            block.text or block.markdown
+            for document in parsed_documents
+            for page in document.pages
+            for block in page.blocks
+        ),
+        mnemonics,
+        limit=rag_config.mnemonic_limit,
+    )
     generate_section = section_generator or generate_material_section
     outline_titles = (
         {
@@ -271,6 +292,19 @@ def _run_sequence_first(
             "learning_unit_ids": [
                 item.id for item in learning_map.ordered_units()
             ],
+            "source_files": [
+                {
+                    "source_id": source.source_id,
+                    "original_filename": source.original_filename,
+                    "file_name": source.original_filename,
+                    "display_title": source.display_title,
+                    "display_order": source.display_order,
+                    "page_count": documents[source.source_id].page_count,
+                    "parser_backend": "mineru",
+                }
+                for source in courseware_manifest.ordered_sources()
+            ],
+            "mnemonic_hits": mnemonic_hits,
         },
     )
     write_json(output_paths.evidence, evidence)
@@ -410,6 +444,7 @@ def run_mvp(
             learning_map=learning_map,
             coverage_ledger=coverage_ledger,
             soul_path=soul_path,
+            mnemonics_path=mnemonics_path,
             api_key_path=api_key_path,
             output_dir=output_dir,
             chat_model=chat_model,
@@ -420,6 +455,7 @@ def run_mvp(
             progress_callback=progress_callback,
             package_id=package_id,
             section_generator=section_generator,
+            rag_config=rag_config or RagConfig(),
         )
     if any(item is not None for item in sequence_inputs):
         raise ValueError("sequence-first inputs must be provided together")
@@ -593,6 +629,7 @@ def run_course_outline(
             learning_map=learning_map,
             coverage_ledger=coverage_ledger,
             soul_path=soul_path,
+            mnemonics_path=mnemonics_path,
             api_key_path=api_key_path,
             output_dir=output_dir,
             chat_model=chat_model,
@@ -603,6 +640,7 @@ def run_course_outline(
             progress_callback=progress_callback,
             package_id=package_id,
             section_generator=section_generator,
+            rag_config=rag_config or RagConfig(),
         )
     if any(item is not None for item in sequence_inputs):
         raise ValueError("sequence-first inputs must be provided together")

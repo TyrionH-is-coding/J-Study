@@ -11,9 +11,11 @@ from packages.core.jstudy_core.documents.models import ParsedDocument, ParsedPag
 from packages.core.jstudy_core.documents.mineru_client import (
     MinerUClientConfig,
     MinerUInput,
+    MinerUPermanentProviderError,
     MinerUPrecisionClient,
     MinerUProtocolError,
     MinerUProviderError,
+    MinerURetryableProviderError,
     MinerUTimeoutError,
 )
 from packages.parsers.mineru_parser import (
@@ -159,7 +161,16 @@ class MinerUClientTest(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             client, http_client = self.client(handler)
-            with http_client, self.assertRaises(MinerUProviderError):
+            with http_client, self.assertRaises(MinerUPermanentProviderError):
+                client.extract(self.inputs(Path(tmp), count=1))
+
+    def test_http_auth_rejection_is_permanent(self):
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(401)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            client, http_client = self.client(handler)
+            with http_client, self.assertRaises(MinerUPermanentProviderError):
                 client.extract(self.inputs(Path(tmp), count=1))
 
     def test_failed_extraction_redacts_token_and_signed_query(self):
@@ -176,7 +187,7 @@ class MinerUClientTest(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             client, http_client = self.client(handler)
-            with http_client, self.assertRaises(MinerUProviderError) as caught:
+            with http_client, self.assertRaises(MinerUPermanentProviderError) as caught:
                 client.extract(self.inputs(Path(tmp), count=1))
 
         message = str(caught.exception)
@@ -280,6 +291,54 @@ class MinerUClientTest(unittest.TestCase):
             with http_client, self.assertRaises(MinerUProtocolError):
                 client.extract(self.inputs(Path(tmp), count=1))
 
+    def test_rejects_malformed_download_content_length_without_retry(self):
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.method == "POST":
+                return httpx.Response(
+                    200,
+                    json={
+                        "code": 0,
+                        "trace_id": "trace",
+                        "data": {
+                            "batch_id": "batch",
+                            "file_urls": ["https://uploads.example/file"],
+                        },
+                    },
+                )
+            if request.method == "PUT":
+                return httpx.Response(200)
+            if request.url.host == "mineru.net":
+                return httpx.Response(
+                    200,
+                    json={
+                        "code": 0,
+                        "trace_id": "poll",
+                        "data": {
+                            "batch_id": "batch",
+                            "extract_result": [
+                                {
+                                    "data_id": "S001",
+                                    "file_name": "lecture.pdf",
+                                    "state": "done",
+                                    "full_zip_url": (
+                                        "https://downloads.example/file.zip"
+                                    ),
+                                }
+                            ],
+                        },
+                    },
+                )
+            return httpx.Response(
+                200,
+                headers={"content-length": "invalid"},
+                content=b"zip",
+            )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            client, http_client = self.client(handler)
+            with http_client, self.assertRaises(MinerUProtocolError):
+                client.extract(self.inputs(Path(tmp), count=1))
+
 
     def test_rejects_non_mineru_api_origin(self):
         with self.assertRaises(MinerUProtocolError):
@@ -300,7 +359,7 @@ class MinerUClientTest(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             client, http_client = self.client(handler)
-            with http_client, self.assertRaises(MinerUProviderError) as caught:
+            with http_client, self.assertRaises(MinerURetryableProviderError) as caught:
                 client.extract(self.inputs(Path(tmp), count=1))
 
         self.assertNotIn(TOKEN, str(caught.exception))
@@ -319,7 +378,7 @@ class MinerUClientTest(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             client, http_client = self.client(handler, max_poll_retries=2)
-            with http_client, self.assertRaises(MinerUProviderError):
+            with http_client, self.assertRaises(MinerURetryableProviderError):
                 client.extract(self.inputs(Path(tmp), count=1))
 
         self.assertEqual(poll_calls, 3)

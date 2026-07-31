@@ -24,6 +24,14 @@ class MinerUProviderError(MinerUError):
     code = "mineru_provider_error"
 
 
+class MinerURetryableProviderError(MinerUProviderError):
+    code = "mineru_provider_unavailable"
+
+
+class MinerUPermanentProviderError(MinerUProviderError):
+    code = "mineru_provider_rejected"
+
+
 class MinerUProtocolError(MinerUError):
     code = "mineru_protocol_error"
 
@@ -108,7 +116,9 @@ class MinerUPrecisionClient:
         monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
         if not token.strip():
-            raise MinerUProviderError("MinerU API token is not configured")
+            raise MinerUPermanentProviderError(
+                "MinerU API token is not configured"
+            )
         self._token = token.strip()
         self._config = config
         self._client = client
@@ -185,9 +195,14 @@ class MinerUPrecisionClient:
         try:
             response = self._client.send(request)
         except httpx.HTTPError as exc:
-            raise MinerUProviderError(self._safe_message(f"signed upload failed: {exc}")) from exc
+            raise MinerURetryableProviderError(
+                self._safe_message(f"signed upload failed: {exc}")
+            ) from exc
         if not 200 <= response.status_code < 300:
-            raise MinerUProviderError(f"signed upload failed with HTTP {response.status_code}")
+            raise self._http_status_error(
+                "signed upload failed",
+                response.status_code,
+            )
 
     def _poll_until_complete(
         self,
@@ -214,7 +229,7 @@ class MinerUPrecisionClient:
             ordered = [state_by_id[source_id] for source_id in expected_ids]
             for state in ordered:
                 if state.state == "failed":
-                    raise MinerUProviderError(
+                    raise MinerUPermanentProviderError(
                         self._safe_message(
                             f"MinerU extraction failed for {state.source_id}: {state.error_message or 'provider failure'}"
                         )
@@ -236,20 +251,24 @@ class MinerUPrecisionClient:
                 response = self._api_request("GET", url, timeout=API_TIMEOUT, allow_status=True)
             except httpx.TransportError as exc:
                 if retries >= self._config.max_poll_retries or self._monotonic() >= deadline:
-                    raise MinerUProviderError(self._safe_message(f"MinerU polling failed: {exc}")) from exc
+                    raise MinerURetryableProviderError(
+                        self._safe_message(f"MinerU polling failed: {exc}")
+                    ) from exc
                 retries += 1
                 self._sleep(min(2**retries, 8))
                 continue
             if response.status_code == 429 or 500 <= response.status_code < 600:
                 if retries >= self._config.max_poll_retries or self._monotonic() >= deadline:
-                    raise MinerUProviderError(
+                    raise MinerURetryableProviderError(
                         f"MinerU polling failed after bounded retries: HTTP {response.status_code}"
                     )
                 retries += 1
                 self._sleep(min(2**retries, 8))
                 continue
             if not 200 <= response.status_code < 300:
-                raise MinerUProviderError(f"MinerU API rejected polling: HTTP {response.status_code}")
+                raise MinerUPermanentProviderError(
+                    f"MinerU API rejected polling: HTTP {response.status_code}"
+                )
             return response
 
     def _parse_source_state(self, value: Any) -> MinerUSourceState:
@@ -274,10 +293,26 @@ class MinerUPrecisionClient:
         try:
             response = self._client.send(request, stream=True)
             if not 200 <= response.status_code < 300:
-                raise MinerUProviderError(f"MinerU ZIP download failed: HTTP {response.status_code}")
+                raise self._http_status_error(
+                    "MinerU ZIP download failed",
+                    response.status_code,
+                )
             content_length = response.headers.get("content-length")
-            if content_length and int(content_length) > self._config.max_result_bytes:
-                raise MinerUProtocolError("MinerU ZIP exceeds the configured download limit")
+            if content_length:
+                try:
+                    declared_length = int(content_length)
+                except ValueError as exc:
+                    raise MinerUProtocolError(
+                        "MinerU ZIP has invalid content length"
+                    ) from exc
+                if declared_length < 0:
+                    raise MinerUProtocolError(
+                        "MinerU ZIP has invalid content length"
+                    )
+                if declared_length > self._config.max_result_bytes:
+                    raise MinerUProtocolError(
+                        "MinerU ZIP exceeds the configured download limit"
+                    )
             chunks: list[bytes] = []
             total = 0
             for chunk in response.iter_bytes():
@@ -287,8 +322,10 @@ class MinerUPrecisionClient:
                 chunks.append(chunk)
         except MinerUError:
             raise
-        except (httpx.HTTPError, OSError, ValueError) as exc:
-            raise MinerUProviderError(self._safe_message(f"MinerU ZIP download failed: {exc}")) from exc
+        except (httpx.HTTPError, OSError) as exc:
+            raise MinerURetryableProviderError(
+                self._safe_message(f"MinerU ZIP download failed: {exc}")
+            ) from exc
         finally:
             if "response" in locals():
                 response.close()
@@ -315,11 +352,14 @@ class MinerUPrecisionClient:
         except httpx.HTTPError as exc:
             if allow_status:
                 raise
-            raise MinerUProviderError(
+            raise MinerURetryableProviderError(
                 self._safe_message(f"MinerU API request failed: {exc}")
             ) from exc
         if not allow_status and not 200 <= response.status_code < 300:
-            raise MinerUProviderError(f"MinerU API request failed: HTTP {response.status_code}")
+            raise self._http_status_error(
+                "MinerU API request failed",
+                response.status_code,
+            )
         return response
 
     def _provider_body(self, response: httpx.Response) -> dict[str, Any]:
@@ -334,8 +374,22 @@ class MinerUPrecisionClient:
             raise MinerUProtocolError("MinerU API response code must be an integer")
         if code != 0:
             message = self._safe_message(str(body.get("msg") or "provider error"))
-            raise MinerUProviderError(f"MinerU provider code {code}: {message}")
+            raise MinerUPermanentProviderError(
+                f"MinerU provider code {code}: {message}"
+            )
         return body
+
+    @staticmethod
+    def _http_status_error(
+        operation: str,
+        status_code: int,
+    ) -> MinerUProviderError:
+        error_type = (
+            MinerURetryableProviderError
+            if status_code == 429 or status_code >= 500
+            else MinerUPermanentProviderError
+        )
+        return error_type(f"{operation}: HTTP {status_code}")
 
     @staticmethod
     def _required_dict(value: dict[str, Any], key: str) -> dict[str, Any]:

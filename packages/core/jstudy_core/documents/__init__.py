@@ -9,6 +9,7 @@ from .service import (
     DocumentSource,
     MinerUDocumentService,
     OutlineTextError,
+    SourceIdentityError,
     read_text_outline,
 )
 
@@ -21,5 +22,6 @@ __all__ = [
     "DocumentSource",
     "MinerUDocumentService",
     "OutlineTextError",
+    "SourceIdentityError",
     "read_text_outline",
 ]

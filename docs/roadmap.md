@@ -79,7 +79,7 @@ Task 0006 当前边界：
 - 旧 `jobs.json` 仅保留 compatibility boundary，production 不 import；
 - SQLModel `create_all()` 仅用于 disposable pilot；
 - 持久数据上线前仍必须交付 versioned migrations 和迁移/回滚/备份 runbook；
-- HTML 与 MinerU pipeline 切换仍属于后续任务。
+- HTML 仍属于后续任务；Task 0008 已完成 MinerU Worker pipeline 切换。
 
 Task 0007 当前边界：
 
@@ -99,7 +99,7 @@ Approved design:
 
 - `docs/superpowers/specs/2026-07-31-courseware-synchronized-learning-design.md`
 
-Task 0008 delivers the first backend slice:
+Task 0008 delivered the first backend slice:
 
 - persist stable source display metadata without changing `source_id`
 - freeze `courseware-manifest.v1` for each generation Job
@@ -110,6 +110,15 @@ Task 0008 delivers the first backend slice:
 - write `coverage-ledger.v1` for every usable/ignored block
 - mark cross-source relationships `navigation_policy=non_interactive`
 - remove parser selection from public options while retaining bounded request compatibility
+
+Completed acceptance:
+
+- both implemented service modes use the same Worker-owned MinerU document service
+- stable source identity remains independent from display title and order
+- every normalized block receives one coverage disposition
+- complete-material section order follows the deterministic learning map, not embedding relevance
+- owner-scoped APIs publish manifest, learning map, and coverage ledger with private cache headers
+- PyMuPDF remains only on PDF validation, metadata, and preview utility paths
 
 Task 0008 does not include:
 
@@ -231,7 +240,8 @@ Deliverables:
   with subject scenario or internal parser infrastructure
 - backend request contract that records service mode separately from
   `scenario_id` - currently done for `course_outline`; legacy
-  `parser_profile_id` is scheduled for removal
+  `parser_profile_id` is no longer advertised and remains only as bounded
+  empty/`fast`/`quality` request compatibility
 - package-output contract for multi-section material - strict v2 backend contract done for `single_courseware` and `course_outline`
 - section-level blocks, structural citations, source/evidence identities, and direct quality status - backend v2 done for both implemented modes
 - full-export contract that can assemble all sections into one complete document

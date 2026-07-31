@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 import re
 from typing import Any
 
@@ -268,3 +268,142 @@ def plan_learning_map(
         units=units,
     )
     return learning_map, ledger
+
+
+def validate_courseware_coordination(
+    manifest: CoursewareManifestV1,
+    learning_map: LearningMapV1,
+    coverage: CoverageLedgerV1,
+    *,
+    documents: Sequence[ParsedDocument] | None = None,
+    source_page_counts: Mapping[str, int | None] | None = None,
+) -> None:
+    if (
+        learning_map.manifest_id != manifest.manifest_id
+        or coverage.manifest_id != manifest.manifest_id
+    ):
+        raise ValueError("sequence artifacts do not share one manifest")
+    source_ids = {item.source_id for item in manifest.sources}
+    source_rank = {
+        item.source_id: index
+        for index, item in enumerate(manifest.ordered_sources())
+    }
+    page_counts = dict(source_page_counts or {})
+    if page_counts and (
+        set(page_counts) != source_ids
+        or any(
+            not isinstance(value, int)
+            or isinstance(value, bool)
+            or value < 1
+            for value in page_counts.values()
+        )
+    ):
+        raise ValueError("source page counts do not match the manifest")
+    documents_by_id: dict[str, ParsedDocument] = {}
+    if documents is not None:
+        documents_by_id = {item.source_id: item for item in documents}
+        if (
+            len(documents_by_id) != len(documents)
+            or set(documents_by_id) != source_ids
+        ):
+            raise ValueError("parsed documents do not match the manifest")
+        manifest_by_id = {
+            item.source_id: item for item in manifest.sources
+        }
+        for source_id, document in documents_by_id.items():
+            if (
+                document.source_sha256
+                != manifest_by_id[source_id].sha256
+            ):
+                raise ValueError(
+                    "parsed document identity does not match the manifest"
+                )
+            if (
+                source_id in page_counts
+                and page_counts[source_id] != document.page_count
+            ):
+                raise ValueError(
+                    "parsed document page count does not match source"
+                )
+            page_counts[source_id] = document.page_count
+    outline_ids = (
+        {item.id for item in manifest.outline.sections}
+        if manifest.outline is not None
+        else set()
+    )
+    ordered_units = learning_map.ordered_units()
+    if [item.order for item in ordered_units] != list(
+        range(1, len(ordered_units) + 1)
+    ):
+        raise ValueError("learning map order must be contiguous")
+    previous_source_rank = -1
+    last_page_by_source: dict[str, int] = {}
+    for unit in ordered_units:
+        if unit.primary_source_id not in source_ids:
+            raise ValueError("learning unit source is not in the manifest")
+        if (
+            unit.outline_section_id is not None
+            and unit.outline_section_id not in outline_ids
+        ):
+            raise ValueError("learning unit outline section is invalid")
+        if (
+            page_counts
+            and unit.page_end > page_counts[unit.primary_source_id]
+        ):
+            raise ValueError(
+                "learning unit page span exceeds its source"
+            )
+        current_source_rank = source_rank[unit.primary_source_id]
+        if current_source_rank < previous_source_rank:
+            raise ValueError("learning map order violates manifest order")
+        previous_end = last_page_by_source.get(unit.primary_source_id, 0)
+        if unit.page_start <= previous_end:
+            raise ValueError("learning map order moves backward within source")
+        previous_source_rank = current_source_rank
+        last_page_by_source[unit.primary_source_id] = unit.page_end
+
+    expected_used = {
+        block_id: unit.id
+        for unit in ordered_units
+        for block_id in unit.block_ids
+    }
+    actual_used = {
+        entry.block_id: entry.learning_unit_id
+        for entry in coverage.entries
+        if entry.disposition == "used"
+    }
+    if actual_used != expected_used:
+        raise ValueError(
+            "coverage used blocks do not match learning units"
+        )
+    if any(entry.source_id not in source_ids for entry in coverage.entries):
+        raise ValueError("coverage source is not in the manifest")
+
+    if documents is None:
+        return
+    document_blocks = {
+        block.block_id
+        for document in documents
+        for page in document.pages
+        for block in page.blocks
+    }
+    if {entry.block_id for entry in coverage.entries} != document_blocks:
+        raise ValueError("coverage does not match parsed document blocks")
+    mapped_blocks = [
+        block_id
+        for unit in ordered_units
+        for block_id in unit.block_ids
+    ]
+    mapped_block_set = set(mapped_blocks)
+    canonical_used_blocks = [
+        block.block_id
+        for source in manifest.ordered_sources()
+        for document in [documents_by_id[source.source_id]]
+        for page in document.pages
+        for block in page.blocks
+        if block.block_id in mapped_block_set
+    ]
+    if mapped_blocks != canonical_used_blocks:
+        raise ValueError(
+            "learning map block order does not match parsed documents"
+        )
