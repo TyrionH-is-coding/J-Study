@@ -1,12 +1,21 @@
 from __future__ import annotations
 
+import json
 from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class StrictModel(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+
+class LegacyModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+
+LegacyId = Annotated[str, Field(min_length=1, max_length=128)]
+LegacyFilename = Annotated[str, Field(min_length=1, max_length=255)]
 
 
 class TextRun(StrictModel):
@@ -186,36 +195,59 @@ class MaterialPackageV2(StrictModel):
         return self
 
 
-class LegacySourceFile(StrictModel):
-    source_id: str | None = None
-    file_name: str
-    page_count: int | None = None
-    parser_backend: str | None = None
+class LegacySourceFile(LegacyModel):
+    source_id: LegacyId | None = None
+    file_name: LegacyFilename
+    page_count: int | None = Field(default=None, ge=0)
+    parser_backend: str | None = Field(default=None, max_length=64)
 
 
-class LegacyArtifactReferences(StrictModel):
-    markdown: str
-    evidence: str | None = None
-    evidence_links: str | None = None
-    quality: str | None = None
-    package: str | None = None
+class LegacyArtifactReferences(LegacyModel):
+    markdown: LegacyFilename
+    evidence: LegacyFilename | None = None
+    evidence_links: LegacyFilename | None = None
+    quality: LegacyFilename | None = None
+    package: LegacyFilename | None = None
 
 
-class LegacyMaterialSectionV1(StrictModel):
-    id: str
-    title: str
-    order: int
-    status: str = "generated"
-    quality: dict[str, Any] = Field(default_factory=dict)
-    source_files: list[str] = Field(default_factory=list)
-    evidence_ids: list[str] = Field(default_factory=list)
+class LegacyMaterialSectionV1(LegacyModel):
+    id: LegacyId
+    title: str = Field(min_length=1, max_length=500)
+    order: int = Field(ge=1, strict=True)
+    status: str = Field(default="generated", min_length=1, max_length=64)
+    quality: dict[str, Any] = Field(default_factory=dict, max_length=64)
+    source_files: list[LegacyFilename] = Field(
+        default_factory=list,
+        max_length=120,
+    )
+    evidence_ids: list[LegacyId] = Field(
+        default_factory=list,
+        max_length=1000,
+    )
     artifact_filenames: LegacyArtifactReferences | None = None
     artifact_urls: LegacyArtifactReferences | None = None
 
+    @model_validator(mode="after")
+    def validate_quality_size(self) -> "LegacyMaterialSectionV1":
+        encoded = json.dumps(
+            self.quality,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        if len(encoded) > 32 * 1024:
+            raise ValueError("legacy section quality exceeds migration limit")
+        return self
 
-class LegacyMaterialPackageV1(StrictModel):
+
+class LegacyMaterialPackageV1(LegacyModel):
     type: Literal["material_package"]
     service_mode: Literal["single_courseware", "course_outline"]
-    generation_mode: str = ""
-    source_files: list[LegacySourceFile] = Field(default_factory=list)
-    sections: list[LegacyMaterialSectionV1] = Field(min_length=1)
+    generation_mode: str = Field(default="", max_length=128)
+    source_files: list[LegacySourceFile] = Field(
+        default_factory=list,
+        max_length=120,
+    )
+    sections: list[LegacyMaterialSectionV1] = Field(
+        min_length=1,
+        max_length=120,
+    )

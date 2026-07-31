@@ -1,3 +1,4 @@
+import copy
 import json
 import inspect
 import os
@@ -1227,31 +1228,127 @@ class WebMvpTest(unittest.TestCase):
                 / "output"
                 / "result-package.json"
             )
-            package["unexpected"] = "field"
-            package_path.write_text(
-                json.dumps(package),
-                encoding="utf-8",
-            )
+            evidence_path = package_path.with_name("result-evidence.json")
+            evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+            cases = {
+                "unexpected-field": lambda candidate, items: candidate.update(
+                    {"unexpected": "field"}
+                ),
+                "unknown-source": lambda candidate, items: candidate.update(
+                    {"source_ids": ["S999"]}
+                ),
+                "package-id-mismatch": lambda candidate, items: candidate.update(
+                    {"package_id": "another-job"}
+                ),
+                "service-mode-mismatch": lambda candidate, items: candidate.update(
+                    {"service_mode": "course_outline"}
+                ),
+                "evidence-source-mismatch": lambda candidate, items: items[
+                    0
+                ].update({"source_id": "S999"}),
+                "duplicate-evidence": lambda candidate, items: items.append(
+                    dict(items[0])
+                ),
+                "quality-mismatch": lambda candidate, items: candidate[
+                    "sections"
+                ][0]["quality"].update({"evidence_count": 999}),
+            }
+            for name, mutate in cases.items():
+                with self.subTest(name=name):
+                    candidate = copy.deepcopy(package)
+                    items = copy.deepcopy(evidence)
+                    mutate(candidate, items)
+                    package_path.write_text(
+                        json.dumps(candidate),
+                        encoding="utf-8",
+                    )
+                    evidence_path.write_text(
+                        json.dumps(items),
+                        encoding="utf-8",
+                    )
+                    invalid_response = client.get(
+                        f"/api/jobs/{job_id}/package"
+                    )
+                    self.assertEqual(invalid_response.status_code, 500)
+                    self.assertEqual(
+                        invalid_response.json()["detail"],
+                        "Material package is invalid",
+                    )
 
-            invalid_response = client.get(f"/api/jobs/{job_id}/package")
-            self.assertEqual(invalid_response.status_code, 500)
-            self.assertEqual(
-                invalid_response.json()["detail"],
-                "Material package is invalid",
+    def test_package_endpoint_rejects_oversized_legacy_payloads(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            settings = self.ready_settings(root)
+            client = TestClient(create_app(settings=settings))
+            self.register_user(client)
+            response = client.post(
+                "/api/generate",
+                files={
+                    "pdf": (
+                        "lecture.pdf",
+                        self.make_pdf_bytes(),
+                        "application/pdf",
+                    )
+                },
             )
+            job_id = response.json()["job_id"]
+            self.run_next_job(client, settings, self.v2_runner)
+            package_path = (
+                settings.jobs_root
+                / job_id
+                / "attempts"
+                / "1"
+                / "output"
+                / "result-package.json"
+            )
+            section = {
+                "id": "full-material",
+                "title": "完整资料",
+                "order": 1,
+                "artifact_urls": {"markdown": "result-output.md"},
+            }
+            legacy = {
+                "type": "material_package",
+                "service_mode": "single_courseware",
+                "sections": [section],
+            }
+            cases = {
+                "too-many-sections": {
+                    **legacy,
+                    "sections": [
+                        {
+                            **section,
+                            "id": f"section-{index:03d}",
+                            "order": index,
+                        }
+                        for index in range(1, 122)
+                    ],
+                },
+                "oversized-field": {
+                    **legacy,
+                    "sections": [{**section, "title": "x" * 501}],
+                },
+            }
+            for name, candidate in cases.items():
+                with self.subTest(name=name):
+                    package_path.write_text(
+                        json.dumps(candidate),
+                        encoding="utf-8",
+                    )
+                    invalid_response = client.get(
+                        f"/api/jobs/{job_id}/package"
+                    )
+                    self.assertEqual(invalid_response.status_code, 500)
+                    self.assertEqual(
+                        invalid_response.json()["detail"],
+                        "Material package is invalid",
+                    )
 
-            package.pop("unexpected")
-            package["source_ids"] = ["S999"]
-            package_path.write_text(
-                json.dumps(package),
-                encoding="utf-8",
-            )
-            unknown_source_response = client.get(
-                f"/api/jobs/{job_id}/package"
-            )
-            self.assertEqual(unknown_source_response.status_code, 500)
+            package_path.write_bytes(b" " * (2 * 1024 * 1024 + 1))
+            oversized_response = client.get(f"/api/jobs/{job_id}/package")
+            self.assertEqual(oversized_response.status_code, 500)
             self.assertEqual(
-                unknown_source_response.json()["detail"],
+                oversized_response.json()["detail"],
                 "Material package is invalid",
             )
 

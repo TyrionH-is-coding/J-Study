@@ -3,7 +3,10 @@ import unittest
 
 from pydantic import ValidationError
 
-from packages.core.jstudy_core.materials.models import MaterialPackageV2
+from packages.core.jstudy_core.materials.models import (
+    LegacyMaterialPackageV1,
+    MaterialPackageV2,
+)
 
 
 def valid_package_payload() -> dict:
@@ -91,6 +94,34 @@ def valid_package_payload() -> dict:
                 "theme_version": "1.0.0",
             }
         },
+    }
+
+
+def valid_legacy_package_payload() -> dict:
+    return {
+        "type": "material_package",
+        "service_mode": "single_courseware",
+        "generation_mode": "study",
+        "source_files": [
+            {
+                "source_id": "S001",
+                "file_name": "lecture.pdf",
+                "page_count": 1,
+                "parser_backend": "pymupdf",
+            }
+        ],
+        "sections": [
+            {
+                "id": "full-material",
+                "title": "完整资料",
+                "order": 1,
+                "status": "generated",
+                "quality": {"evidence_count": 1},
+                "source_files": ["S001"],
+                "evidence_ids": ["E001"],
+                "artifact_urls": {"markdown": "result-output.md"},
+            }
+        ],
     }
 
 
@@ -230,6 +261,77 @@ class MaterialModelsTest(unittest.TestCase):
 
         package = MaterialPackageV2.model_validate(failed)
         self.assertEqual(package.sections[0].status, "failed")
+
+    def test_v2_models_reject_provider_json_type_coercion(self):
+        cases = []
+
+        bool_order = valid_package_payload()
+        bool_order["sections"][0]["order"] = True
+        cases.append(bool_order)
+
+        numeric_string = valid_package_payload()
+        numeric_string["sections"][0]["quality"]["evidence_count"] = "1"
+        cases.append(numeric_string)
+
+        string_boolean = valid_package_payload()
+        string_boolean["sections"][0]["blocks"][2]["ordered"] = "true"
+        cases.append(string_boolean)
+
+        string_heading_level = valid_package_payload()
+        string_heading_level["sections"][0]["blocks"][0]["level"] = "3"
+        cases.append(string_heading_level)
+
+        for payload in cases:
+            with self.subTest(payload=payload):
+                with self.assertRaises(ValidationError):
+                    MaterialPackageV2.model_validate(payload)
+
+    def test_legacy_v1_contract_enforces_migration_limits(self):
+        too_many_sections = valid_legacy_package_payload()
+        template = too_many_sections["sections"][0]
+        too_many_sections["sections"] = [
+            {
+                **copy.deepcopy(template),
+                "id": f"section-{index:03d}",
+                "order": index,
+            }
+            for index in range(1, 122)
+        ]
+
+        long_title = valid_legacy_package_payload()
+        long_title["sections"][0]["title"] = "x" * 501
+
+        too_many_sources = valid_legacy_package_payload()
+        too_many_sources["sections"][0]["source_files"] = [
+            f"S{index:03d}" for index in range(1, 122)
+        ]
+
+        too_many_evidence = valid_legacy_package_payload()
+        too_many_evidence["sections"][0]["evidence_ids"] = [
+            f"E{index:04d}" for index in range(1001)
+        ]
+
+        oversized_quality = valid_legacy_package_payload()
+        oversized_quality["sections"][0]["quality"] = {
+            "note": "x" * (32 * 1024 + 1)
+        }
+
+        too_many_quality_keys = valid_legacy_package_payload()
+        too_many_quality_keys["sections"][0]["quality"] = {
+            f"key-{index}": index for index in range(65)
+        }
+
+        for payload in (
+            too_many_sections,
+            long_title,
+            too_many_sources,
+            too_many_evidence,
+            oversized_quality,
+            too_many_quality_keys,
+        ):
+            with self.subTest(payload=payload):
+                with self.assertRaises(ValidationError):
+                    LegacyMaterialPackageV1.model_validate(payload)
 
 
 if __name__ == "__main__":

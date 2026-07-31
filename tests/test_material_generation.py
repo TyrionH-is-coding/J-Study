@@ -50,8 +50,15 @@ class MaterialValidationTest(unittest.TestCase):
         *,
         evidence: list[dict] | None = None,
         allowed_source_ids: set[str] | None = None,
+        expected_package_id: str | None = None,
+        expected_service_mode: str | None = None,
     ) -> None:
         package = MaterialPackageV2.model_validate(payload)
+        identity_kwargs = {}
+        if expected_package_id is not None:
+            identity_kwargs["expected_package_id"] = expected_package_id
+        if expected_service_mode is not None:
+            identity_kwargs["expected_service_mode"] = expected_service_mode
         with self.assertRaises(MaterialValidationError) as caught:
             validate_material_package(
                 package,
@@ -59,6 +66,7 @@ class MaterialValidationTest(unittest.TestCase):
                 allowed_source_ids
                 if allowed_source_ids is not None
                 else {"S001"},
+                **identity_kwargs,
             )
         self.assertEqual(caught.exception.code, expected_code)
 
@@ -86,6 +94,170 @@ class MaterialValidationTest(unittest.TestCase):
         undeclared["sections"][0]["evidence_ids"] = []
         self.assert_validation_code(undeclared, "undeclared_section_evidence")
 
+    def test_rejects_invalid_or_duplicate_evidence_identity(self):
+        missing_id = evidence_items()[:1]
+        missing_id[0]["id"] = ""
+        self.assert_validation_code(
+            valid_package_payload(),
+            "invalid_evidence_id",
+            evidence=missing_id,
+        )
+
+        missing_source = evidence_items()[:1]
+        missing_source[0]["source_id"] = ""
+        self.assert_validation_code(
+            valid_package_payload(),
+            "invalid_evidence_source_id",
+            evidence=missing_source,
+        )
+
+        duplicate = evidence_items()
+        duplicate[1]["id"] = "E001"
+        self.assert_validation_code(
+            valid_package_payload(),
+            "duplicate_evidence_id",
+            evidence=duplicate,
+        )
+
+    def test_rejects_evidence_source_outside_job_package_or_section(self):
+        outside_job = evidence_items()[:1]
+        outside_job[0]["source_id"] = "S999"
+        self.assert_validation_code(
+            valid_package_payload(),
+            "evidence_source_not_in_job",
+            evidence=outside_job,
+        )
+
+        outside_package = valid_package_payload()
+        package_evidence = evidence_items()[:1]
+        package_evidence[0]["source_id"] = "S002"
+        self.assert_validation_code(
+            outside_package,
+            "evidence_source_not_in_package",
+            evidence=package_evidence,
+            allowed_source_ids={"S001", "S002"},
+        )
+
+        outside_section = valid_package_payload()
+        outside_section["source_ids"] = ["S001", "S002"]
+        section_evidence = evidence_items()[:1]
+        section_evidence[0]["source_id"] = "S002"
+        self.assert_validation_code(
+            outside_section,
+            "evidence_source_not_in_section",
+            evidence=section_evidence,
+            allowed_source_ids={"S001", "S002"},
+        )
+
+    def test_rejects_package_identity_mismatch(self):
+        self.assert_validation_code(
+            valid_package_payload(),
+            "package_id_mismatch",
+            evidence=evidence_items()[:1],
+            expected_package_id="another-job",
+        )
+        self.assert_validation_code(
+            valid_package_payload(),
+            "service_mode_mismatch",
+            evidence=evidence_items()[:1],
+            expected_service_mode="single_courseware",
+        )
+
+    def test_rejects_persisted_quality_and_status_mismatch(self):
+        mutations = {
+            "evidence_count": lambda section: section["quality"].update(
+                {"evidence_count": 999}
+            ),
+            "cited_evidence_count": lambda section: section["quality"].update(
+                {"cited_evidence_count": 999}
+            ),
+            "citation_coverage": lambda section: section["quality"].update(
+                {"citation_coverage": 0.25}
+            ),
+            "evidence_status": lambda section: section["quality"].update(
+                {"evidence_status": "weak"}
+            ),
+        }
+        for name, mutate in mutations.items():
+            with self.subTest(name=name):
+                payload = valid_package_payload()
+                mutate(payload["sections"][0])
+                self.assert_validation_code(
+                    payload,
+                    "section_quality_mismatch",
+                    evidence=evidence_items()[:1],
+                )
+
+        wrong_status = valid_package_payload()
+        wrong_status["sections"][0]["status"] = "weak_evidence"
+        self.assert_validation_code(
+            wrong_status,
+            "section_status_mismatch",
+            evidence=evidence_items()[:1],
+        )
+
+    def test_accepts_deterministic_quality_status_combinations(self):
+        generated = MaterialPackageV2.model_validate(valid_package_payload())
+        self.assertIs(
+            validate_material_package(
+                generated,
+                evidence_items()[:1],
+                {"S001"},
+            ),
+            generated,
+        )
+
+        weak_payload = valid_package_payload()
+        weak_payload["sections"][0].update(
+            {
+                "status": "weak_evidence",
+                "quality": {
+                    "evidence_status": "weak",
+                    "evidence_count": 0,
+                    "cited_evidence_count": 0,
+                    "citation_coverage": 0.0,
+                },
+                "source_ids": [],
+                "evidence_ids": [],
+                "blocks": [
+                    {
+                        "id": "note-001",
+                        "type": "callout",
+                        "variant": "note",
+                        "runs": [{"type": "text", "text": "资料不足"}],
+                    }
+                ],
+            }
+        )
+        weak = MaterialPackageV2.model_validate(weak_payload)
+        self.assertIs(
+            validate_material_package(weak, [], {"S001"}),
+            weak,
+        )
+
+        failed_payload = valid_package_payload()
+        failed_payload["sections"][0].update(
+            {
+                "status": "failed",
+                "quality": {
+                    "evidence_status": "failed",
+                    "evidence_count": 1,
+                    "cited_evidence_count": 0,
+                    "citation_coverage": 0.0,
+                },
+                "blocks": [],
+            }
+        )
+        failed = MaterialPackageV2.model_validate(failed_payload)
+        self.assertIs(
+            validate_material_package(
+                failed,
+                evidence_items()[:1],
+                {"S001"},
+            ),
+            failed,
+        )
+
     def test_validating_same_payload_preserves_section_identity_and_order(self):
         payload = valid_package_payload()
         second = copy.deepcopy(payload["sections"][0])
@@ -95,7 +267,10 @@ class MaterialValidationTest(unittest.TestCase):
             {
                 "id": "paragraph-002",
                 "type": "paragraph",
-                "runs": [{"type": "text", "text": "第二节"}],
+                "runs": [
+                    {"type": "text", "text": "第二节"},
+                    {"type": "citation", "evidence_id": "E001"},
+                ],
             }
         ]
         payload["sections"].append(second)
@@ -343,6 +518,30 @@ class StructuredGenerationTest(unittest.TestCase):
         self.assertIn("extra_forbidden", repair_text)
         self.assertNotIn("PRIVATE-MODEL-TEXT", repair_text)
         self.assertNotIn("credential-must-not-appear", repair_text)
+
+    @patch(
+        "packages.core.jstudy_core.materials.generation.providers.generate_json_object"
+    )
+    def test_type_coercion_failure_uses_single_repair_call(self, provider):
+        invalid = generated_section_payload()
+        invalid["order"] = True
+        provider.side_effect = [invalid, generated_section_payload()]
+
+        section = generate_material_section(
+            section_id="section-001",
+            order=1,
+            title="绪论",
+            soul="teaching rules",
+            evidence=evidence_items()[:1],
+            source_ids=["S001"],
+            api_key="test-key",
+            model="test-model",
+        )
+
+        self.assertEqual(section.status, "generated")
+        self.assertEqual(provider.call_count, 2)
+        repair_messages = provider.call_args_list[1].args[0]
+        self.assertIn("int_type", repair_messages[-1]["content"])
 
     @patch(
         "packages.core.jstudy_core.materials.generation.providers.generate_json_object"

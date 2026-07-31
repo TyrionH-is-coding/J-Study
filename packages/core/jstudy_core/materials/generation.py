@@ -109,6 +109,22 @@ def _validate_generated_section(
             "invalid_section_identity",
             "generated section identity does not match the planned section",
         )
+    evidence_count = len(section.evidence_ids)
+    cited_count = len(set(citation_ids_for_section(section)))
+    coverage = cited_count / evidence_count if evidence_count else 0.0
+    evidence_status = "sufficient" if cited_count else "weak"
+    status = "generated" if cited_count else "weak_evidence"
+    section = section.model_copy(
+        update={
+            "status": status,
+            "quality": SectionQuality(
+                evidence_status=evidence_status,
+                evidence_count=evidence_count,
+                cited_evidence_count=cited_count,
+                citation_coverage=coverage,
+            ),
+        }
+    )
     package = MaterialPackageV2(
         schema_version="material-package.v2",
         package_id="validation",
@@ -126,23 +142,7 @@ def _validate_generated_section(
         },
     )
     validate_material_package(package, evidence, source_ids)
-
-    evidence_count = len(section.evidence_ids)
-    cited_count = len(set(citation_ids_for_section(section)))
-    coverage = cited_count / evidence_count if evidence_count else 0.0
-    evidence_status = "sufficient" if cited_count else "weak"
-    status = "generated" if cited_count else "weak_evidence"
-    return section.model_copy(
-        update={
-            "status": status,
-            "quality": SectionQuality(
-                evidence_status=evidence_status,
-                evidence_count=evidence_count,
-                cited_evidence_count=cited_count,
-                citation_coverage=coverage,
-            ),
-        }
-    )
+    return section
 
 
 def _failed_section(

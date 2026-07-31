@@ -826,24 +826,33 @@ class JobWorkerTest(unittest.TestCase):
 
     def test_invalid_v2_packages_fail_without_artifacts_or_sections(self):
         cases = {
-            "wrong-package-id": lambda package: package.update(
+            "wrong-package-id": lambda package, evidence: package.update(
                 {"package_id": "another-job"}
             ),
-            "wrong-service-mode": lambda package: package.update(
+            "wrong-service-mode": lambda package, evidence: package.update(
                 {"service_mode": "course_outline"}
             ),
-            "unknown-source": lambda package: package.update(
+            "unknown-source": lambda package, evidence: package.update(
                 {"source_ids": ["S999"]}
             ),
-            "unknown-evidence": lambda package: package["sections"][0].update(
+            "unknown-evidence": lambda package, evidence: package["sections"][0].update(
                 {"evidence_ids": ["E999"]}
             ),
-            "duplicate-section": lambda package: package["sections"].append(
+            "duplicate-section": lambda package, evidence: package["sections"].append(
                 dict(package["sections"][0])
             ),
-            "malformed": lambda package: package.update(
+            "malformed": lambda package, evidence: package.update(
                 {"unexpected": "field"}
             ),
+            "evidence-source-outside-job": lambda package, evidence: evidence[
+                0
+            ].update({"source_id": "S999"}),
+            "duplicate-evidence": lambda package, evidence: evidence.append(
+                dict(evidence[0])
+            ),
+            "quality-mismatch": lambda package, evidence: package["sections"][
+                0
+            ]["quality"].update({"evidence_count": 999}),
         }
         for index, (name, mutate) in enumerate(cases.items(), start=1):
             with self.subTest(name=name):
@@ -859,9 +868,16 @@ class JobWorkerTest(unittest.TestCase):
                     package = json.loads(
                         outputs["package"].read_text(encoding="utf-8")
                     )
-                    _mutate(package)
+                    evidence = json.loads(
+                        outputs["evidence"].read_text(encoding="utf-8")
+                    )
+                    _mutate(package, evidence)
                     outputs["package"].write_text(
                         json.dumps(package),
+                        encoding="utf-8",
+                    )
+                    outputs["evidence"].write_text(
+                        json.dumps(evidence),
                         encoding="utf-8",
                     )
                     return outputs
@@ -881,6 +897,62 @@ class JobWorkerTest(unittest.TestCase):
                     self.repository.list_artifacts(job_id),
                     [],
                 )
+                self.assertEqual(self.repository.list_sections(job_id), [])
+
+    def test_legacy_package_limits_fail_without_artifacts_or_sections(self):
+        def too_many_sections(package_path):
+            package = json.loads(package_path.read_text(encoding="utf-8"))
+            template = package["sections"][0]
+            package["sections"] = [
+                {
+                    **template,
+                    "id": f"section-{index:03d}",
+                    "order": index,
+                }
+                for index in range(1, 122)
+            ]
+            package_path.write_text(json.dumps(package), encoding="utf-8")
+
+        def oversized_title(package_path):
+            package = json.loads(package_path.read_text(encoding="utf-8"))
+            package["sections"][0]["title"] = "x" * 501
+            package_path.write_text(json.dumps(package), encoding="utf-8")
+
+        def oversized_bytes(package_path):
+            package_path.write_bytes(b" " * (2 * 1024 * 1024 + 1))
+
+        for index, (name, mutate) in enumerate(
+            (
+                ("too-many-sections", too_many_sections),
+                ("oversized-title", oversized_title),
+                ("oversized-bytes", oversized_bytes),
+            ),
+            start=1,
+        ):
+            with self.subTest(name=name):
+                job_id = f"invalid-legacy-{index}"
+                self.create_job(job_id=job_id, max_attempts=1)
+
+                def invalid_runner(_mutate=mutate, **kwargs):
+                    outputs = self.output_runner(
+                        [],
+                        "single_courseware",
+                    )(**kwargs)
+                    _mutate(outputs["package"])
+                    return outputs
+
+                worker = JobWorker(
+                    self.repository,
+                    self.settings,
+                    worker_id=f"worker-{job_id}",
+                    single_runner=invalid_runner,
+                )
+                self.assertTrue(worker.run_once())
+
+                job = self.repository.get(job_id)
+                self.assertEqual(job.state, JobState.FAILED)
+                self.assertEqual(job.error_code, "invalid_job_output")
+                self.assertEqual(self.repository.list_artifacts(job_id), [])
                 self.assertEqual(self.repository.list_sections(job_id), [])
 
     def test_missing_markdown_artifact_fails_without_completion(self):

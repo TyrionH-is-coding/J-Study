@@ -47,6 +47,7 @@ from packages.core.jstudy_core.materials.models import (
     MaterialPackageV2,
 )
 from packages.core.jstudy_core.materials.validation import (
+    read_material_package_payload,
     validate_material_package,
 )
 from packages.core.jstudy_core.settings import (
@@ -776,7 +777,7 @@ def create_app(
         job = job_or_404(job_id, current_user_or_401(request))
         path = ready_output_path(job, ArtifactKind.PACKAGE, "Material package is not ready")
         try:
-            payload = read_json(path)
+            payload = read_material_package_payload(path)
             if payload.get("schema_version") == "material-package.v2":
                 package = MaterialPackageV2.model_validate(payload)
                 evidence_path = ready_output_path(
@@ -791,6 +792,8 @@ def create_app(
                         source.source_id
                         for source in repository.list_sources(job.id)
                     ],
+                    expected_package_id=job.id,
+                    expected_service_mode=job.service_mode,
                 )
                 return package
             if "schema_version" in payload:

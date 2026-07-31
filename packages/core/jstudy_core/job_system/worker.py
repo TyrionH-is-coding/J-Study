@@ -26,8 +26,12 @@ from packages.core.jstudy_core.job_system.repository import (
 from packages.core.jstudy_core.job_system.states import JobState
 from packages.core.jstudy_core.parser_profile_router import resolve_parser_profile
 from packages.core.jstudy_core.pipeline import run_course_outline, run_mvp
-from packages.core.jstudy_core.materials.models import MaterialPackageV2
+from packages.core.jstudy_core.materials.models import (
+    LegacyMaterialPackageV1,
+    MaterialPackageV2,
+)
 from packages.core.jstudy_core.materials.validation import (
+    read_material_package_payload,
     validate_material_package,
 )
 from packages.core.jstudy_core.scenario_router import resolve_scenario
@@ -487,7 +491,7 @@ class JobWorker:
                 "The material package is missing.",
             )
         try:
-            package = json.loads(Path(package_path).read_text(encoding="utf-8"))
+            package = read_material_package_payload(package_path)
             if package.get("schema_version") == "material-package.v2":
                 return self._build_v2_sections(
                     job,
@@ -523,10 +527,6 @@ class JobWorker:
         markdown_filenames: set[str],
     ) -> list[SectionInput]:
         package = MaterialPackageV2.model_validate(payload)
-        if package.package_id != job.id:
-            raise ValueError("package id does not match job")
-        if package.service_mode != job.service_mode:
-            raise ValueError("package service mode does not match job")
         if len(markdown_filenames) != 1:
             raise ValueError("v2 package requires one compatibility Markdown")
         evidence_path = outputs.get("evidence")
@@ -543,6 +543,8 @@ class JobWorker:
             package,
             evidence,
             allowed_source_ids,
+            expected_package_id=job.id,
+            expected_service_mode=job.service_mode,
         )
         markdown_filename = next(iter(markdown_filenames))
         return [
@@ -572,39 +574,29 @@ class JobWorker:
     ) -> list[SectionInput]:
         # Legacy v1 remains readable during the Package v2 migration.
         try:
-            raw_sections = package["sections"]
-            if package.get("type") != "material_package":
-                raise ValueError("unexpected package type")
-            if package.get("service_mode") != job.service_mode:
+            legacy_package = LegacyMaterialPackageV1.model_validate(package)
+            raw_sections = legacy_package.sections
+            if legacy_package.service_mode != job.service_mode:
                 raise ValueError("package service mode does not match job")
-            if not isinstance(raw_sections, list) or not raw_sections:
-                raise ValueError("package sections are missing")
 
             sections = []
             section_ids: set[str] = set()
             positions: set[int] = set()
             for raw in raw_sections:
-                if not isinstance(raw, dict):
-                    raise ValueError("package section must be an object")
-                section_id = str(raw.get("id") or "").strip()
-                title = str(raw.get("title") or "").strip()
-                position = raw.get("order")
-                status = str(raw.get("status") or "generated").strip()
-                quality = raw.get("quality") or {}
+                section_id = raw.id.strip()
+                title = raw.title.strip()
+                position = raw.order
+                status = raw.status.strip()
+                quality = raw.quality
                 artifacts = (
-                    raw.get("artifact_filenames")
-                    or raw.get("artifact_urls")
-                    or {}
+                    raw.artifact_filenames
+                    or raw.artifact_urls
                 )
                 if (
                     not section_id
                     or not title
-                    or isinstance(position, bool)
-                    or not isinstance(position, int)
-                    or position < 1
                     or not status
-                    or not isinstance(quality, dict)
-                    or not isinstance(artifacts, dict)
+                    or artifacts is None
                 ):
                     raise ValueError("package section contract is invalid")
                 if section_id in section_ids or position in positions:
@@ -612,7 +604,7 @@ class JobWorker:
                 section_ids.add(section_id)
                 positions.add(position)
                 artifact_filename = str(
-                    artifacts.get("markdown") or ""
+                    artifacts.markdown
                 ).strip()
                 if (
                     not artifact_filename
