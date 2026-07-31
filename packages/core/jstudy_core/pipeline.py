@@ -7,6 +7,12 @@ from typing import Any, Callable
 
 from packages.core.jstudy_core import citations
 from packages.core.jstudy_core import providers
+from packages.core.jstudy_core.courseware import (
+    CoursewareManifestV1,
+    CoverageLedgerV1,
+    LearningMapV1,
+)
+from packages.core.jstudy_core.documents import ParsedDocument
 from packages.core.jstudy_core.settings import read_api_key
 from packages.core.jstudy_core.storage import build_output_paths, write_json
 from packages.core.jstudy_core.job_system.states import JobState
@@ -113,6 +119,183 @@ def _material_package(
     )
 
 
+def _run_sequence_first(
+    *,
+    service_mode: str,
+    parsed_documents: list[ParsedDocument],
+    courseware_manifest: CoursewareManifestV1,
+    learning_map: LearningMapV1,
+    coverage_ledger: CoverageLedgerV1,
+    soul_path: Path,
+    api_key_path: Path,
+    output_dir: Path,
+    chat_model: str,
+    output_prefix: str,
+    api_key: str | None,
+    chat_base_url: str,
+    routing_metadata: dict[str, Any] | None,
+    progress_callback: ProgressCallback | None,
+    package_id: str | None,
+    section_generator: SectionGenerator | None,
+) -> dict[str, Path]:
+    if courseware_manifest.service_mode != service_mode:
+        raise ValueError("manifest service mode does not match runner")
+    if (
+        learning_map.manifest_id != courseware_manifest.manifest_id
+        or coverage_ledger.manifest_id != courseware_manifest.manifest_id
+    ):
+        raise ValueError("sequence artifacts do not share one manifest")
+    documents = {item.source_id: item for item in parsed_documents}
+    if set(documents) != {
+        item.source_id for item in courseware_manifest.sources
+    }:
+        raise ValueError("parsed documents do not match the manifest")
+
+    block_index = {}
+    for document in parsed_documents:
+        for page in document.pages:
+            for block in page.blocks:
+                block_index[block.block_id] = (document, page, block)
+
+    _report_progress(progress_callback, JobState.RETRIEVING)
+    evidence = []
+    evidence_by_unit: dict[str, list[dict[str, Any]]] = {}
+    for unit in learning_map.ordered_units():
+        unit_evidence = []
+        for block_id in unit.block_ids:
+            document, page, block = block_index[block_id]
+            if document.source_id != unit.primary_source_id:
+                raise ValueError("learning unit block source is invalid")
+            item = {
+                "id": f"E{len(evidence) + 1:03d}",
+                "source_id": document.source_id,
+                "source_file": document.source_file,
+                "page": page.page_number,
+                "chunk_id": block.block_id,
+                "excerpt": citations.clean_quote(
+                    block.text or block.markdown
+                ),
+                "relation": "primary",
+                "navigation_policy": "interactive",
+                "learning_unit_id": unit.id,
+            }
+            evidence.append(item)
+            unit_evidence.append(item)
+        evidence_by_unit[unit.id] = unit_evidence
+
+    resolved_api_key = api_key or read_api_key(api_key_path)
+    soul = soul_path.read_text(encoding="utf-8")
+    generate_section = section_generator or generate_material_section
+    outline_titles = (
+        {
+            section.id: section.title
+            for section in courseware_manifest.outline.sections
+        }
+        if courseware_manifest.outline is not None
+        else {}
+    )
+    source_titles = {
+        source.source_id: source.display_title
+        for source in courseware_manifest.sources
+    }
+    sections = []
+    _report_progress(progress_callback, JobState.GENERATING)
+    for unit in learning_map.ordered_units():
+        title = outline_titles.get(
+            unit.outline_section_id or "",
+            (
+                f"{source_titles[unit.primary_source_id]} "
+                f"第 {unit.page_start}-{unit.page_end} 页"
+            ),
+        )
+        sections.append(
+            generate_section(
+                section_id=unit.material_section_id,
+                order=unit.order,
+                title=title,
+                soul=soul,
+                evidence=evidence_by_unit[unit.id],
+                source_ids=[unit.primary_source_id],
+                api_key=resolved_api_key,
+                model=chat_model,
+                base_url=chat_base_url,
+            )
+        )
+
+    _report_progress(progress_callback, JobState.PACKAGING)
+    source_ids = [
+        item.source_id for item in courseware_manifest.ordered_sources()
+    ]
+    package = _material_package(
+        package_id=package_id or output_prefix,
+        service_mode=service_mode,
+        title=(
+            "课程学习资料"
+            if service_mode == "course_outline"
+            else "完整学习资料"
+        ),
+        subject=_package_subject(routing_metadata),
+        source_ids=source_ids,
+        sections=sections,
+    )
+    validate_material_package(package, evidence, source_ids)
+    quality = audit_material_package(package, evidence)
+    markdown = render_compatibility_markdown(package)
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_paths = build_output_paths(output_dir, output_prefix)
+    ordered_blocks = [
+        {
+            "block_id": block.block_id,
+            "source_id": document.source_id,
+            "page": page.page_number,
+            "kind": block.kind,
+        }
+        for source in courseware_manifest.ordered_sources()
+        for document in [documents[source.source_id]]
+        for page in document.pages
+        for block in page.blocks
+    ]
+    write_json(output_paths.chunks, ordered_blocks)
+    write_json(
+        output_paths.trace,
+        {
+            "service_mode": service_mode,
+            "chat_model": chat_model,
+            "scenario": (routing_metadata or {}).get("scenario", {}),
+            "parser": {"backend": "mineru"},
+            "generation_strategy": "sequence-first",
+            "manifest_schema": "courseware-manifest.v1",
+            "learning_map_schema": "learning-map.v1",
+            "coverage_schema": "coverage-ledger.v1",
+            "learning_unit_ids": [
+                item.id for item in learning_map.ordered_units()
+            ],
+        },
+    )
+    write_json(output_paths.evidence, evidence)
+    write_json(output_paths.package, package.model_dump(mode="json"))
+    output_paths.markdown.write_text(markdown, encoding="utf-8")
+    write_json(
+        output_paths.evidence_links,
+        citations.build_evidence_links(markdown, evidence),
+    )
+    write_json(output_paths.quality, quality)
+    write_json(
+        output_paths.manifest,
+        courseware_manifest.model_dump(mode="json"),
+    )
+    write_json(
+        output_paths.learning_map,
+        learning_map.model_dump(mode="json"),
+    )
+    write_json(
+        output_paths.coverage,
+        coverage_ledger.model_dump(mode="json"),
+    )
+    return output_paths.as_dict()
+
+
 def extract_pages_with_backend(
     pdf_path: Path,
     parser_backend: str,
@@ -208,7 +391,38 @@ def run_mvp(
     progress_callback: ProgressCallback | None = None,
     package_id: str | None = None,
     section_generator: SectionGenerator | None = None,
+    parsed_documents: list[ParsedDocument] | None = None,
+    courseware_manifest: CoursewareManifestV1 | None = None,
+    learning_map: LearningMapV1 | None = None,
+    coverage_ledger: CoverageLedgerV1 | None = None,
 ) -> dict[str, Path]:
+    sequence_inputs = (
+        parsed_documents,
+        courseware_manifest,
+        learning_map,
+        coverage_ledger,
+    )
+    if all(item is not None for item in sequence_inputs):
+        return _run_sequence_first(
+            service_mode="single_courseware",
+            parsed_documents=parsed_documents,
+            courseware_manifest=courseware_manifest,
+            learning_map=learning_map,
+            coverage_ledger=coverage_ledger,
+            soul_path=soul_path,
+            api_key_path=api_key_path,
+            output_dir=output_dir,
+            chat_model=chat_model,
+            output_prefix=output_prefix,
+            api_key=api_key,
+            chat_base_url=chat_base_url,
+            routing_metadata=routing_metadata,
+            progress_callback=progress_callback,
+            package_id=package_id,
+            section_generator=section_generator,
+        )
+    if any(item is not None for item in sequence_inputs):
+        raise ValueError("sequence-first inputs must be provided together")
     rag_config = rag_config or RagConfig()
     embedding_cache_path = embedding_cache_path or output_dir / ".mvp_cache" / "embeddings.json"
     resolved_api_key = api_key or read_api_key(api_key_path)
@@ -360,7 +574,38 @@ def run_course_outline(
     progress_callback: ProgressCallback | None = None,
     package_id: str | None = None,
     section_generator: SectionGenerator | None = None,
+    parsed_documents: list[ParsedDocument] | None = None,
+    courseware_manifest: CoursewareManifestV1 | None = None,
+    learning_map: LearningMapV1 | None = None,
+    coverage_ledger: CoverageLedgerV1 | None = None,
 ) -> dict[str, Path]:
+    sequence_inputs = (
+        parsed_documents,
+        courseware_manifest,
+        learning_map,
+        coverage_ledger,
+    )
+    if all(item is not None for item in sequence_inputs):
+        return _run_sequence_first(
+            service_mode="course_outline",
+            parsed_documents=parsed_documents,
+            courseware_manifest=courseware_manifest,
+            learning_map=learning_map,
+            coverage_ledger=coverage_ledger,
+            soul_path=soul_path,
+            api_key_path=api_key_path,
+            output_dir=output_dir,
+            chat_model=chat_model,
+            output_prefix=output_prefix,
+            api_key=api_key,
+            chat_base_url=chat_base_url,
+            routing_metadata=routing_metadata,
+            progress_callback=progress_callback,
+            package_id=package_id,
+            section_generator=section_generator,
+        )
+    if any(item is not None for item in sequence_inputs):
+        raise ValueError("sequence-first inputs must be provided together")
     if not pdf_paths:
         raise RuntimeError("Course Outline Mode requires at least one PDF")
     rag_config = rag_config or RagConfig()

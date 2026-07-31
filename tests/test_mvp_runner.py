@@ -41,6 +41,16 @@ from packages.core.jstudy_core.materials.models import (  # noqa: E402
     MaterialSection,
     SectionQuality,
 )
+from packages.core.jstudy_core.courseware import (  # noqa: E402
+    CoursewareManifestV1,
+    CoverageLedgerV1,
+    LearningMapV1,
+)
+from packages.core.jstudy_core.documents import (  # noqa: E402
+    ParsedBlock,
+    ParsedDocument,
+    ParsedPage,
+)
 
 
 def fake_section_generator(**kwargs):
@@ -107,6 +117,218 @@ class FakeHttpResponse:
 
 
 class MvpRunnerTest(unittest.TestCase):
+    def test_sequence_generation_uses_learning_map_not_parsing_or_scores(self):
+        manifest = CoursewareManifestV1.model_validate(
+            {
+                "schema_version": "courseware-manifest.v1",
+                "manifest_id": "job-1",
+                "job_id": "job-1",
+                "service_mode": "course_outline",
+                "outline": None,
+                "sources": [
+                    {
+                        "source_id": "S001",
+                        "original_filename": "late.pdf",
+                        "sha256": "a" * 64,
+                        "display_title": "Late",
+                        "display_order": 2,
+                        "primary_outline_section_id": None,
+                        "title_origin": "upload",
+                        "order_origin": "upload",
+                    },
+                    {
+                        "source_id": "S002",
+                        "original_filename": "early.pdf",
+                        "sha256": "b" * 64,
+                        "display_title": "Early",
+                        "display_order": 1,
+                        "primary_outline_section_id": None,
+                        "title_origin": "upload",
+                        "order_origin": "upload",
+                    },
+                ],
+            }
+        )
+        documents = []
+        for source_id, sha in (("S001", "a"), ("S002", "b")):
+            documents.append(
+                ParsedDocument(
+                    contract_version="1",
+                    source_id=source_id,
+                    source_file=f"{source_id}.pdf",
+                    source_sha256=sha * 64,
+                    parser_name="mineru",
+                    parser_version="v4",
+                    parser_model="vlm",
+                    page_count=2,
+                    pages=[
+                        ParsedPage(
+                            page_number=page,
+                            text=f"{source_id} page {page}",
+                            markdown=f"{source_id} page {page}",
+                            blocks=[
+                                ParsedBlock(
+                                    block_id=(
+                                        f"{source_id}-P{page:03d}-B001"
+                                    ),
+                                    kind="text",
+                                    text=f"{source_id} page {page}",
+                                    markdown=f"{source_id} page {page}",
+                                )
+                            ],
+                        )
+                        for page in (1, 2)
+                    ],
+                    warnings=[],
+                    provider_trace_id="trace",
+                )
+            )
+        learning_map = LearningMapV1.model_validate(
+            {
+                "schema_version": "learning-map.v1",
+                "manifest_id": "job-1",
+                "units": [
+                    {
+                        "id": "unit-001",
+                        "order": 1,
+                        "outline_section_id": None,
+                        "primary_source_id": "S002",
+                        "page_start": 1,
+                        "page_end": 1,
+                        "block_ids": ["S002-P001-B001"],
+                        "material_section_id": "unit-001",
+                    },
+                    {
+                        "id": "unit-002",
+                        "order": 2,
+                        "outline_section_id": None,
+                        "primary_source_id": "S002",
+                        "page_start": 2,
+                        "page_end": 2,
+                        "block_ids": ["S002-P002-B001"],
+                        "material_section_id": "unit-002",
+                    },
+                    {
+                        "id": "unit-003",
+                        "order": 3,
+                        "outline_section_id": None,
+                        "primary_source_id": "S001",
+                        "page_start": 1,
+                        "page_end": 2,
+                        "block_ids": [
+                            "S001-P001-B001",
+                            "S001-P002-B001",
+                        ],
+                        "material_section_id": "unit-003",
+                    },
+                ],
+            }
+        )
+        coverage = CoverageLedgerV1.model_validate(
+            {
+                "schema_version": "coverage-ledger.v1",
+                "manifest_id": "job-1",
+                "entries": [
+                    {
+                        "block_id": block_id,
+                        "source_id": block_id.split("-P", 1)[0],
+                        "page_number": int(
+                            block_id.split("-P", 1)[1].split("-", 1)[0]
+                        ),
+                        "disposition": "used",
+                        "reason": "learning_unit",
+                        "learning_unit_id": unit_id,
+                    }
+                    for unit_id, block_ids in (
+                        ("unit-001", ["S002-P001-B001"]),
+                        ("unit-002", ["S002-P002-B001"]),
+                        (
+                            "unit-003",
+                            ["S001-P001-B001", "S001-P002-B001"],
+                        ),
+                    )
+                    for block_id in block_ids
+                ],
+                "metrics": {
+                    "usable_block_count": 4,
+                    "used_block_count": 4,
+                    "ignored_block_count": 0,
+                    "duplicate_block_count": 0,
+                    "unsupported_block_count": 0,
+                    "coverage_rate": 1.0,
+                    "ignored_reason_counts": {},
+                    "primary_backward_jump_count": 0,
+                    "large_jump_count": 0,
+                    "remote_reference_ratio": 0.0,
+                    "page_distance_p90": 0.0,
+                },
+            }
+        )
+        captured = []
+
+        def generator(**kwargs):
+            captured.append(kwargs)
+            return fake_section_generator(**kwargs)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            soul = root / "soul.md"
+            mnemonics = root / "mnemonics.md"
+            soul.write_text("soul", encoding="utf-8")
+            mnemonics.write_text("", encoding="utf-8")
+            with (
+                patch(
+                    "packages.core.jstudy_core.pipeline.extract_pdf_pages",
+                    side_effect=AssertionError("must not parse"),
+                ),
+                patch(
+                    "packages.core.jstudy_core.pipeline.extract_pdf_pages_with_mineru",
+                    side_effect=AssertionError("must not parse"),
+                ),
+                patch(
+                    "packages.core.jstudy_core.pipeline.select_evidence_chunks",
+                    side_effect=AssertionError("must not rank"),
+                ),
+            ):
+                outputs = run_course_outline(
+                    outline_path=root / "missing-outline.md",
+                    pdf_paths=[root / "missing.pdf"],
+                    soul_path=soul,
+                    mnemonics_path=mnemonics,
+                    api_key_path=root / "missing-key",
+                    output_dir=root / "output",
+                    chat_model="chat",
+                    embed_model="embed",
+                    api_key="test-key",
+                    package_id="job-1",
+                    section_generator=generator,
+                    parsed_documents=documents,
+                    courseware_manifest=manifest,
+                    learning_map=learning_map,
+                    coverage_ledger=coverage,
+                )
+
+            package = json.loads(
+                outputs["package"].read_text(encoding="utf-8")
+            )
+            trace = json.loads(outputs["trace"].read_text(encoding="utf-8"))
+            evidence = json.loads(
+                outputs["evidence"].read_text(encoding="utf-8")
+            )
+
+        self.assertEqual(
+            [section["id"] for section in package["sections"]],
+            ["unit-001", "unit-002", "unit-003"],
+        )
+        self.assertEqual(
+            [call["source_ids"] for call in captured],
+            [["S002"], ["S002"], ["S001"]],
+        )
+        self.assertEqual(trace["generation_strategy"], "sequence-first")
+        self.assertTrue(
+            all(item["relation"] == "primary" for item in evidence)
+        )
+
     def test_chunk_pages_keeps_page_numbers_and_stable_ids(self):
         pages = [
             {"page": 1, "text": "金黄色葡萄球菌 革兰阳性 球菌 葡萄串状排列"},

@@ -69,6 +69,11 @@ def build_evidence_links(markdown: str, evidence: list[dict[str, Any]]) -> list[
                         "page": item.get("page", ""),
                         "chunk_id": item.get("chunk_id", ""),
                         "quote": item.get("excerpt", ""),
+                        "relation": item.get("relation", "primary"),
+                        "navigation_policy": item.get(
+                            "navigation_policy",
+                            "interactive",
+                        ),
                     },
                 }
             )
