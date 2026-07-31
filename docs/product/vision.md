@@ -2,7 +2,11 @@
 
 ## What J-Study Is
 
-J-Study is a multi-discipline study-material generation product. It turns courseware and optional outlines into structured study materials, keeps the generated content tied to source evidence, and gives learners a way to jump back to the original page behind each claim.
+J-Study is a multi-discipline, courseware-synchronized learning product. It
+turns courseware and optional outlines into structured study materials while
+preserving the teacher's original teaching sequence. Generated content remains
+tied to source evidence, and learners can return to the original page behind a
+claim without losing their position in the main learning path.
 
 The first validated domain is medicine. That does not define the long-term boundary of the product. Medicine is the first subject pack because domain quality can be judged directly and the initial workload is mostly organization, citation, and learning-output design.
 
@@ -13,50 +17,79 @@ J-Study is intentionally more vertical than DeepTutor. DeepTutor can remain a br
 1. Source-grounded output comes first.
    Generated material should be tied to courseware evidence wherever possible. Evidence IDs and page jumps are a core product behavior, not a decoration.
 
-2. Multi-discipline by design.
+2. Courseware order defines the main learning path.
+   Complete-material generation follows the user-confirmed courseware order,
+   source page order, and continuous learning units. Semantic similarity may
+   discover useful relationships, but it must not reorder the main material or
+   make the synchronized reader jump repeatedly between distant pages.
+
+3. Multi-discipline by design.
    Platform code should not hard-code medicine-specific templates, prompts, query plans, or quality rules. Those belong in domain packs.
 
-3. Lightweight MVP, formal boundaries.
+4. Lightweight MVP, formal boundaries.
    The first deployable version should stay simple enough to run on one server, but its boundaries should support later growth.
 
-4. Template-first frontend.
+5. Template-first frontend.
    The frontend should use a selected shadcn/ui template as the layout foundation. We can adjust color, typography, texture, state, and domain-specific components, but should not redesign the whole layout during the MVP.
 
-5. Deployable beats theoretical.
+6. Deployable beats theoretical.
    The product must run reliably before adding speculative infrastructure.
    MinerU cloud parsing and database-backed job state are now approved
    foundations; Redis, object storage, and self-hosted parsing remain
    measurement-driven additions.
 
-6. Vertical quality compounds through curated libraries.
+7. Vertical quality compounds through curated libraries.
    The platform should make it easy to route by subject and scenario, but quality will come from manually refined soul profiles and reviewed knowledge snippets. Do not dilute the product into a fully generic assistant before the vertical libraries have depth.
 
 ## Current MVP Scope
 
-The MVP supports one courseware PDF plus an optional outline. It extracts text, retrieves evidence, generates Markdown study material, and maps evidence comments to original PDF pages.
+The backend currently supports Single Courseware and Course Outline submissions,
+durable Jobs, multiple PDFs, source previews, and strict
+`material-package.v2`. The current production path still extracts text with
+PyMuPDF and lets embedding plus BM25/RRF rank the evidence used for generation.
+That is migration state, not the approved product design.
+
+The next backend milestone is:
+
+1. freeze a versioned Courseware Manifest;
+2. parse all product text and structure with MinerU;
+3. form continuous learning units in courseware order;
+4. generate complete materials in that order;
+5. use embedding only for optional associations, search, and snippet ecology;
+6. audit page/block coverage and large jumps.
+
+The controlling design is
+`docs/superpowers/specs/2026-07-31-courseware-synchronized-learning-design.md`.
 
 ## Service Modes
 
 J-Study should support three service modes. They should share the same source-grounded generation philosophy, but they should not be treated as the same backend workflow.
 
 1. Single Courseware Mode
-   One courseware PDF produces one structured study material output. This is the current MVP path and remains the first priority because it validates parsing, retrieval, citations, generation quality, auth, and deployment with the smallest surface area.
+   One courseware PDF produces one structured study material output. This remains
+   a compatibility path and a useful small-fixture validation route, but Course
+   Outline Mode is the first formal product workflow.
 
 2. Batch Courseware Mode
    Multiple courseware PDFs are uploaded together and become one study-material package. The package should be browsable by chapter or topic in the web app and exportable as one complete document. Unlike the current MVP, this mode needs source-file metadata, cross-file evidence aggregation, duplicate-topic handling, and a package output model instead of assuming one markdown file per job.
 
 3. Course Outline Mode
-   The user uploads a course outline plus all courseware for a full course. The outline becomes the organizing contract: the system should split the course into outline nodes, retrieve evidence across all uploaded courseware for each node, show the result as a chapter-by-chapter course package in the web app, and allow exporting the whole package as complete course material. Missing or weak evidence should be visible per outline node.
+   The user uploads a course outline plus all courseware for a full course. The
+   outline helps match, name, and group courseware, while the user-confirmed
+   Courseware Manifest defines the source order used by generation. The backend
+   builds continuous learning units from the ordered MinerU document stream,
+   shows the result as a chapter-by-chapter course package, and allows exporting
+   the complete material. Missing or weak coverage remains visible.
 
 Batch Courseware Mode and Course Outline Mode should converge on the same user-facing output model: a navigable material package with section-level evidence and full-document export. Their main difference is how the section plan is created.
 
-The MVP does not yet include:
+The current product does not yet include:
 
-- persistent job database
-- production queue or worker process
-- object storage
-- multi-courseware outline mode
-- formal frontend app
+- the formal courseware organizer and editable draft workflow
+- the MinerU production pipeline switch
+- sequence-first generation and coverage ledger
+- completed frontend auth/upload/polling/reader workflows
+- object storage and versioned database migrations
 - question generation from past exam papers
 
 ## Domain Packs

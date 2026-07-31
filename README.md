@@ -6,6 +6,11 @@ The product goal is not limited to medicine. The platform should eventually supp
 
 Compared with DeepTutor's broader general-purpose direction, J-Study should build vertical depth through curated soul profiles and a reviewed knowledge snippet library. These libraries can start small while the backend, frontend, and deployment path are made reliable.
 
+The product is not a generic PDF RAG assistant. Its core direction is
+courseware-synchronized learning: the main material follows the
+user-confirmed courseware and page order, while semantic retrieval only adds
+optional relationships without controlling the reading sequence.
+
 ## Approved Refactor Direction
 
 The bullets under `Current MVP` describe the implementation that exists today,
@@ -20,6 +25,7 @@ not the final parser architecture. The approved 2026-07-28 target is:
 The controlling design and migration gates are in:
 
 - `docs/architecture/refactor-blueprint.md`
+- `docs/superpowers/specs/2026-07-31-courseware-synchronized-learning-design.md`
 
 ## Current MVP
 
@@ -43,6 +49,12 @@ The current backend can:
 
 This is still a single-server pilot architecture. PostgreSQL-backed Job records, an independent Worker, and `apps/web` now exist; object storage, versioned database migrations, and a production queue broker remain pending.
 
+The PyMuPDF plus hybrid-retrieval bullets above describe current migration
+behavior. They are not the target complete-material pipeline. Task 0008 will
+connect MinerU to the real Worker path and make ordered learning units, coverage
+and sequence-first generation the primary path. PyMuPDF remains installed for
+validation and page preview only.
+
 ## Repository Status
 
 The repository is moving from MVP files to a formal product structure.
@@ -62,8 +74,8 @@ packages/core/jstudy_core/jobs.py MVP job lifecycle store with JSON persistence
 packages/core/jstudy_core/providers.py SiliconFlow chat and embedding client helpers
 packages/core/jstudy_core/settings.py Runtime configuration helpers
 packages/core/jstudy_core/storage.py Output path contracts and JSON helpers
-packages/parsers/       PyMuPDF parser implementation
-packages/retrieval/     Chunking, BM25/RRF, retrieval adapter
+packages/parsers/       MinerU compatibility adapter and legacy PyMuPDF text parser
+packages/retrieval/     Current hybrid retrieval plus future auxiliary association search
 packages/domains/       Medicine domain pack and future subject packs
 web_mvp.py              Compatibility shim for the old Uvicorn entrypoint
 mvp_runner.py           Compatibility shim for the old CLI entrypoint
@@ -83,8 +95,8 @@ apps/
   web/                  Next.js + shadcn/ui frontend
 packages/
   core/                 Shared workflow orchestration, citations, result types
-  parsers/              PyMuPDF default parser, future MinerU parser
-  retrieval/            Chunking, embedding, BM25/RRF, RAG adapter
+  parsers/              MinerU product parser; PyMuPDF PDF utilities only
+  retrieval/            Auxiliary search, association, and snippet retrieval
   domains/
     medicine/           First subject pack
 configs/
@@ -141,9 +153,14 @@ GET /api/readiness
 `/api/health` 是 liveness，只确认 API 进程存活。`/api/readiness` 是 readiness，检查 jobs directory、domain prompt files、API key、PDF upload limit 和数据库连接。
 Use `/api/readiness?probe_provider=true` during deployment to run a live SiliconFlow chat and embedding connectivity probe.
 `POST /api/generate` returns `503` with the readiness payload when required runtime configuration is missing.
-`GET /api/options` returns public scenarios and parser profiles for the upload form.
+`GET /api/options` currently returns public scenarios and parser profiles for
+the temporary upload form. The approved product contract removes parser choice
+from public options after the MinerU pipeline switch.
 `POST /api/generate` accepts optional `scenario_id`, `parser_profile_id`, `mode`, and `service_mode` form fields. Missing scenario and parser values resolve to the admin-configured defaults. Empty `service_mode` or `single_courseware` keeps the existing `pdf=<one PDF>` path. `service_mode=course_outline` requires `outline=<.md/.txt/.pdf>` and at least one repeated `pdfs=<PDF>` upload. `mode` is stored as generation metadata for frontend experiments, but it does not replace service mode, subject scenario, or parser profile behavior. `scenario_id` resolves `content_pack_id`, `prompt_profile`, and the matching `soul_profile`, so different subjects can use different soul files without changing code.
-`parser_profile_id=fast` maps to PyMuPDF. The reserved `quality` profile maps to MinerU, is hidden from normal users at first, and should be enabled only after MinerU is configured.
+`parser_profile_id=fast` currently maps to PyMuPDF and the reserved `quality`
+profile currently maps to an incomplete MinerU compatibility adapter. New
+product clients must not rely on these profiles. Task 0008 keeps only bounded
+request compatibility while making MinerU the Worker-owned parser.
 Job、source、section、artifact 和 transition 已由 SQLModel 持久化到 PostgreSQL；独立 `jstudy-worker` 通过 lease 认领并执行 queued Job，API 只负责 durable submission 和 owner-scoped read。旧 `jobs.json` 代码仍保留为 compatibility boundary，但 production API/worker 不 import 或写入它。
 Completed jobs expose retrieval diagnostics at `/api/jobs/{job_id}/trace`, the owner-scoped and schema-validated `material-package.v2` payload at `/api/jobs/{job_id}/package`, and a deterministic compatibility Markdown attachment at `/api/jobs/{job_id}/export`. The package endpoint continues to read the bounded legacy v1 contract during migration. Source previews are available through the legacy first-source endpoints `/api/jobs/{job_id}/pdf-info` and `/api/jobs/{job_id}/pdf-page/{page}.png`, plus source-specific endpoints `/api/jobs/{job_id}/pdfs`, `/api/jobs/{job_id}/pdfs/{source_id}/pdf-info`, and `/api/jobs/{job_id}/pdfs/{source_id}/pdf-page/{page}.png`.
 

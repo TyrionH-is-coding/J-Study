@@ -90,10 +90,44 @@ Task 0007 当前边界：
 - Worker 原子持久化 v2 sections/artifacts/completion，package API 保持 owner check 并继续读取 legacy v1；
 - 未实施 React/HTML renderer、HTML export、MinerU pipeline switch、Markdown 删除或数据库迁移。
 
+## Phase 1S: Courseware-Synchronized Generation
+
+Goal: replace the current relevance-first complete-material path with a
+courseware-order-first backend contract.
+
+Approved design:
+
+- `docs/superpowers/specs/2026-07-31-courseware-synchronized-learning-design.md`
+
+Task 0008 delivers the first backend slice:
+
+- persist stable source display metadata without changing `source_id`
+- freeze `courseware-manifest.v1` for each generation Job
+- connect MinerU Precision Extract to the real Worker path
+- normalize every source to `ParsedDocument`
+- build ordered, continuous `learning-map.v1` units
+- generate material sections in Manifest order instead of Top-K retrieval order
+- write `coverage-ledger.v1` for every usable/ignored block
+- mark cross-source relationships `navigation_policy=non_interactive`
+- remove parser selection from public options while retaining bounded request compatibility
+
+Task 0008 does not include:
+
+- formal frontend organizer, drag-and-drop, or rename UI
+- semantic auto-organization quality tuning
+- HTML renderer or theme presets
+- Batch Courseware Mode
+- Alembic or production deployment
+- question generation, BYOK, quota, or billing
+
+Later phases add the editable courseware draft/organizer, synchronized Reader,
+HTML rendering, and production-like deployment after the backend contracts pass.
+
 Implementation order is controlled by:
 
 - `docs/architecture/refactor-blueprint.md`
 - `multi-agent/jstudy-product-build/task_cards/0005-refactor-checkpoint-mineru-foundation.md`
+- `multi-agent/jstudy-product-build/task_cards/0008-mineru-sequence-first-backend.md`
 
 ## Phase 1.5: User Auth and Invite Gate
 

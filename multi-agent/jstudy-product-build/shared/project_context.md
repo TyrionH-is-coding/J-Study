@@ -6,9 +6,16 @@ The long-term product is multi-discipline. Medicine is the first validated domai
 
 ## Current Product Stage
 
-The backend is mostly ready for the current pilot path. The immediate next product phase is frontend construction and frontend-backend integration.
+The backend platform foundation is substantially ahead of the formal frontend,
+but the product core is not finished. Auth, durable Jobs, the independent
+Worker, multi-PDF sources and `material-package.v2` exist. The formal frontend
+contains its technical foundation and placeholder routes, not the completed
+auth/upload/reader workflow.
 
-That does not mean backend work is finished forever. It means new backend work should be driven by explicit frontend needs, deployment needs, or clearly scoped task cards.
+The immediate backend milestone is courseware-synchronized generation:
+Courseware Manifest, MinerU in the real Worker path, continuous learning units,
+sequence-first generation and coverage audit. Formal frontend integration
+follows those stable contracts.
 
 ## Current Product Decisions
 
@@ -21,6 +28,17 @@ That does not mean backend work is finished forever. It means new backend work s
   rendering; it must not remain a product text-extraction path after migration.
 - The current PyMuPDF pipeline remains temporarily active only until the
   contract-first MinerU migration passes its verification gates.
+- J-Study's main product is synchronized learning along the teacher's
+  courseware sequence, not generic PDF question answering.
+- Complete-material generation follows the frozen Courseware Manifest and
+  continuous source page ranges. Embedding may discover relationships but may
+  not determine the main section order.
+- `source_id` is permanent identity. `original_filename` is immutable;
+  `display_title`, `display_order`, and outline mapping are editable before a
+  generation Manifest is frozen.
+- Same-source citations may enter Inspect Mode and return to
+  `learning_position`. Cross-source relationships remain non-interactive prose
+  and cannot switch the active courseware.
 - Frontend direction is a formal web frontend based on selected shadcn/ui templates; temporary backend-served UI may be used for pilot testing.
 - Users should not configure model providers; model/RAG/parser/content-pack settings are admin-owned.
 - Soul profiles and knowledge snippet library are core vertical assets.
@@ -34,6 +52,7 @@ That does not mean backend work is finished forever. It means new backend work s
 The controlling refactor document is:
 
 - `docs/architecture/refactor-blueprint.md`
+- `docs/superpowers/specs/2026-07-31-courseware-synchronized-learning-design.md`
 
 ## Candidate Branch Context
 

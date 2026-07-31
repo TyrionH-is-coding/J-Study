@@ -2,19 +2,20 @@
 
 ## Immediate
 
-1. Treat `docs/architecture/refactor-blueprint.md` as the controlling
-   contract-first refactor decision.
-2. Execute
-   `multi-agent/jstudy-product-build/task_cards/0005-refactor-checkpoint-mineru-foundation.md`.
-3. Supervisor must independently verify the checkpoint contents, mocked MinerU
-   transport, ZIP safety, normalized page mapping, and full regression suites.
-4. After task 0005 passes, write task 0006 for the actual MinerU pipeline switch
-   and public parser-profile removal.
-5. Keep PostgreSQL job migration, separate worker, frontend contract update, and
-   Tencent production-like deployment as subsequent independently gated phases.
-6. Before public deployment, add course-outline upload boundaries: PDF count,
-   total upload bytes, outline size, MIME/magic validation, parse timeout,
-   queue/concurrency limit, and cleanup.
+1. Treat both `docs/architecture/refactor-blueprint.md` and
+   `docs/superpowers/specs/2026-07-31-courseware-synchronized-learning-design.md`
+   as controlling product contracts.
+2. Preserve the verified Task 0005 MinerU foundation, Task 0006 durable
+   PostgreSQL/Worker foundation, and Task 0007 Material Package v2 foundation.
+3. Execute Task 0008 for the real MinerU Worker switch, frozen Courseware
+   Manifest, continuous learning units, sequence-first generation and coverage
+   audit.
+4. Supervisor must independently verify that PyMuPDF text extraction and Top-K
+   hybrid retrieval no longer control complete-material generation.
+5. After Task 0008 passes, add the editable courseware draft/Organizer API and
+   formal frontend organizer.
+6. Keep HTML rendering, Alembic, quota/BYOK, and Tencent production-like
+   deployment as subsequent independently gated phases.
 
 ## Supervisor Verification Policy
 

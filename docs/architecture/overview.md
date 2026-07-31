@@ -35,6 +35,10 @@ The first backend reorganization steps are implemented. Further steps should spl
 
 ## Runtime Flow
 
+The current implementation and approved target must be distinguished.
+
+Current implementation:
+
 ```text
 Upload single PDF or course outline + multiple PDFs + optional scenario
 -> scenario and soul profile resolution
@@ -48,7 +52,26 @@ Upload single PDF or course outline + multiple PDFs + optional scenario
 -> validated material-package.v2 blocks and citation runs
 -> direct package quality audit
 -> deterministic compatibility Markdown + evidence links
--> frontend reader with source-page citation jumps
+-> temporary API artifacts; formal frontend business pages remain pending
+```
+
+Approved courseware-synchronized target:
+
+```text
+Upload outline + courseware
+-> stable source identities and editable courseware draft
+-> user-confirmed courseware-manifest.v1
+-> MinerU ParsedDocument for every source
+-> ordered source/page/block stream
+-> continuous learning-map.v1 units
+-> sequence-first section generation
+-> coverage-ledger.v1 and navigation-policy audit
+-> validated material-package.v2
+-> synchronized Reader and deterministic export
+
+Embedding index
+-> optional association discovery, search, and snippet deduplication
+-> never controls the main learning sequence
 ```
 
 ## Service Mode Architecture
@@ -58,7 +81,10 @@ parser infrastructure.
 
 - `single_courseware`: one PDF, optional outline, one generated material output. This remains the compatible default MVP path.
 - `batch_courseware`: multiple PDFs, optional user notes or loose outline, one material package. The web app should browse the package by chapter or topic and should also export the complete package as one document.
-- `course_outline`: course outline plus all courseware for a full course, one material package. The backend contract is implemented with required outline upload, repeated `pdfs`, source identities such as `S001`, and section package metadata. The formal `apps/web` workflow now covers upload, polling, section browsing, source-specific page preview, citation jump, and full Markdown export.
+- `course_outline`: course outline plus all courseware for a full course, one
+  material package. The backend upload contract, stable source identities and
+  package artifacts are implemented. The formal `apps/web` business workflow
+  is not implemented yet; its current pages are foundation placeholders.
 
 The two currently implemented service modes now use the same v2 package-output contract. Batch Courseware remains pending:
 
@@ -140,6 +166,27 @@ The current MVP retrieval approach is:
 
 This lives in `packages/retrieval/` so it can be reused across domains.
 
+This current Top-K path is not the approved complete-material generator.
+Sequence-first generation consumes every usable MinerU block through continuous
+learning units. Hybrid retrieval remains available for:
+
+- optional cross-page relationship discovery
+- later user questions and semantic search
+- Knowledge Snippet similarity and feedback clustering
+- explicitly requested topic-focused generation
+
+It must not choose the primary section order or silently remove valid
+courseware blocks from complete-material generation.
+
+The versioned coordination artifacts are:
+
+- `courseware-manifest.v1`: immutable source identity and display order snapshot
+- `learning-map.v1`: continuous primary page ranges and material section mapping
+- `coverage-ledger.v1`: used, ignored, duplicate, and unsupported block records
+
+The detailed contract is defined in
+`docs/superpowers/specs/2026-07-31-courseware-synchronized-learning-design.md`.
+
 The query planner must not default to a fixed lecture topic. The earliest cocci-specific MVP queries have been removed from the default path; subject-specific query lists belong in explicit scenarios or domain profiles, not in the medicine default.
 
 ## Domain Layer
@@ -175,6 +222,10 @@ Design rules:
 - build the desktop reader as section index, generated material, and source preview panes, with stacked panels at smaller widths
 - use `source_id` as identity and filenames only as display labels
 - keep citation jumps inside the source preview scroll area instead of scrolling the whole page
+- keep `learning_position` separate from the PDF `viewer_position`
+- allow Inspect Mode only for same-source citation jumps
+- render cross-source relationships as non-interactive natural language
+- switch top-level sources only through chapter/source navigation or explicit user action
 
 ## Deployment Architecture
 

@@ -1,5 +1,18 @@
 # Progress Log
 
+## 2026-07-31
+
+- Confirmed J-Study as a courseware-synchronized learning product rather than a
+  generic PDF RAG assistant.
+- Confirmed that the primary generation path follows a frozen Courseware
+  Manifest, source order, page order and continuous learning units.
+- Kept embedding as auxiliary association/search/snippet infrastructure rather
+  than the main material ordering mechanism.
+- Confirmed same-source Inspect Mode and non-interactive cross-source
+  relationships.
+- Added the synchronized-learning design and prepared Task 0008 for the MinerU
+  sequence-first backend slice.
+
 ## 2026-07-28
 
 - Approved the contract-first refactor direction.
