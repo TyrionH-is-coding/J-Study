@@ -14,6 +14,11 @@ sys.path.insert(0, str(ROOT))
 
 from apps.api.jstudy_api.app import create_app  # noqa: E402
 from packages.core.jstudy_core.auth_db import create_application_tables, create_auth_engine  # noqa: E402
+from packages.core.jstudy_core.documents import (  # noqa: E402
+    ParsedBlock,
+    ParsedDocument,
+    ParsedPage,
+)
 from packages.core.jstudy_core.job_system import (  # noqa: E402
     JobRepository,
     JobService,
@@ -21,6 +26,40 @@ from packages.core.jstudy_core.job_system import (  # noqa: E402
 )
 from packages.core.jstudy_core.job_system.worker import JobWorker  # noqa: E402
 from packages.core.jstudy_core.settings import RuntimeSettings  # noqa: E402
+
+
+class FakeDocumentService:
+    def parse(self, sources, *, artifact_root):
+        return [
+            ParsedDocument(
+                contract_version="1",
+                source_id=source.source_id,
+                source_file=source.pdf_path.name,
+                source_sha256=source.sha256,
+                parser_name="mineru",
+                parser_version="v4",
+                parser_model="vlm",
+                page_count=1,
+                pages=[
+                    ParsedPage(
+                        page_number=1,
+                        text="Courseware fact",
+                        markdown="Courseware fact",
+                        blocks=[
+                            ParsedBlock(
+                                block_id=f"{source.source_id}-P001-B001",
+                                kind="text",
+                                text="Courseware fact",
+                                markdown="Courseware fact",
+                            )
+                        ],
+                    )
+                ],
+                warnings=[],
+                provider_trace_id="mock-trace",
+            )
+            for source in sources
+        ]
 
 
 class BackendSecurityControlsTest(unittest.TestCase):
@@ -267,6 +306,7 @@ class BackendSecurityControlsTest(unittest.TestCase):
                 settings,
                 worker_id="worker-security-test",
                 single_runner=trace_runner,
+                document_service=FakeDocumentService(),
             )
             self.assertTrue(worker.run_once())
             response = client.get(f"/api/jobs/{job_id}/trace")
@@ -346,6 +386,9 @@ class BackendSecurityControlsTest(unittest.TestCase):
                 second_client.get(f"/api/jobs/{job_id}/evidence-links"),
                 second_client.get(f"/api/jobs/{job_id}/trace"),
                 second_client.get(f"/api/jobs/{job_id}/package"),
+                second_client.get(f"/api/jobs/{job_id}/manifest"),
+                second_client.get(f"/api/jobs/{job_id}/learning-map"),
+                second_client.get(f"/api/jobs/{job_id}/coverage"),
                 second_client.get(f"/api/jobs/{job_id}/export"),
                 second_client.get(f"/api/jobs/{job_id}/pdf"),
                 second_client.get(f"/api/jobs/{job_id}/pdf-info"),

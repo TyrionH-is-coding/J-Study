@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+import json
 import os
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Callable
@@ -8,6 +9,7 @@ from typing import Any, Callable
 import fitz
 from fastapi import FastAPI, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse
+from pydantic import BaseModel
 
 from apps.api.jstudy_api.admin_ui import ADMIN_SETTINGS_HTML
 from apps.api.jstudy_api.ui import INDEX_HTML
@@ -35,11 +37,10 @@ from packages.core.jstudy_core.job_system import (
     public_status,
     resolve_job_path,
 )
-from packages.core.jstudy_core.parser_profile_router import (
-    ParserProfileRoutingError,
-    ParserProfileUnavailable,
-    public_parser_profiles,
-    resolve_parser_profile,
+from packages.core.jstudy_core.courseware import (
+    CoursewareManifestV1,
+    CoverageLedgerV1,
+    LearningMapV1,
 )
 from packages.core.jstudy_core.scenario_router import ScenarioRoutingError, resolve_scenario
 from packages.core.jstudy_core.materials.models import (
@@ -66,6 +67,8 @@ NO_STORE_CACHE_CONTROL = "no-store"
 PRIVATE_CACHE_CONTROL = "private, max-age=0, must-revalidate"
 ADMIN_TOKEN_ENV = "JSTUDY_ADMIN_TOKEN"
 TRACE_PATH_KEYS = {"pdf", "pdfs", "outline", "embedding_cache"}
+SYNC_ARTIFACT_MAX_BYTES = 32 * 1024 * 1024
+PARSER_COMPATIBILITY_ALIASES = {"", "fast", "quality"}
 
 
 def private_cache_headers() -> dict[str, str]:
@@ -292,9 +295,6 @@ def create_app(
     def routing_content_config() -> dict[str, Any]:
         return runtime.content_pack_config or admin_settings.load_content_pack()
 
-    def routing_parser_profiles_config() -> dict[str, Any]:
-        return runtime.parser_profiles_config or admin_settings.load_runtime().get("parser_profiles", {})
-
     def application_readiness(
         *,
         probe_provider: bool = False,
@@ -339,6 +339,9 @@ def create_app(
             {
                 "source_id": source.source_id,
                 "file_name": source.original_filename,
+                "original_filename": source.original_filename,
+                "display_title": source.display_title,
+                "display_order": source.display_order,
                 "page_count": source.page_count,
             }
             for source in repository.list_sources(job.id)
@@ -379,6 +382,24 @@ def create_app(
         if not path.is_file():
             raise HTTPException(status_code=404, detail=detail)
         return path
+
+    def read_sync_artifact(
+        path: Path,
+        model: type[BaseModel],
+        *,
+        expected_manifest_id: str,
+    ) -> BaseModel:
+        with path.open("rb") as handle:
+            payload = handle.read(SYNC_ARTIFACT_MAX_BYTES + 1)
+        if len(payload) > SYNC_ARTIFACT_MAX_BYTES:
+            raise ValueError("synchronization artifact is too large")
+        parsed = model.model_validate_json(payload)
+        manifest_id = getattr(parsed, "manifest_id", None)
+        if manifest_id != expected_manifest_id:
+            raise ValueError("synchronization artifact identity mismatch")
+        if isinstance(parsed, CoursewareManifestV1) and parsed.job_id != expected_manifest_id:
+            raise ValueError("courseware manifest job identity mismatch")
+        return parsed
 
     def quality_payload(job: JobSnapshot) -> dict[str, Any]:
         artifact = artifact_map(job).get(ArtifactKind.QUALITY)
@@ -603,12 +624,9 @@ def create_app(
             for item in routing_content_config().get("scenarios", [])
             if item.get("enabled", True)
         ]
-        parser_profiles = routing_parser_profiles_config()
         return {
             "default_scenario_id": runtime.default_scenario_id,
             "scenarios": scenarios,
-            "default_parser_profile_id": parser_profiles.get("default_profile_id", "fast"),
-            "parser_profiles": public_parser_profiles(parser_profiles),
         }
 
     @app.post("/api/generate")
@@ -636,18 +654,14 @@ def create_app(
 
         try:
             scenario = resolve_scenario(routing_content_config(), scenario_id)
-            parser_profile = resolve_parser_profile(
-                routing_parser_profiles_config(),
-                parser_profile_id,
-                is_admin=is_admin_request(request),
-                parser_config=runtime.parser_config,
-            )
         except ScenarioRoutingError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
-        except ParserProfileRoutingError as exc:
-            raise HTTPException(status_code=403, detail=str(exc))
-        except ParserProfileUnavailable as exc:
-            raise HTTPException(status_code=503, detail=str(exc))
+        requested_parser_alias = (parser_profile_id or "").strip()
+        if requested_parser_alias not in PARSER_COMPATIBILITY_ALIASES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unknown parser_profile_id: {requested_parser_alias}",
+            )
 
         selected_content_paths(scenario)
         if resolved_service_mode == "course_outline":
@@ -669,7 +683,7 @@ def create_app(
                     owner_user_id=current_user.id,
                     service_mode=resolved_service_mode,
                     scenario_id=scenario.scenario_id,
-                    parser_profile_id=parser_profile.profile_id,
+                    parser_profile_id=requested_parser_alias or "fast",
                     generation_mode=(mode or "").strip() or None,
                     outline=submitted_outline,
                     pdfs=uploads,
@@ -679,7 +693,11 @@ def create_app(
                     ),
                     content_metadata={
                         "scenario": scenario.trace_metadata(),
-                        "parser_profile": parser_profile.trace_metadata(),
+                        "parser_profile": {
+                            "requested_parser_profile_id": requested_parser_alias,
+                            "resolved_parser_profile_id": "mineru",
+                            "backend": "mineru",
+                        },
                     },
                 ),
                 settings_snapshot=runtime,
@@ -726,6 +744,9 @@ def create_app(
             "evidence_links_url": f"/api/jobs/{job_id}/evidence-links",
             "trace_url": f"/api/jobs/{job_id}/trace",
             "package_url": f"/api/jobs/{job_id}/package",
+            "manifest_url": f"/api/jobs/{job_id}/manifest",
+            "learning_map_url": f"/api/jobs/{job_id}/learning-map",
+            "coverage_url": f"/api/jobs/{job_id}/coverage",
             "export_url": f"/api/jobs/{job_id}/export",
             "pdf_url": f"/api/jobs/{job_id}/pdf",
             "pdf_info_url": f"/api/jobs/{job_id}/pdf-info",
@@ -803,6 +824,90 @@ def create_app(
             raise HTTPException(
                 status_code=500,
                 detail="Material package is invalid",
+            ) from exc
+
+    @app.get(
+        "/api/jobs/{job_id}/manifest",
+        response_model=CoursewareManifestV1,
+    )
+    def job_manifest(
+        job_id: str,
+        request: Request,
+        response: Response,
+    ) -> CoursewareManifestV1:
+        set_private_cache(response)
+        job = job_or_404(job_id, current_user_or_401(request))
+        path = ready_output_path(
+            job,
+            ArtifactKind.MANIFEST,
+            "Courseware manifest is not ready",
+        )
+        try:
+            return read_sync_artifact(
+                path,
+                CoursewareManifestV1,
+                expected_manifest_id=job.id,
+            )
+        except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
+            raise HTTPException(
+                status_code=500,
+                detail="Courseware manifest is invalid",
+            ) from exc
+
+    @app.get(
+        "/api/jobs/{job_id}/learning-map",
+        response_model=LearningMapV1,
+    )
+    def job_learning_map(
+        job_id: str,
+        request: Request,
+        response: Response,
+    ) -> LearningMapV1:
+        set_private_cache(response)
+        job = job_or_404(job_id, current_user_or_401(request))
+        path = ready_output_path(
+            job,
+            ArtifactKind.LEARNING_MAP,
+            "Learning map is not ready",
+        )
+        try:
+            return read_sync_artifact(
+                path,
+                LearningMapV1,
+                expected_manifest_id=job.id,
+            )
+        except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
+            raise HTTPException(
+                status_code=500,
+                detail="Learning map is invalid",
+            ) from exc
+
+    @app.get(
+        "/api/jobs/{job_id}/coverage",
+        response_model=CoverageLedgerV1,
+    )
+    def job_coverage(
+        job_id: str,
+        request: Request,
+        response: Response,
+    ) -> CoverageLedgerV1:
+        set_private_cache(response)
+        job = job_or_404(job_id, current_user_or_401(request))
+        path = ready_output_path(
+            job,
+            ArtifactKind.COVERAGE,
+            "Coverage ledger is not ready",
+        )
+        try:
+            return read_sync_artifact(
+                path,
+                CoverageLedgerV1,
+                expected_manifest_id=job.id,
+            )
+        except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
+            raise HTTPException(
+                status_code=500,
+                detail="Coverage ledger is invalid",
             ) from exc
 
     @app.get("/api/jobs/{job_id}/export")

@@ -18,9 +18,48 @@ sys.path.insert(0, str(ROOT))
 from apps.api.jstudy_api.app import ADMIN_SETTINGS_HTML, INDEX_HTML, create_app  # noqa: E402
 from packages.core.jstudy_core.admin_settings import AdminSettingsService  # noqa: E402
 from packages.core.jstudy_core.auth_db import create_application_tables, create_auth_engine  # noqa: E402
+from packages.core.jstudy_core.documents import (  # noqa: E402
+    ParsedBlock,
+    ParsedDocument,
+    ParsedPage,
+)
 from packages.core.jstudy_core.job_system import JobRepository, JobService, JobState  # noqa: E402
 from packages.core.jstudy_core.job_system.worker import JobWorker  # noqa: E402
 from packages.core.jstudy_core.settings import RuntimeSettings  # noqa: E402
+
+
+class FakeDocumentService:
+    def parse(self, sources, *, artifact_root):
+        return [
+            ParsedDocument(
+                contract_version="1",
+                source_id=source.source_id,
+                source_file=source.pdf_path.name,
+                source_sha256=source.sha256,
+                parser_name="mineru",
+                parser_version="v4",
+                parser_model="vlm",
+                page_count=1,
+                pages=[
+                    ParsedPage(
+                        page_number=1,
+                        text="Courseware fact",
+                        markdown="Courseware fact",
+                        blocks=[
+                            ParsedBlock(
+                                block_id=f"{source.source_id}-P001-B001",
+                                kind="text",
+                                text="Courseware fact",
+                                markdown="Courseware fact",
+                            )
+                        ],
+                    )
+                ],
+                warnings=[],
+                provider_trace_id="mock-trace",
+            )
+            for source in sources
+        ]
 
 
 class WebMvpTest(unittest.TestCase):
@@ -217,6 +256,7 @@ class WebMvpTest(unittest.TestCase):
             settings,
             single_runner=staged_runner,
             outline_runner=staged_runner,
+            document_service=FakeDocumentService(),
         )
         self.assertTrue(worker.run_once())
 
@@ -315,27 +355,13 @@ class WebMvpTest(unittest.TestCase):
                         }
                     ],
                 },
-                parser_profiles_config={
-                    "default_profile_id": "updated-parser",
-                    "profiles": [
-                        {
-                            "id": "updated-parser",
-                            "display_name": "Updated parser",
-                            "backend": "pymupdf",
-                            "tier": "fast",
-                            "enabled": True,
-                            "visible_to_users": True,
-                            "requires_admin": False,
-                        }
-                    ],
-                },
             )
             pdf = self.make_pdf_bytes()
             generated = client.post(
                 "/api/generate",
                 data={
                     "scenario_id": "updated-scenario",
-                    "parser_profile_id": "updated-parser",
+                    "parser_profile_id": "fast",
                 },
                 files={"pdf": ("lecture.pdf", pdf, "application/pdf")},
             )
@@ -351,14 +377,14 @@ class WebMvpTest(unittest.TestCase):
                 "/api/generate",
                 data={
                     "scenario_id": "updated-scenario",
-                    "parser_profile_id": "updated-parser",
+                    "parser_profile_id": "fast",
                 },
                 files={"pdf": ("lecture.pdf", pdf, "application/pdf")},
             )
 
         self.assertEqual(generated.status_code, 200)
         self.assertEqual(job.scenario_id, "updated-scenario")
-        self.assertEqual(job.parser_profile_id, "updated-parser")
+        self.assertEqual(job.parser_profile_id, "fast")
         self.assertEqual(rejected.status_code, 413, rejected.json())
         self.assertEqual(rejected.json()["detail"]["code"], "pdf_too_large")
         self.assertEqual(len(provider_calls), 2)
@@ -451,7 +477,7 @@ class WebMvpTest(unittest.TestCase):
         self.assertEqual(response.headers["cache-control"], "no-store")
         self.assertEqual(response.json(), {"status": "ok", "service": "jstudy-api"})
 
-    def test_options_endpoint_returns_public_scenarios_and_parser_profiles(self):
+    def test_options_endpoint_returns_public_scenarios_without_parser_profiles(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             service = AdminSettingsService(root / "data" / "settings")
@@ -465,7 +491,8 @@ class WebMvpTest(unittest.TestCase):
         payload = response.json()
         self.assertEqual(payload["default_scenario_id"], "medicine-default")
         self.assertIn("medicine-default", {item["id"] for item in payload["scenarios"]})
-        self.assertEqual([item["id"] for item in payload["parser_profiles"]], ["fast"])
+        self.assertNotIn("default_parser_profile_id", payload)
+        self.assertNotIn("parser_profiles", payload)
 
     def test_admin_settings_page_is_served(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -971,6 +998,9 @@ class WebMvpTest(unittest.TestCase):
             self.run_next_job(client, settings, fake_runner)
             status = client.get(f"/api/jobs/{job_id}").json()
             sources = client.get(f"/api/jobs/{job_id}/pdfs").json()
+            manifest_response = client.get(f"/api/jobs/{job_id}/manifest")
+            learning_map_response = client.get(f"/api/jobs/{job_id}/learning-map")
+            coverage_response = client.get(f"/api/jobs/{job_id}/coverage")
             second_info_response = client.get(f"/api/jobs/{job_id}/pdfs/S002/pdf-info")
             second_page = client.get(f"/api/jobs/{job_id}/pdfs/S002/pdf-page/1.png")
             record = client.app.state.job_repository.get(job_id)
@@ -982,8 +1012,52 @@ class WebMvpTest(unittest.TestCase):
         self.assertEqual([path.name for path in captured["pdf_paths"]], ["S001.pdf", "S002.pdf"])
         self.assertEqual(status["service_mode"], "course_outline")
         self.assertEqual([item["source_id"] for item in status["source_files"]], ["S001", "S002"])
+        self.assertEqual(
+            [
+                (
+                    item["source_id"],
+                    item["original_filename"],
+                    item["display_title"],
+                    item["display_order"],
+                )
+                for item in status["source_files"]
+            ],
+            [
+                ("S001", "lecture-01.pdf", "lecture-01", 1),
+                ("S002", "lecture-02.pdf", "lecture-02", 2),
+            ],
+        )
         self.assertIn("pdfs_url", status)
+        self.assertEqual(status["manifest_url"], f"/api/jobs/{job_id}/manifest")
+        self.assertEqual(
+            status["learning_map_url"],
+            f"/api/jobs/{job_id}/learning-map",
+        )
+        self.assertEqual(status["coverage_url"], f"/api/jobs/{job_id}/coverage")
         self.assertEqual([item["source_id"] for item in sources["source_files"]], ["S001", "S002"])
+        self.assertEqual(manifest_response.status_code, 200)
+        self.assertEqual(
+            manifest_response.json()["schema_version"],
+            "courseware-manifest.v1",
+        )
+        self.assertEqual(learning_map_response.status_code, 200)
+        self.assertEqual(
+            learning_map_response.json()["schema_version"],
+            "learning-map.v1",
+        )
+        self.assertEqual(coverage_response.status_code, 200)
+        self.assertEqual(
+            coverage_response.json()["schema_version"],
+            "coverage-ledger.v1",
+        )
+        self.assertEqual(
+            {
+                manifest_response.headers["cache-control"],
+                learning_map_response.headers["cache-control"],
+                coverage_response.headers["cache-control"],
+            },
+            {"private, max-age=0, must-revalidate"},
+        )
         self.assertEqual(second_info_response.status_code, 200)
         self.assertEqual(second_info_response.json()["source_id"], "S002")
         self.assertEqual(second_page.headers["content-type"], "image/png")
@@ -1489,7 +1563,7 @@ class WebMvpTest(unittest.TestCase):
         self.assertEqual(captured["rag_config"].chunk_max_chars, 888)
         self.assertEqual(captured["rag_config"].per_query_limit, 4)
 
-    def test_generate_uses_default_scenario_and_fast_parser_profile(self):
+    def test_generate_uses_default_scenario_and_worker_owned_mineru_parser(self):
         captured = {}
 
         def fake_runner(**kwargs):
@@ -1536,9 +1610,9 @@ class WebMvpTest(unittest.TestCase):
             self.run_next_job(client, settings, fake_runner)
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(captured["parser_backend"], "pymupdf")
+        self.assertEqual(captured["parser_backend"], "mineru")
         self.assertEqual(captured["routing_metadata"]["scenario"]["resolved_scenario_id"], "medicine-default")
-        self.assertEqual(captured["routing_metadata"]["parser_profile"]["resolved_parser_profile_id"], "fast")
+        self.assertEqual(captured["routing_metadata"]["parser_profile"]["resolved_parser_profile_id"], "mineru")
 
     def test_generate_uses_selected_scenario_soul_profile(self):
         captured = {}
@@ -1602,7 +1676,7 @@ class WebMvpTest(unittest.TestCase):
         self.assertEqual(captured["routing_metadata"]["scenario"]["resolved_scenario_id"], "general-default")
         self.assertEqual(captured["routing_metadata"]["scenario"]["soul_profile_id"], "general-blank")
 
-    def test_generate_rejects_hidden_quality_parser_for_public_user(self):
+    def test_generate_accepts_legacy_quality_parser_alias(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             service = AdminSettingsService(root / "data" / "settings")
@@ -1623,7 +1697,29 @@ class WebMvpTest(unittest.TestCase):
                 files={"pdf": ("lecture.pdf", self.make_pdf_bytes(), "application/pdf")},
             )
 
-        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "queued")
+
+    def test_generate_rejects_unknown_parser_alias(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            settings = self.ready_settings(root)
+            client = TestClient(create_app(settings=settings))
+            self.register_user(client)
+
+            response = client.post(
+                "/api/generate",
+                data={"parser_profile_id": "custom-parser"},
+                files={
+                    "pdf": (
+                        "lecture.pdf",
+                        self.make_pdf_bytes(),
+                        "application/pdf",
+                    )
+                },
+            )
+
+        self.assertEqual(response.status_code, 400)
 
     def test_generate_accepts_public_mineru_profile_from_environment_snapshot(self):
         with tempfile.TemporaryDirectory() as tmp:
