@@ -183,6 +183,11 @@ class JobSource(SQLModel, table=True):
     byte_size: int
     sha256: str
     page_count: int | None = None
+    display_title: str = ""
+    display_order: int = 1
+    primary_outline_section_id: str | None = None
+    title_origin: str = "upload"
+    order_origin: str = "upload"
     created_at: datetime = Field(default_factory=utc_now, sa_type=UTCDateTime)
 
     @validates("relative_path")

@@ -556,6 +556,10 @@ class JobRepositoryContractTest(unittest.TestCase):
                     mime_type="application/pdf",
                     byte_size=202,
                     sha256="2" * 64,
+                    display_title="Second lecture",
+                    display_order=1,
+                    title_origin="user",
+                    order_origin="user",
                 ),
                 JobSourceInput(
                     source_id="S001",
@@ -564,6 +568,10 @@ class JobRepositoryContractTest(unittest.TestCase):
                     mime_type="application/pdf",
                     byte_size=101,
                     sha256="1" * 64,
+                    display_title="First lecture",
+                    display_order=2,
+                    title_origin="upload",
+                    order_origin="auto",
                 ),
             ),
             sections=(
@@ -598,13 +606,38 @@ class JobRepositoryContractTest(unittest.TestCase):
 
         self.assertEqual(reloaded, created)
 
-    def test_sources_are_listed_by_stable_source_id(self):
+    def test_sources_keep_identity_while_following_display_order(self):
         self.repository.create_job(self.command())
 
         sources = self.repository.list_sources("job-1")
 
-        self.assertEqual([source.source_id for source in sources], ["S001", "S002"])
-        self.assertEqual(sources[0].relative_path, "inputs/S001.pdf")
+        self.assertEqual([source.source_id for source in sources], ["S002", "S001"])
+        self.assertEqual(sources[0].display_title, "Second lecture")
+        self.assertEqual(sources[0].display_order, 1)
+        self.assertEqual(sources[0].title_origin, "user")
+        self.assertEqual(sources[0].order_origin, "user")
+        self.assertIsNone(sources[0].primary_outline_section_id)
+        self.assertEqual(sources[0].relative_path, "inputs/S002.pdf")
+
+        with Session(self.engine) as session:
+            first = session.exec(
+                select(JobSource).where(JobSource.source_id == "S001")
+            ).one()
+            second = session.exec(
+                select(JobSource).where(JobSource.source_id == "S002")
+            ).one()
+            first.display_order = 1
+            second.display_order = 2
+            session.add(first)
+            session.add(second)
+            session.commit()
+
+        reordered = self.repository.list_sources("job-1")
+        self.assertEqual([source.source_id for source in reordered], ["S001", "S002"])
+        self.assertEqual(
+            [source.relative_path for source in reordered],
+            ["inputs/S001.pdf", "inputs/S002.pdf"],
+        )
 
     def test_owner_lookup_hides_unknown_and_foreign_jobs(self):
         self.repository.create_job(self.command())

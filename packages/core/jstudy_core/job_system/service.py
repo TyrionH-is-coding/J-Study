@@ -179,17 +179,10 @@ class JobService:
                     outline.relative_path if outline is not None else None
                 ),
                 sources=tuple(
-                    JobSourceInput(
-                        source_id=f"S{index:03d}",
-                        original_filename=self._safe_original_filename(
-                            request.pdfs[index - 1].filename,
-                            f"S{index:03d}.pdf",
-                        ),
-                        relative_path=source.relative_path,
-                        mime_type="application/pdf",
-                        byte_size=source.byte_size,
-                        sha256=source.sha256,
-                        page_count=source.page_count,
+                    self._source_input(
+                        index,
+                        request.pdfs[index - 1],
+                        source,
                     )
                     for index, source in enumerate(sources, start=1)
                 ),
@@ -219,6 +212,33 @@ class JobService:
         finally:
             if not keep_directory:
                 self._cleanup_new_job_directory(job_id)
+
+    @classmethod
+    def _source_input(
+        cls,
+        index: int,
+        upload: Upload,
+        source: _StoredUpload,
+    ) -> JobSourceInput:
+        source_id = f"S{index:03d}"
+        original_filename = cls._safe_original_filename(
+            upload.filename,
+            f"{source_id}.pdf",
+        )
+        return JobSourceInput(
+            source_id=source_id,
+            original_filename=original_filename,
+            relative_path=source.relative_path,
+            mime_type="application/pdf",
+            byte_size=source.byte_size,
+            sha256=source.sha256,
+            page_count=source.page_count,
+            display_title=Path(original_filename).stem.strip() or source_id,
+            display_order=index,
+            primary_outline_section_id=None,
+            title_origin="upload",
+            order_origin="upload",
+        )
 
     def _validate_request_shape(self, request: JobAdmissionRequest) -> None:
         if request.service_mode not in SUPPORTED_SERVICE_MODES:

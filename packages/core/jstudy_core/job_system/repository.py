@@ -68,6 +68,11 @@ class JobSourceInput:
     byte_size: int
     sha256: str
     page_count: int | None = None
+    display_title: str = ""
+    display_order: int = 1
+    primary_outline_section_id: str | None = None
+    title_origin: str = "upload"
+    order_origin: str = "upload"
 
 
 @dataclass(frozen=True)
@@ -150,6 +155,11 @@ class JobSourceSnapshot:
     byte_size: int
     sha256: str
     page_count: int | None
+    display_title: str
+    display_order: int
+    primary_outline_section_id: str | None
+    title_origin: str
+    order_origin: str
 
 
 @dataclass(frozen=True)
@@ -389,6 +399,13 @@ class JobRepository:
                     byte_size=source.byte_size,
                     sha256=source.sha256,
                     page_count=source.page_count,
+                    display_title=source.display_title,
+                    display_order=source.display_order,
+                    primary_outline_section_id=(
+                        source.primary_outline_section_id
+                    ),
+                    title_origin=source.title_origin,
+                    order_origin=source.order_origin,
                 )
             )
         for section in command.sections:
@@ -471,7 +488,7 @@ class JobRepository:
             sources = session.exec(
                 select(JobSource)
                 .where(JobSource.job_id == job_id)
-                .order_by(JobSource.source_id)
+                .order_by(JobSource.display_order, JobSource.created_at)
             ).all()
             return [
                 JobSourceSnapshot(
@@ -482,6 +499,13 @@ class JobRepository:
                     byte_size=source.byte_size,
                     sha256=source.sha256,
                     page_count=source.page_count,
+                    display_title=source.display_title,
+                    display_order=source.display_order,
+                    primary_outline_section_id=(
+                        source.primary_outline_section_id
+                    ),
+                    title_origin=source.title_origin,
+                    order_origin=source.order_origin,
                 )
                 for source in sources
             ]

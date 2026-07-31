@@ -509,6 +509,27 @@ class JobServiceTest(unittest.TestCase):
         self.assertEqual(snapshot.outline_relative_path, f"{result.job.id}/inputs/outline.md")
         self.assertEqual([source.source_id for source in sources], ["S001", "S002"])
         self.assertEqual(
+            [source.original_filename for source in sources],
+            ["first handout.pdf", "second.pdf"],
+        )
+        self.assertEqual(
+            [source.display_title for source in sources],
+            ["first handout", "second"],
+        )
+        self.assertEqual([source.display_order for source in sources], [1, 2])
+        self.assertEqual(
+            [source.title_origin for source in sources],
+            ["upload", "upload"],
+        )
+        self.assertEqual(
+            [source.order_origin for source in sources],
+            ["upload", "upload"],
+        )
+        self.assertEqual(
+            [source.primary_outline_section_id for source in sources],
+            [None, None],
+        )
+        self.assertEqual(
             [source.sha256 for source in sources],
             [
                 hashlib.sha256(first_pdf).hexdigest(),
