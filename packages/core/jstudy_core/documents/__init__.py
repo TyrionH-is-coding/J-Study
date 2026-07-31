@@ -4,10 +4,22 @@ from .models import (
     ParsedDocument,
     ParsedPage,
 )
+from .service import (
+    DocumentServiceError,
+    DocumentSource,
+    MinerUDocumentService,
+    OutlineTextError,
+    read_text_outline,
+)
 
 __all__ = [
     "DocumentContractError",
     "ParsedBlock",
     "ParsedDocument",
     "ParsedPage",
+    "DocumentServiceError",
+    "DocumentSource",
+    "MinerUDocumentService",
+    "OutlineTextError",
+    "read_text_outline",
 ]
