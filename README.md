@@ -218,6 +218,7 @@ docker compose -f deploy/docker-compose/api.compose.yml down
 - [User Auth and Invite Design](docs/superpowers/specs/2026-06-15-user-auth-invite-design.md)
 - [Snippet Feedback Loop Design](docs/superpowers/specs/2026-06-15-snippet-feedback-loop-design.md)
 - [Backend Security Validation](docs/security/backend-security-validation.md)
+- [Frontend Dependency Risk Register](docs/security/frontend-dependency-risk-register.md)
 - [Server Deployment Runbook](docs/deployment/server-runbook.md)
 - [Tencent Cloud Backend Trial Deployment](docs/deployment/tencent-cloud-trial-2026-06-15.md)
 
