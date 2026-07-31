@@ -1280,6 +1280,76 @@ class WebMvpTest(unittest.TestCase):
             "Learning map is invalid",
         )
 
+    def test_sync_endpoints_reject_map_and_coverage_hash_mismatches(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            settings = self.ready_settings(root)
+            client = TestClient(create_app(settings=settings))
+            self.register_user(client)
+            generated = client.post(
+                "/api/generate",
+                files={
+                    "pdf": (
+                        "lecture.pdf",
+                        self.make_pdf_bytes(),
+                        "application/pdf",
+                    )
+                },
+            )
+            job_id = generated.json()["job_id"]
+            self.run_next_job(client, settings, self.v2_runner)
+            repository = client.app.state.job_repository
+            artifacts = {
+                item.kind: item
+                for item in repository.list_artifacts(job_id)
+            }
+            learning_path = (
+                settings.jobs_root
+                / artifacts[ArtifactKind.LEARNING_MAP].relative_path
+            )
+            coverage_path = (
+                settings.jobs_root
+                / artifacts[ArtifactKind.COVERAGE].relative_path
+            )
+            original_learning = learning_path.read_bytes()
+            learning_payload = json.loads(original_learning)
+            learning_payload["units"][0][
+                "material_section_id"
+            ] = "tampered-section"
+            learning_path.write_text(
+                json.dumps(learning_payload),
+                encoding="utf-8",
+            )
+            map_tamper_responses = [
+                client.get(f"/api/jobs/{job_id}/manifest"),
+                client.get(f"/api/jobs/{job_id}/learning-map"),
+                client.get(f"/api/jobs/{job_id}/coverage"),
+            ]
+
+            learning_path.write_bytes(original_learning)
+            coverage_payload = json.loads(
+                coverage_path.read_text(encoding="utf-8")
+            )
+            coverage_payload["metrics"]["remote_reference_ratio"] = 0.5
+            coverage_path.write_text(
+                json.dumps(coverage_payload),
+                encoding="utf-8",
+            )
+            coverage_tamper_responses = [
+                client.get(f"/api/jobs/{job_id}/manifest"),
+                client.get(f"/api/jobs/{job_id}/learning-map"),
+                client.get(f"/api/jobs/{job_id}/coverage"),
+            ]
+
+        self.assertEqual(
+            [response.status_code for response in map_tamper_responses],
+            [500, 500, 500],
+        )
+        self.assertEqual(
+            [response.status_code for response in coverage_tamper_responses],
+            [500, 500, 500],
+        )
+
     def test_generate_job_exposes_output_and_evidence_contracts(self):
         captured = {}
 

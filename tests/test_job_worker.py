@@ -633,6 +633,72 @@ class JobWorkerTest(unittest.TestCase):
         self.assertEqual(self.repository.list_artifacts("job-1"), [])
         self.assertEqual(self.repository.list_sections("job-1"), [])
 
+    def test_worker_rejects_runner_mutation_of_learning_map(self):
+        self.create_job()
+        base_runner = self.v2_output_runner([], "single_courseware")
+
+        def tampered_runner(**kwargs):
+            outputs = base_runner(**kwargs)
+            learning_map_path = (
+                kwargs["output_dir"] / "result-learning-map.json"
+            )
+            payload = json.loads(
+                learning_map_path.read_text(encoding="utf-8")
+            )
+            payload["units"][0]["material_section_id"] = "tampered-section"
+            learning_map_path.write_text(
+                json.dumps(payload),
+                encoding="utf-8",
+            )
+            return outputs
+
+        worker = JobWorker(
+            self.repository,
+            self.settings,
+            worker_id="worker-tampered-learning-map",
+            single_runner=tampered_runner,
+        )
+
+        self.assertTrue(worker.run_once())
+
+        job = self.repository.get("job-1")
+        self.assertEqual(job.state, JobState.FAILED)
+        self.assertEqual(job.error_code, "invalid_job_output")
+        self.assertEqual(self.repository.list_artifacts("job-1"), [])
+        self.assertEqual(self.repository.list_sections("job-1"), [])
+
+    def test_worker_rejects_runner_mutation_of_coverage_metrics(self):
+        self.create_job()
+        base_runner = self.v2_output_runner([], "single_courseware")
+
+        def tampered_runner(**kwargs):
+            outputs = base_runner(**kwargs)
+            coverage_path = (
+                kwargs["output_dir"] / "result-coverage-ledger.json"
+            )
+            payload = json.loads(coverage_path.read_text(encoding="utf-8"))
+            payload["metrics"]["remote_reference_ratio"] = 0.5
+            coverage_path.write_text(
+                json.dumps(payload),
+                encoding="utf-8",
+            )
+            return outputs
+
+        worker = JobWorker(
+            self.repository,
+            self.settings,
+            worker_id="worker-tampered-coverage",
+            single_runner=tampered_runner,
+        )
+
+        self.assertTrue(worker.run_once())
+
+        job = self.repository.get("job-1")
+        self.assertEqual(job.state, JobState.FAILED)
+        self.assertEqual(job.error_code, "invalid_job_output")
+        self.assertEqual(self.repository.list_artifacts("job-1"), [])
+        self.assertEqual(self.repository.list_sections("job-1"), [])
+
     def test_mineru_provider_errors_have_permanent_and_retryable_job_semantics(self):
         self.create_job(job_id="permanent", max_attempts=2)
         permanent = JobWorker(

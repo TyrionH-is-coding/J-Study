@@ -156,6 +156,30 @@ class DocumentServiceTest(unittest.TestCase):
             second_zip = root / "second.zip"
             first_zip.write_bytes(b"first")
             second_zip.write_bytes(b"second")
+            normalizer_calls = 0
+
+            def partial_then_fail(**kwargs):
+                nonlocal normalizer_calls
+                normalizer_calls += 1
+                partial = kwargs["artifact_dir"] / "mineru" / "partial.bin"
+                partial.parent.mkdir(parents=True)
+                partial.write_bytes(b"partial")
+                if normalizer_calls == 2:
+                    raise ValueError("invalid archive")
+                return ParsedDocument(
+                    contract_version="1",
+                    source_id=kwargs["source_id"],
+                    source_file=kwargs["source_file"],
+                    source_sha256=kwargs["source_sha256"],
+                    parser_name="mineru",
+                    parser_version=kwargs["parser_version"],
+                    parser_model=kwargs["parser_model"],
+                    page_count=kwargs["source_page_count"],
+                    pages=[ParsedPage(1, "", "", [])],
+                    warnings=[],
+                    provider_trace_id=kwargs["provider_trace_id"],
+                )
+
             service = MinerUDocumentService(
                 FakeClient(
                     [
@@ -175,9 +199,7 @@ class DocumentServiceTest(unittest.TestCase):
                 ),
                 parser_version="v4",
                 parser_model="vlm",
-                normalizer=lambda **_kwargs: (_ for _ in ()).throw(
-                    ValueError("invalid archive")
-                ),
+                normalizer=partial_then_fail,
             )
 
             with self.assertRaisesRegex(ValueError, "invalid archive"):
@@ -191,6 +213,8 @@ class DocumentServiceTest(unittest.TestCase):
 
             self.assertFalse(first_zip.exists())
             self.assertFalse(second_zip.exists())
+            self.assertFalse((root / "artifacts").exists())
+            self.assertEqual(normalizer_calls, 2)
 
     def test_rejects_source_content_that_no_longer_matches_admission_hash(self):
         with tempfile.TemporaryDirectory() as tmp:

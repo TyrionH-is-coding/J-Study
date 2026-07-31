@@ -420,6 +420,52 @@ def create_app(
             sources=repository.list_sources(job.id),
         )
 
+    def read_validated_sync_bundle(
+        job: JobSnapshot,
+    ) -> tuple[CoursewareManifestV1, LearningMapV1, CoverageLedgerV1]:
+        artifacts = artifact_map(job)
+        manifest = read_sync_artifact(
+            ready_output_path(
+                job,
+                ArtifactKind.MANIFEST,
+                "Courseware manifest is not ready",
+            ),
+            CoursewareManifestV1,
+            expected_manifest_id=job.id,
+            expected_sha256=artifacts[ArtifactKind.MANIFEST].sha256,
+        )
+        learning_map = read_sync_artifact(
+            ready_output_path(
+                job,
+                ArtifactKind.LEARNING_MAP,
+                "Learning map is not ready",
+            ),
+            LearningMapV1,
+            expected_manifest_id=job.id,
+            expected_sha256=artifacts[ArtifactKind.LEARNING_MAP].sha256,
+        )
+        coverage = read_sync_artifact(
+            ready_output_path(
+                job,
+                ArtifactKind.COVERAGE,
+                "Coverage ledger is not ready",
+            ),
+            CoverageLedgerV1,
+            expected_manifest_id=job.id,
+            expected_sha256=artifacts[ArtifactKind.COVERAGE].sha256,
+        )
+        validate_job_manifest(job, manifest)
+        validate_courseware_coordination(
+            manifest,
+            learning_map,
+            coverage,
+            source_page_counts={
+                source.source_id: source.page_count
+                for source in repository.list_sources(job.id)
+            },
+        )
+        return manifest, learning_map, coverage
+
     def quality_payload(job: JobSnapshot) -> dict[str, Any]:
         artifact = artifact_map(job).get(ArtifactKind.QUALITY)
         if artifact is None:
@@ -856,21 +902,8 @@ def create_app(
     ) -> CoursewareManifestV1:
         set_private_cache(response)
         job = job_or_404(job_id, current_user_or_401(request))
-        path = ready_output_path(
-            job,
-            ArtifactKind.MANIFEST,
-            "Courseware manifest is not ready",
-        )
         try:
-            manifest = read_sync_artifact(
-                path,
-                CoursewareManifestV1,
-                expected_manifest_id=job.id,
-                expected_sha256=artifact_map(job)[
-                    ArtifactKind.MANIFEST
-                ].sha256,
-            )
-            validate_job_manifest(job, manifest)
+            manifest, _, _ = read_validated_sync_bundle(job)
             return manifest
         except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
             raise HTTPException(
@@ -889,48 +922,8 @@ def create_app(
     ) -> LearningMapV1:
         set_private_cache(response)
         job = job_or_404(job_id, current_user_or_401(request))
-        path = ready_output_path(
-            job,
-            ArtifactKind.LEARNING_MAP,
-            "Learning map is not ready",
-        )
         try:
-            learning_map = read_sync_artifact(
-                path,
-                LearningMapV1,
-                expected_manifest_id=job.id,
-            )
-            manifest = read_sync_artifact(
-                ready_output_path(
-                    job,
-                    ArtifactKind.MANIFEST,
-                    "Courseware manifest is not ready",
-                ),
-                CoursewareManifestV1,
-                expected_manifest_id=job.id,
-                expected_sha256=artifact_map(job)[
-                    ArtifactKind.MANIFEST
-                ].sha256,
-            )
-            validate_job_manifest(job, manifest)
-            coverage = read_sync_artifact(
-                ready_output_path(
-                    job,
-                    ArtifactKind.COVERAGE,
-                    "Coverage ledger is not ready",
-                ),
-                CoverageLedgerV1,
-                expected_manifest_id=job.id,
-            )
-            validate_courseware_coordination(
-                manifest,
-                learning_map,
-                coverage,
-                source_page_counts={
-                    source.source_id: source.page_count
-                    for source in repository.list_sources(job.id)
-                },
-            )
+            _, learning_map, _ = read_validated_sync_bundle(job)
             return learning_map
         except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
             raise HTTPException(
@@ -949,48 +942,8 @@ def create_app(
     ) -> CoverageLedgerV1:
         set_private_cache(response)
         job = job_or_404(job_id, current_user_or_401(request))
-        path = ready_output_path(
-            job,
-            ArtifactKind.COVERAGE,
-            "Coverage ledger is not ready",
-        )
         try:
-            coverage = read_sync_artifact(
-                path,
-                CoverageLedgerV1,
-                expected_manifest_id=job.id,
-            )
-            manifest = read_sync_artifact(
-                ready_output_path(
-                    job,
-                    ArtifactKind.MANIFEST,
-                    "Courseware manifest is not ready",
-                ),
-                CoursewareManifestV1,
-                expected_manifest_id=job.id,
-                expected_sha256=artifact_map(job)[
-                    ArtifactKind.MANIFEST
-                ].sha256,
-            )
-            validate_job_manifest(job, manifest)
-            learning_map = read_sync_artifact(
-                ready_output_path(
-                    job,
-                    ArtifactKind.LEARNING_MAP,
-                    "Learning map is not ready",
-                ),
-                LearningMapV1,
-                expected_manifest_id=job.id,
-            )
-            validate_courseware_coordination(
-                manifest,
-                learning_map,
-                coverage,
-                source_page_counts={
-                    source.source_id: source.page_count
-                    for source in repository.list_sources(job.id)
-                },
-            )
+            _, _, coverage = read_validated_sync_bundle(job)
             return coverage
         except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
             raise HTTPException(

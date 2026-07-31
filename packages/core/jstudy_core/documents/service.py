@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import shutil
 from typing import Callable
 
 from .mineru_client import (
@@ -9,7 +10,7 @@ from .mineru_client import (
     MinerUPrecisionClient,
     MinerUProtocolError,
 )
-from .mineru_normalizer import normalize_mineru_zip
+from .mineru_normalizer import MinerUBatchBudget, normalize_mineru_zip
 from .models import ParsedDocument
 from .pdf_utility import (
     PdfValidationError,
@@ -96,6 +97,7 @@ class MinerUDocumentService:
                 )
 
             documents: dict[str, ParsedDocument] = {}
+            batch_budget = MinerUBatchBudget()
             for source in sources:
                 artifact = artifact_by_source[source.source_id]
                 documents[source.source_id] = self.normalizer(
@@ -108,8 +110,12 @@ class MinerUDocumentService:
                     parser_model=self.parser_model,
                     provider_trace_id=artifact.provider_trace_id,
                     artifact_dir=artifact_root / source.source_id,
+                    batch_budget=batch_budget,
                 )
             return [documents[source_id] for source_id in source_ids]
+        except Exception:
+            shutil.rmtree(artifact_root, ignore_errors=True)
+            raise
         finally:
             for artifact in artifacts:
                 artifact.zip_path.unlink(missing_ok=True)

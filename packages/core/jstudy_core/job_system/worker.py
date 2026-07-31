@@ -28,8 +28,11 @@ from packages.core.jstudy_core.job_system.states import JobState
 from packages.core.jstudy_core.pipeline import run_course_outline, run_mvp
 from packages.core.jstudy_core.courseware import (
     CoursewareManifestV1,
+    CoverageLedgerV1,
+    LearningMapV1,
     build_courseware_manifest,
     plan_learning_map,
+    validate_courseware_coordination,
     validate_manifest_snapshot,
 )
 from packages.core.jstudy_core.documents import (
@@ -217,7 +220,7 @@ class JobWorker:
         )
         heartbeat.start()
         try:
-            runner, kwargs, sequence_outputs, expected_manifest = self._runner_call(
+            runner, kwargs, sequence_outputs, expected_sequence = self._runner_call(
                 job,
                 heartbeat,
             )
@@ -226,10 +229,10 @@ class JobWorker:
                 **sequence_outputs,
             }
             self._require_current_lease(heartbeat)
-            self._validate_manifest_output(
+            self._validate_sequence_outputs(
                 job,
                 outputs,
-                expected_manifest=expected_manifest,
+                expected_sequence=expected_sequence,
             )
             artifacts = self._build_artifacts(job, outputs)
             artifact_kinds = {artifact.kind for artifact in artifacts}
@@ -316,7 +319,7 @@ class JobWorker:
         Runner,
         dict[str, Any],
         dict[str, Path],
-        CoursewareManifestV1,
+        tuple[CoursewareManifestV1, LearningMapV1, CoverageLedgerV1],
     ]:
         sources = self.repository.list_sources(job.id)
         if not sources:
@@ -541,7 +544,11 @@ class JobWorker:
             runner,
             kwargs,
             sequence_outputs,
-            manifest.model_copy(deep=True),
+            (
+                manifest.model_copy(deep=True),
+                learning_map.model_copy(deep=True),
+                coverage_ledger.model_copy(deep=True),
+            ),
         )
 
     def _verify_outline_snapshot(
@@ -585,33 +592,60 @@ class JobWorker:
                 "The course outline no longer matches its admission identity.",
             ) from exc
 
-    def _validate_manifest_output(
+    def _validate_sequence_outputs(
         self,
         job: JobSnapshot,
         outputs: Mapping[str, Path],
         *,
-        expected_manifest: CoursewareManifestV1,
+        expected_sequence: tuple[
+            CoursewareManifestV1,
+            LearningMapV1,
+            CoverageLedgerV1,
+        ],
     ) -> None:
-        manifest_path = outputs.get("manifest")
-        if manifest_path is None:
+        paths = {
+            key: outputs.get(key)
+            for key in ("manifest", "learning_map", "coverage")
+        }
+        if any(path is None for path in paths.values()):
             raise PermanentJobError(
                 "invalid_job_output",
-                "The courseware manifest is missing.",
+                "A courseware synchronization artifact is missing.",
             )
         try:
             manifest = CoursewareManifestV1.model_validate_json(
-                Path(manifest_path).read_bytes()
+                Path(paths["manifest"]).read_bytes()
             )
+            learning_map = LearningMapV1.model_validate_json(
+                Path(paths["learning_map"]).read_bytes()
+            )
+            coverage = CoverageLedgerV1.model_validate_json(
+                Path(paths["coverage"]).read_bytes()
+            )
+            expected_manifest, expected_map, expected_coverage = expected_sequence
+            if (
+                manifest != expected_manifest
+                or learning_map != expected_map
+                or coverage != expected_coverage
+            ):
+                raise ValueError(
+                    "courseware synchronization artifacts were mutated"
+                )
             validate_manifest_snapshot(
                 manifest,
                 job=job,
                 sources=self.repository.list_sources(job.id),
                 expected_manifest=expected_manifest,
             )
+            validate_courseware_coordination(
+                manifest,
+                learning_map,
+                coverage,
+            )
         except (OSError, UnicodeError, ValueError) as exc:
             raise PermanentJobError(
                 "invalid_job_output",
-                "The courseware manifest is invalid.",
+                "The courseware synchronization artifacts are invalid.",
             ) from exc
 
     def _create_document_service(self) -> MinerUDocumentService:

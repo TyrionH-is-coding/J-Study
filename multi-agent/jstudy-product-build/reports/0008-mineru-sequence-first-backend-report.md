@@ -8,6 +8,7 @@
 - Status：`completed`
 - 起始基线：`6f915dd92a0587348b9c5c234f311b241f0f6f8f`
 - Corrective baseline：`633d15db1f0a30e3a797e3215b1e32ebd062e923`
+- 第二轮 corrective baseline：`285aa8437378abe9d7aa3a6a062700f6d258600f`
 - 最终 SHA：本报告所在提交不能在提交自身中自指，以 Supervisor 回报中的完整 SHA 为准。
 - 基线核对：分支为 `feature/backend-frontend-mvp`；开始时仅有 Supervisor-owned `supervisor_review.md` 修改及任务卡列明的六个 untracked 排除目录，实施期间未修改、stage 或清理这些内容。
 - 阶段提交：
@@ -46,6 +47,26 @@
 - Worker 仅关闭自己创建的 `MinerUDocumentService/httpx.Client`，成功、retryable failure 和 permanent failure 都确定性关闭；注入的测试/调用方 service 不由 Worker 关闭。
 - shared `validate_manifest_snapshot()` 同时供 Worker 完成前和 `/manifest`、`/learning-map`、`/coverage` 使用，核对 Job identity、service mode、source 集合、文件名、SHA256、显示标题/顺序、outline mapping 与 origin metadata。任何偏差均在 Worker 侧成为 permanent `invalid_job_output`，API 侧统一返回安全 500。
 - Job admission 现在持久化 outline 的安全原始文件名、SHA256、byte size 和 MIME。每次 claim 在任何 MinerU/provider I/O 前有界重算 size/SHA；不匹配永久失败且不重试。Manifest 使用持久化原始名和 admission SHA，不再暴露内部 `outline.pdf`/`outline.md` 文件名。
+
+### Supervisor 第二轮 corrective patch
+
+- normalizer 新增同一 Job 共享的 `MinerUBatchBudget`：总解压上限为 512 MiB，私有产物上限为 1 GiB。私有预算同时计算 retained original ZIP 与解压成员，不能再由 20 个分别合法的 ZIP 累积到约 10 GiB。
+- `*_content_list.json` 使用独立 16 MiB 上限，并通过 bounded read 后才进入 JSON parse。普通 ZIP 成员统一经 `ZipFile.open()` 以 64 KiB chunk 流式落盘，不再调用 `archive.read(info)` 整成员载入内存。
+- 下载 ZIP 在 normalization 成功后直接 move/rename 为 source 私有 `mineru-original.zip`，不再复制第二份。任一 source normalization 失败会删除整个本次 attempt 的 MinerU root，包括前序 source 输出、当前 partial member 和所有 download ZIP。
+- Worker 在 runner 前分别 deep-copy 冻结 Manifest、Learning Map、Coverage。runner 返回后严格重读三份 typed artifact，与冻结值精确比较，再调用 shared coordination validator；任一变化永久失败为 `invalid_job_output`，不写 artifacts、sections 或 completed。
+- 三个同步 API 共用一个 bundle read boundary，分别按持久化 `JobArtifact.sha256` 验证 Manifest、Learning Map、Coverage，并复用 Manifest/coordination validators。任一依赖 artifact 被篡改时，三个 endpoint 都返回各自现有安全 500，不返回篡改内容。
+
+第二轮 corrective patch 精确文件：
+
+- `apps/api/jstudy_api/app.py`
+- `multi-agent/jstudy-product-build/reports/0008-mineru-sequence-first-backend-report.md`
+- `packages/core/jstudy_core/documents/mineru_normalizer.py`
+- `packages/core/jstudy_core/documents/service.py`
+- `packages/core/jstudy_core/job_system/worker.py`
+- `tests/test_document_service.py`
+- `tests/test_job_worker.py`
+- `tests/test_mineru_normalizer.py`
+- `tests/test_web_mvp.py`
 
 Corrective patch 精确文件：
 
@@ -114,6 +135,10 @@ POST /api/generate
 - 提交前独立只读审查发现 2 个 P2：batch/normalizer 中途失败会遗留私有 ZIP；Manifest outline sections 的预期值仍来自待校验文件自身。对应 RED 显示 ZIP 残留、Worker completed、三个 API 返回 200；GREEN `5/5`，现在异常路径清理本批全部 ZIP，Worker 与 runner 前深拷贝 expected Manifest 精确比较，API 对 Manifest 内容复核原子完成时持久化的 artifact SHA。
 - Corrective 完整后端：`361/361`；`compileall` exit 0。
 - 前端未改动回归：lint、typecheck、Vitest `5/5`、production build、Playwright `6/6` 全部通过。
+- 第二轮 corrective P1-1 RED：缺少 batch budget API；normalizer 对 content list 和普通成员均整成员读取；ZIP 被复制保留；第二个 source 失败后保留第一份与 partial 私有输出。GREEN：normalizer/service `25/25`，覆盖 batch aggregate、private ZIP accounting、16 MiB content list、无 `ZipFile.read()`、move 保留和整批 cleanup。
+- 第二轮 corrective P2-1 RED：runner 仅篡改 Map 或 Coverage 后 Job 仍 completed，三个 endpoint 对两类 hash mismatch 均返回 200。GREEN：Worker/API 定向 `6/6`，两类 mutation 均 permanent no-write，三个 endpoint 均安全 500。
+- 第二轮 corrective 相关回归：normalizer、document service、Worker、API `109/109`。
+- 第二轮 corrective 完整后端：`369/369`；`compileall` exit 0。
 - `test_sequence_generation_uses_learning_map_not_parsing_or_scores` 将 PyMuPDF/MinerU legacy extract 入口和 `select_evidence_chunks` patch 为立即失败，sequence-first 运行仍成功，证明主生成不调用文本抽取或 relevance selector。
 - planner 输入不存在 similarity score，排序键只来自 Manifest display order 与 ParsedDocument page/block order；改变 embedding relevance 无法改变主 section 顺序。
 
@@ -167,7 +192,7 @@ POST /api/generate
 - 未修改 `apps/web/**`；前端门只证明无回归，不证明 synchronized Reader 已消费三个新合同。
 - 未引入 Alembic。`job_sources` 与 `jobs` 的新 outline identity 列会使旧 disposable pilot database 不兼容；旧 pilot DB 需要显式重建，不能对持久用户数据使用 `create_all()` 冒充迁移。
 - 未执行 live MinerU provider smoke、真实 PostgreSQL smoke 或部署验收。
-- 512 MiB 是一个 Job 的 MinerU ZIP 累计磁盘传输上限，不是公开上传配额；normalizer 仍受既有 2,000 members、512 MiB uncompressed 和 100x compression ratio 限制。
+- 512 MiB 是一个 Job 的 MinerU ZIP 累计压缩传输上限，也是新的 Job 级总解压上限，不是公开上传配额。每个 ZIP 仍受 2,000 members、512 MiB uncompressed、100x compression ratio 与 16 MiB content-list 限制；retained ZIP 加全部解压成员受 1 GiB Job 私有磁盘预算约束。
 - 当前 package hash 与后续读取仍沿用 Task 0007 已披露的受信单写者文件边界，理论 TOCTOU 风险未在本任务扩大处理。
 - 临时 backend-served UI 仍保留历史 parser selector markup，但 `/api/options` 不再提供 parser profiles；正式 `apps/web` 接入应完全省略该控件。
 

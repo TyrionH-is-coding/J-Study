@@ -37,13 +37,44 @@ class MinerUNormalizationError(DocumentContractError):
 class MinerUNormalizerLimits:
     max_members: int = 2000
     max_uncompressed_bytes: int = 536870912
+    max_content_list_bytes: int = 16777216
     max_compression_ratio: float = 100.0
 
     def __post_init__(self) -> None:
-        if self.max_members < 1 or self.max_uncompressed_bytes < 1:
+        if (
+            self.max_members < 1
+            or self.max_uncompressed_bytes < 1
+            or self.max_content_list_bytes < 1
+        ):
             raise MinerUNormalizationError("ZIP limits must be positive")
         if self.max_compression_ratio <= 0:
             raise MinerUNormalizationError("ZIP compression ratio limit must be positive")
+
+
+@dataclass
+class MinerUBatchBudget:
+    max_uncompressed_bytes: int = 536870912
+    max_private_bytes: int = 1073741824
+    uncompressed_bytes: int = 0
+    private_bytes: int = 0
+
+    def __post_init__(self) -> None:
+        if self.max_uncompressed_bytes < 1 or self.max_private_bytes < 1:
+            raise MinerUNormalizationError("batch limits must be positive")
+
+    def reserve(self, *, uncompressed_bytes: int, private_bytes: int) -> None:
+        next_uncompressed = self.uncompressed_bytes + uncompressed_bytes
+        if next_uncompressed > self.max_uncompressed_bytes:
+            raise MinerUNormalizationError(
+                "MinerU batch uncompressed byte limit exceeded"
+            )
+        next_private = self.private_bytes + private_bytes
+        if next_private > self.max_private_bytes:
+            raise MinerUNormalizationError(
+                "MinerU batch private artifact byte limit exceeded"
+            )
+        self.uncompressed_bytes = next_uncompressed
+        self.private_bytes = next_private
 
 
 def normalize_mineru_zip(
@@ -59,6 +90,7 @@ def normalize_mineru_zip(
     provider_trace_id: str,
     artifact_dir: Path,
     limits: MinerUNormalizerLimits = MinerUNormalizerLimits(),
+    batch_budget: MinerUBatchBudget | None = None,
 ) -> ParsedDocument:
     if source_page_count < 1:
         raise MinerUNormalizationError("source PDF page count must be positive")
@@ -67,55 +99,84 @@ def normalize_mineru_zip(
 
     if (zip_bytes is None) == (zip_path is None):
         raise MinerUNormalizationError("exactly one MinerU ZIP source is required")
+    artifact_dir_existed = artifact_dir.exists()
+    try:
+        archive_size = (
+            len(zip_bytes)
+            if zip_bytes is not None
+            else Path(zip_path).stat().st_size
+        )
+    except OSError as exc:
+        raise MinerUNormalizationError(
+            "MinerU artifact is not readable"
+        ) from exc
     archive_source = io.BytesIO(zip_bytes) if zip_bytes is not None else zip_path
     try:
         archive = zipfile.ZipFile(archive_source)
     except (zipfile.BadZipFile, OSError) as exc:
         raise MinerUNormalizationError("MinerU artifact is not a valid ZIP") from exc
 
-    with archive:
-        members = _validate_members(archive, limits)
-        content_members = [
-            info
-            for info in members
-            if not info.is_dir()
-            and PurePosixPath(_normalized_name(info.filename)).name.endswith("_content_list.json")
-            and not PurePosixPath(_normalized_name(info.filename)).name.endswith("_content_list_v2.json")
-        ]
-        if len(content_members) != 1:
-            raise MinerUNormalizationError("MinerU ZIP must contain exactly one content_list.json")
-        try:
-            raw_content = json.loads(archive.read(content_members[0]).decode("utf-8"))
-        except (KeyError, UnicodeError, json.JSONDecodeError) as exc:
-            raise MinerUNormalizationError("MinerU content list is malformed") from exc
-        if not isinstance(raw_content, list) or not raw_content:
-            raise MinerUNormalizationError("MinerU content list is empty or invalid")
+    try:
+        with archive:
+            members, total_uncompressed = _validate_members(archive, limits)
+            budget = batch_budget or MinerUBatchBudget()
+            budget.reserve(
+                uncompressed_bytes=total_uncompressed,
+                private_bytes=archive_size + total_uncompressed,
+            )
+            content_members = [
+                info
+                for info in members
+                if not info.is_dir()
+                and PurePosixPath(_normalized_name(info.filename)).name.endswith("_content_list.json")
+                and not PurePosixPath(_normalized_name(info.filename)).name.endswith("_content_list_v2.json")
+            ]
+            if len(content_members) != 1:
+                raise MinerUNormalizationError("MinerU ZIP must contain exactly one content_list.json")
+            try:
+                content_payload = _read_member_bounded(
+                    archive,
+                    content_members[0],
+                    max_bytes=limits.max_content_list_bytes,
+                )
+                raw_content = json.loads(content_payload.decode("utf-8"))
+            except (KeyError, UnicodeError, json.JSONDecodeError) as exc:
+                raise MinerUNormalizationError("MinerU content list is malformed") from exc
+            if not isinstance(raw_content, list) or not raw_content:
+                raise MinerUNormalizationError("MinerU content list is empty or invalid")
 
-        document = _normalize_content(
-            raw_content=raw_content,
-            member_names={_normalized_name(info.filename) for info in members if not info.is_dir()},
-            source_id=source_id,
-            source_file=source_file,
-            source_sha256=source_sha256,
-            source_page_count=source_page_count,
-            parser_version=parser_version,
-            parser_model=parser_model,
-            provider_trace_id=provider_trace_id,
-        )
-        _write_private_artifacts(
-            archive,
-            members,
+            document = _normalize_content(
+                raw_content=raw_content,
+                member_names={_normalized_name(info.filename) for info in members if not info.is_dir()},
+                source_id=source_id,
+                source_file=source_file,
+                source_sha256=source_sha256,
+                source_page_count=source_page_count,
+                parser_version=parser_version,
+                parser_model=parser_model,
+                provider_trace_id=provider_trace_id,
+            )
+            _write_private_artifacts(
+                archive,
+                members,
+                artifact_dir=artifact_dir,
+            )
+        _retain_original_zip(
             zip_bytes=zip_bytes,
             zip_path=zip_path,
             artifact_dir=artifact_dir,
         )
         return document
+    except Exception:
+        if not artifact_dir_existed:
+            shutil.rmtree(artifact_dir, ignore_errors=True)
+        raise
 
 
 def _validate_members(
     archive: zipfile.ZipFile,
     limits: MinerUNormalizerLimits,
-) -> list[zipfile.ZipInfo]:
+) -> tuple[list[zipfile.ZipInfo], int]:
     members = archive.infolist()
     if len(members) > limits.max_members:
         raise MinerUNormalizationError("MinerU ZIP contains too many members")
@@ -139,7 +200,7 @@ def _validate_members(
             ratio = info.file_size / max(info.compress_size, 1)
             if ratio > limits.max_compression_ratio:
                 raise MinerUNormalizationError("MinerU ZIP exceeds the compression ratio limit")
-    return members
+    return members, total_uncompressed
 
 
 def _validate_member_path(value: str) -> str:
@@ -195,10 +256,50 @@ def _safe_mkdir(root: Path, target: Path) -> None:
     _assert_safe_target(root, target)
 
 
-def _safe_write_bytes(root: Path, target: Path, value: bytes) -> None:
+def _safe_write_stream(
+    root: Path,
+    target: Path,
+    source: Any,
+    *,
+    max_bytes: int,
+) -> None:
     _safe_mkdir(root, target.parent)
     _assert_safe_target(root, target)
-    target.write_bytes(value)
+    written = 0
+    try:
+        with target.open("xb") as handle:
+            while True:
+                chunk = source.read(64 * 1024)
+                if not chunk:
+                    break
+                written += len(chunk)
+                if written > max_bytes:
+                    raise MinerUNormalizationError(
+                        "MinerU ZIP member exceeds its declared size"
+                    )
+                handle.write(chunk)
+    except Exception:
+        target.unlink(missing_ok=True)
+        raise
+
+
+def _read_member_bounded(
+    archive: zipfile.ZipFile,
+    info: zipfile.ZipInfo,
+    *,
+    max_bytes: int,
+) -> bytes:
+    if info.file_size > max_bytes:
+        raise MinerUNormalizationError(
+            "MinerU content list exceeds the byte limit"
+        )
+    with archive.open(info) as source:
+        payload = source.read(max_bytes + 1)
+    if len(payload) > max_bytes:
+        raise MinerUNormalizationError(
+            "MinerU content list exceeds the byte limit"
+        )
+    return payload
 
 
 def _normalize_content(
@@ -396,8 +497,6 @@ def _write_private_artifacts(
     archive: zipfile.ZipFile,
     members: list[zipfile.ZipInfo],
     *,
-    zip_bytes: bytes | None,
-    zip_path: Path | None,
     artifact_dir: Path,
 ) -> None:
     artifact_dir.mkdir(parents=True, exist_ok=True)
@@ -415,19 +514,14 @@ def _write_private_artifacts(
         if info.is_dir():
             _safe_mkdir(extraction_root, target)
             continue
-        _safe_write_bytes(extraction_root, target, archive.read(info))
+        with archive.open(info) as source:
+            _safe_write_stream(
+                extraction_root,
+                target,
+                source,
+                max_bytes=info.file_size,
+            )
 
-    original_zip = artifact_dir / "mineru-original.zip"
-    if zip_path is not None:
-        _assert_safe_target(artifact_dir, original_zip)
-        with zip_path.open("rb") as source, original_zip.open("xb") as target:
-            shutil.copyfileobj(source, target, length=64 * 1024)
-    else:
-        _safe_write_bytes(
-            artifact_dir,
-            original_zip,
-            zip_bytes or b"",
-        )
     full_markdown = [
         info
         for info in members
@@ -435,10 +529,33 @@ def _write_private_artifacts(
         and PurePosixPath(_normalized_name(info.filename)).name == "full.md"
     ]
     if len(full_markdown) == 1:
-        _safe_write_bytes(
+        source_path = extraction_root.joinpath(
+            *PurePosixPath(
+                _validate_member_path(full_markdown[0].filename)
+            ).parts
+        )
+        target_path = artifact_dir / "full.md"
+        _assert_safe_target(artifact_dir, target_path)
+        source_path.replace(target_path)
+
+
+def _retain_original_zip(
+    *,
+    zip_bytes: bytes | None,
+    zip_path: Path | None,
+    artifact_dir: Path,
+) -> None:
+    original_zip = artifact_dir / "mineru-original.zip"
+    _assert_safe_target(artifact_dir, original_zip)
+    if zip_path is not None:
+        Path(zip_path).replace(original_zip)
+        return
+    with io.BytesIO(zip_bytes or b"") as source:
+        _safe_write_stream(
             artifact_dir,
-            artifact_dir / "full.md",
-            archive.read(full_markdown[0]),
+            original_zip,
+            source,
+            max_bytes=len(zip_bytes or b""),
         )
 
 

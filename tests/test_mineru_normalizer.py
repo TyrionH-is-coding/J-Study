@@ -9,8 +9,10 @@ import tempfile
 import unittest
 import zipfile
 from pathlib import Path
+from unittest.mock import patch
 
 from packages.core.jstudy_core.documents.mineru_normalizer import (
+    MinerUBatchBudget,
     MinerUNormalizationError,
     MinerUNormalizerLimits,
     normalize_mineru_zip,
@@ -42,6 +44,7 @@ class MinerUNormalizerTest(unittest.TestCase):
         *,
         page_count: int = 2,
         limits: MinerUNormalizerLimits = MinerUNormalizerLimits(),
+        batch_budget: MinerUBatchBudget | None = None,
     ):
         return normalize_mineru_zip(
             zip_bytes=zip_bytes,
@@ -54,6 +57,7 @@ class MinerUNormalizerTest(unittest.TestCase):
             provider_trace_id="trace-1",
             artifact_dir=root / "artifacts",
             limits=limits,
+            batch_budget=batch_budget,
         )
 
     def mixed_content(self) -> list[dict[str, object]]:
@@ -253,6 +257,111 @@ class MinerUNormalizerTest(unittest.TestCase):
             with tempfile.TemporaryDirectory() as tmp, self.assertRaises(MinerUNormalizationError):
                 self.normalize(Path(tmp), zip_bytes, limits=limits)
 
+    def test_batch_budget_rejects_aggregate_uncompressed_bytes(self):
+        content = [{"type": "text", "text": "safe", "page_idx": 0}]
+        zip_bytes = self.make_zip(
+            content,
+            members={"payload.txt": b"x" * 64},
+            compression=zipfile.ZIP_STORED,
+        )
+        with zipfile.ZipFile(io.BytesIO(zip_bytes)) as archive:
+            archive_size = sum(info.file_size for info in archive.infolist())
+        budget = MinerUBatchBudget(
+            max_uncompressed_bytes=archive_size * 2 - 1,
+            max_private_bytes=10_000,
+        )
+        with tempfile.TemporaryDirectory() as first, tempfile.TemporaryDirectory() as second:
+            self.normalize(Path(first), zip_bytes, page_count=1, batch_budget=budget)
+            with self.assertRaisesRegex(
+                MinerUNormalizationError,
+                "batch uncompressed",
+            ):
+                self.normalize(
+                    Path(second),
+                    zip_bytes,
+                    page_count=1,
+                    batch_budget=budget,
+                )
+            self.assertFalse((Path(second) / "artifacts").exists())
+
+    def test_private_budget_counts_retained_original_zip_bytes(self):
+        content = [{"type": "text", "text": "safe", "page_idx": 0}]
+        zip_bytes = self.make_zip(
+            content,
+            compression=zipfile.ZIP_STORED,
+        )
+        budget = MinerUBatchBudget(
+            max_uncompressed_bytes=10_000,
+            max_private_bytes=len(zip_bytes) - 1,
+        )
+        with tempfile.TemporaryDirectory() as tmp, self.assertRaisesRegex(
+            MinerUNormalizationError,
+            "private artifact",
+        ):
+            self.normalize(
+                Path(tmp),
+                zip_bytes,
+                page_count=1,
+                batch_budget=budget,
+            )
+
+    def test_content_list_has_a_dedicated_bounded_read_limit(self):
+        content = [{"type": "text", "text": "safe", "page_idx": 0}]
+        limits = MinerUNormalizerLimits(
+            max_uncompressed_bytes=10_000,
+            max_content_list_bytes=8,
+        )
+        with tempfile.TemporaryDirectory() as tmp, self.assertRaisesRegex(
+            MinerUNormalizationError,
+            "content list exceeds",
+        ):
+            self.normalize(
+                Path(tmp),
+                self.make_zip(content, compression=zipfile.ZIP_STORED),
+                page_count=1,
+                limits=limits,
+            )
+
+    def test_normal_members_are_streamed_without_zipfile_read(self):
+        content = [{"type": "text", "text": "safe", "page_idx": 0}]
+        zip_bytes = self.make_zip(
+            content,
+            members={"payload.bin": b"streamed"},
+            compression=zipfile.ZIP_STORED,
+        )
+        with tempfile.TemporaryDirectory() as tmp, patch.object(
+            zipfile.ZipFile,
+            "read",
+            side_effect=AssertionError("whole-member read is forbidden"),
+        ):
+            document = self.normalize(Path(tmp), zip_bytes, page_count=1)
+
+        self.assertEqual(document.pages[0].text, "safe")
+
+    def test_zip_path_is_moved_into_private_artifacts_without_duplicate(self):
+        content = [{"type": "text", "text": "safe", "page_idx": 0}]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            zip_path = root / "download.zip"
+            zip_path.write_bytes(
+                self.make_zip(content, compression=zipfile.ZIP_STORED)
+            )
+            normalize_mineru_zip(
+                zip_path=zip_path,
+                source_id="S001",
+                source_file="lecture.pdf",
+                source_sha256="a" * 64,
+                source_page_count=1,
+                parser_version="v4",
+                parser_model="vlm",
+                provider_trace_id="trace-1",
+                artifact_dir=root / "artifacts",
+            )
+
+            self.assertFalse(zip_path.exists())
+            self.assertTrue(
+                (root / "artifacts" / "mineru-original.zip").is_file()
+            )
 
     def test_rejects_empty_content_list_as_typed_normalization_error(self):
         with tempfile.TemporaryDirectory() as tmp, self.assertRaises(MinerUNormalizationError):
