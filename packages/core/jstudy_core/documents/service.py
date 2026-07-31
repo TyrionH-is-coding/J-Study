@@ -82,32 +82,40 @@ class MinerUDocumentService:
             [
                 MinerUInput(source_id=item.source_id, path=item.pdf_path)
                 for item in sources
-            ]
+            ],
+            download_root=artifact_root / "downloads",
         )
-        artifact_by_source = {item.source_id: item for item in artifacts}
-        if (
-            len(artifact_by_source) != len(artifacts)
-            or set(artifact_by_source) != set(source_ids)
-        ):
-            raise MinerUProtocolError(
-                "MinerU artifacts do not match requested sources"
-            )
+        try:
+            artifact_by_source = {item.source_id: item for item in artifacts}
+            if (
+                len(artifact_by_source) != len(artifacts)
+                or set(artifact_by_source) != set(source_ids)
+            ):
+                raise MinerUProtocolError(
+                    "MinerU artifacts do not match requested sources"
+                )
 
-        documents: dict[str, ParsedDocument] = {}
-        for source in sources:
-            artifact = artifact_by_source[source.source_id]
-            documents[source.source_id] = self.normalizer(
-                zip_bytes=artifact.zip_bytes,
-                source_id=source.source_id,
-                source_file=source.pdf_path.name,
-                source_sha256=source.sha256,
-                source_page_count=page_counts[source.source_id],
-                parser_version=self.parser_version,
-                parser_model=self.parser_model,
-                provider_trace_id=artifact.provider_trace_id,
-                artifact_dir=artifact_root / source.source_id,
-            )
-        return [documents[source_id] for source_id in source_ids]
+            documents: dict[str, ParsedDocument] = {}
+            for source in sources:
+                artifact = artifact_by_source[source.source_id]
+                documents[source.source_id] = self.normalizer(
+                    zip_path=artifact.zip_path,
+                    source_id=source.source_id,
+                    source_file=source.pdf_path.name,
+                    source_sha256=source.sha256,
+                    source_page_count=page_counts[source.source_id],
+                    parser_version=self.parser_version,
+                    parser_model=self.parser_model,
+                    provider_trace_id=artifact.provider_trace_id,
+                    artifact_dir=artifact_root / source.source_id,
+                )
+            return [documents[source_id] for source_id in source_ids]
+        finally:
+            for artifact in artifacts:
+                artifact.zip_path.unlink(missing_ok=True)
+
+    def close(self) -> None:
+        self.client.close()
 
 
 def read_text_outline(path: Path, *, max_bytes: int) -> str:

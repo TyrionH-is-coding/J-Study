@@ -507,6 +507,13 @@ class JobServiceTest(unittest.TestCase):
 
         self.assertIsNotNone(snapshot)
         self.assertEqual(snapshot.outline_relative_path, f"{result.job.id}/inputs/outline.md")
+        self.assertEqual(snapshot.outline_original_filename, "course.md")
+        self.assertEqual(
+            snapshot.outline_sha256,
+            hashlib.sha256(outline).hexdigest(),
+        )
+        self.assertEqual(snapshot.outline_byte_size, len(outline))
+        self.assertEqual(snapshot.outline_mime_type, "text/markdown")
         self.assertEqual([source.source_id for source in sources], ["S001", "S002"])
         self.assertEqual(
             [source.original_filename for source in sources],

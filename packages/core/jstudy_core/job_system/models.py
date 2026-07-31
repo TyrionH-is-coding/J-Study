@@ -153,6 +153,10 @@ class Job(SQLModel, table=True):
     idempotency_key: str | None = None
     request_fingerprint: str | None = None
     outline_relative_path: str | None = None
+    outline_original_filename: str | None = None
+    outline_sha256: str | None = None
+    outline_byte_size: int | None = None
+    outline_mime_type: str | None = None
     error_code: str | None = None
     error_message: str | None = None
     created_at: datetime = Field(default_factory=utc_now, sa_type=UTCDateTime)

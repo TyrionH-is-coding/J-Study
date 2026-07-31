@@ -93,6 +93,7 @@ class LeaseErrorRepository(JobRepository):
 class FakeDocumentService:
     def __init__(self):
         self.calls = []
+        self.close_count = 0
 
     def parse(self, sources, *, artifact_root):
         self.calls.append((sources, artifact_root))
@@ -129,13 +130,20 @@ class FakeDocumentService:
             for source in sources
         ]
 
+    def close(self):
+        self.close_count += 1
+
 
 class FailingDocumentService:
     def __init__(self, error):
         self.error = error
+        self.close_count = 0
 
     def parse(self, sources, *, artifact_root):
         raise self.error
+
+    def close(self):
+        self.close_count += 1
 
 
 class JobWorkerTest(unittest.TestCase):
@@ -203,10 +211,18 @@ class JobWorkerTest(unittest.TestCase):
         source = inputs / "S001.pdf"
         source.write_bytes(b"%PDF-1.4\nsource")
         outline_relative_path = None
+        outline_original_filename = None
+        outline_sha256 = None
+        outline_byte_size = None
+        outline_mime_type = None
         if service_mode == "course_outline":
             outline = inputs / "outline.md"
             outline.write_text("# Unit", encoding="utf-8")
             outline_relative_path = f"{job_id}/inputs/outline.md"
+            outline_original_filename = "课程大纲.md"
+            outline_sha256 = hashlib.sha256(outline.read_bytes()).hexdigest()
+            outline_byte_size = outline.stat().st_size
+            outline_mime_type = "text/markdown"
         return self.repository.create_job(
             CreateJobCommand(
                 id=job_id,
@@ -217,6 +233,10 @@ class JobWorkerTest(unittest.TestCase):
                 generation_mode="study",
                 max_attempts=max_attempts,
                 outline_relative_path=outline_relative_path,
+                outline_original_filename=outline_original_filename,
+                outline_sha256=outline_sha256,
+                outline_byte_size=outline_byte_size,
+                outline_mime_type=outline_mime_type,
                 sources=(
                     JobSourceInput(
                         source_id="S001",
@@ -549,6 +569,70 @@ class JobWorkerTest(unittest.TestCase):
             <= artifact_kinds
         )
 
+    def test_worker_rejects_manifest_that_does_not_match_persisted_sources(self):
+        self.create_job()
+        base_runner = self.v2_output_runner([], "single_courseware")
+
+        def tampered_runner(**kwargs):
+            outputs = base_runner(**kwargs)
+            manifest_path = (
+                kwargs["output_dir"] / "result-courseware-manifest.json"
+            )
+            payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+            payload["sources"][0]["sha256"] = "0" * 64
+            manifest_path.write_text(
+                json.dumps(payload),
+                encoding="utf-8",
+            )
+            return outputs
+
+        worker = JobWorker(
+            self.repository,
+            self.settings,
+            worker_id="worker-tampered-manifest",
+            single_runner=tampered_runner,
+        )
+
+        self.assertTrue(worker.run_once())
+
+        job = self.repository.get("job-1")
+        self.assertEqual(job.state, JobState.FAILED)
+        self.assertEqual(job.error_code, "invalid_job_output")
+        self.assertEqual(self.repository.list_artifacts("job-1"), [])
+        self.assertEqual(self.repository.list_sections("job-1"), [])
+
+    def test_worker_rejects_runner_mutation_of_outline_sections(self):
+        self.create_job(service_mode="course_outline")
+        base_runner = self.v2_output_runner([], "course_outline")
+
+        def tampered_runner(**kwargs):
+            outputs = base_runner(**kwargs)
+            manifest_path = (
+                kwargs["output_dir"] / "result-courseware-manifest.json"
+            )
+            payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+            payload["outline"]["sections"][0]["title"] = "Tampered"
+            manifest_path.write_text(
+                json.dumps(payload),
+                encoding="utf-8",
+            )
+            return outputs
+
+        worker = JobWorker(
+            self.repository,
+            self.settings,
+            worker_id="worker-tampered-outline",
+            outline_runner=tampered_runner,
+        )
+
+        self.assertTrue(worker.run_once())
+
+        job = self.repository.get("job-1")
+        self.assertEqual(job.state, JobState.FAILED)
+        self.assertEqual(job.error_code, "invalid_job_output")
+        self.assertEqual(self.repository.list_artifacts("job-1"), [])
+        self.assertEqual(self.repository.list_sections("job-1"), [])
+
     def test_mineru_provider_errors_have_permanent_and_retryable_job_semantics(self):
         self.create_job(job_id="permanent", max_attempts=2)
         permanent = JobWorker(
@@ -581,6 +665,56 @@ class JobWorkerTest(unittest.TestCase):
         self.assertEqual(retryable_job.state, JobState.QUEUED)
         self.assertEqual(retryable_job.attempt_count, 1)
 
+    def test_worker_closes_only_owned_document_services_on_all_outcomes(self):
+        cases = (
+            ("success", FakeDocumentService()),
+            (
+                "retryable",
+                FailingDocumentService(
+                    MinerURetryableProviderError("unavailable")
+                ),
+            ),
+            (
+                "permanent",
+                FailingDocumentService(
+                    MinerUPermanentProviderError("rejected")
+                ),
+            ),
+        )
+        for name, service in cases:
+            with self.subTest(name=name):
+                job_id = f"owned-{name}"
+                self.create_job(job_id=job_id)
+                worker = JobWorker(
+                    self.repository,
+                    self.settings,
+                    worker_id=f"worker-{name}",
+                    single_runner=self.v2_output_runner(
+                        [],
+                        "single_courseware",
+                    ),
+                )
+                with mock.patch.object(
+                    JobWorker,
+                    "_create_document_service",
+                    return_value=service,
+                ):
+                    self.assertTrue(worker.run_once())
+                self.assertEqual(service.close_count, 1)
+
+        self.create_job(job_id="injected")
+        injected = FailingDocumentService(
+            MinerUPermanentProviderError("rejected")
+        )
+        worker = JobWorker(
+            self.repository,
+            self.settings,
+            worker_id="worker-injected",
+            document_service=injected,
+        )
+        self.assertTrue(worker.run_once())
+        self.assertEqual(injected.close_count, 0)
+
     def test_course_outline_selects_outline_runner_and_preserves_sources(self):
         self.create_job(service_mode="course_outline")
         calls = []
@@ -598,6 +732,10 @@ class JobWorkerTest(unittest.TestCase):
         self.assertEqual(
             kwargs["outline_path"],
             self.jobs_root / "job-1/inputs/outline.md",
+        )
+        self.assertEqual(
+            kwargs["courseware_manifest"].outline.original_filename,
+            "课程大纲.md",
         )
         self.assertEqual(
             kwargs["pdf_paths"],
@@ -628,6 +766,25 @@ class JobWorkerTest(unittest.TestCase):
                 ("section-002", 2, "weak_evidence", {"evidence_count": 0}),
             ],
         )
+
+    def test_worker_rejects_changed_outline_before_mineru_io_without_retry(self):
+        self.create_job(service_mode="course_outline", max_attempts=2)
+        outline = self.jobs_root / "job-1/inputs/outline.md"
+        outline.write_text("# Tampered", encoding="utf-8")
+        worker = JobWorker(
+            self.repository,
+            self.settings,
+            worker_id="worker-outline-identity",
+        )
+
+        self.assertTrue(worker.run_once())
+
+        job = self.repository.get("job-1")
+        self.assertEqual(job.state, JobState.FAILED)
+        self.assertEqual(job.attempt_count, 1)
+        self.assertEqual(job.error_code, "outline_identity_mismatch")
+        self.assertEqual(self.default_document_service.calls, [])
+        self.assertEqual(self.repository.list_artifacts("job-1"), [])
 
     def test_embedding_cache_is_isolated_to_the_claimed_job_attempt(self):
         self.create_job(job_id="job-1")

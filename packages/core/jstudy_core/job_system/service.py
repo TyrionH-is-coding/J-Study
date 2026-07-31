@@ -178,6 +178,32 @@ class JobService:
                 outline_relative_path=(
                     outline.relative_path if outline is not None else None
                 ),
+                outline_original_filename=(
+                    self._safe_original_filename(
+                        request.outline.filename,
+                        f"outline{Path(outline.relative_path).suffix}",
+                    )
+                    if outline is not None and request.outline is not None
+                    else None
+                ),
+                outline_sha256=(
+                    outline.sha256 if outline is not None else None
+                ),
+                outline_byte_size=(
+                    outline.byte_size if outline is not None else None
+                ),
+                outline_mime_type=(
+                    (
+                        request.outline.content_type or ""
+                    ).split(";", 1)[0].strip().lower()
+                    or {
+                        ".md": "text/markdown",
+                        ".txt": "text/plain",
+                        ".pdf": "application/pdf",
+                    }.get(Path(outline.relative_path).suffix, "")
+                    if outline is not None and request.outline is not None
+                    else None
+                ),
                 sources=tuple(
                     self._source_input(
                         index,
@@ -458,7 +484,11 @@ class JobService:
     ) -> str:
         value = (filename or "").replace("\\", "/").rsplit("/", 1)[-1]
         value = value.replace("\x00", "").strip()
-        return value or fallback
+        value = value or fallback
+        if len(value) <= 255:
+            return value
+        suffix = Path(value).suffix
+        return f"{value[:255 - len(suffix)]}{suffix}"
 
     def _cleanup_new_job_directory(self, job_id: str) -> None:
         try:

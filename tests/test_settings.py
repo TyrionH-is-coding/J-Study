@@ -420,6 +420,7 @@ class SettingsTest(unittest.TestCase):
             payload = service.load_all()
             payload["model_catalog"]["services"]["llm"]["profiles"][0]["api_key"] = "catalog-key"
             payload["model_catalog"]["services"]["llm"]["profiles"][0]["api_key_path"] = ""
+            payload["runtime"]["parser"]["mineru"]["api_token"] = "mineru-key"
             service.save_all(payload)
 
             with patch.dict(os.environ, {}, clear=True):
@@ -441,6 +442,7 @@ class SettingsTest(unittest.TestCase):
                 api_key_path=root / "missing-api-key.txt",
                 chat_model="chat-model",
                 embed_model="embed-model",
+                mineru_api_token="mineru-key",
             )
 
             with patch.dict(os.environ, {}, clear=True):
@@ -468,9 +470,16 @@ class SettingsTest(unittest.TestCase):
                 api_key_path=root / "missing-api-key.txt",
                 chat_model="chat-model",
                 embed_model="embed-model",
+                mineru_api_token="mineru-key",
             )
 
-            with patch.dict(os.environ, {"SILICONFLOW_API_KEY": "key"}, clear=True):
+            with patch.dict(
+                os.environ,
+                {
+                    "SILICONFLOW_API_KEY": "key",
+                },
+                clear=True,
+            ):
                 readiness = settings.readiness()
 
         self.assertEqual(readiness["status"], "ready")
@@ -503,6 +512,7 @@ class SettingsTest(unittest.TestCase):
                 api_key_path=api_key,
                 chat_model="chat-model",
                 embed_model="embed-model",
+                mineru_api_token="mineru-key",
             )
 
             readiness = settings.readiness(probe_provider=True, provider_probe=probe)
@@ -545,7 +555,7 @@ class SettingsTest(unittest.TestCase):
         self.assertEqual(settings.mineru_config.deadline_seconds, 600)
         self.assertEqual(settings.mineru_config.max_result_bytes, 1048576)
 
-    def test_readiness_reports_mineru_configuration_without_blocking_legacy_runner(self):
+    def test_readiness_requires_mineru_for_the_product_parser_path(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             soul = root / "soul.md"
@@ -565,7 +575,16 @@ class SettingsTest(unittest.TestCase):
 
             readiness = settings.readiness()
 
-        self.assertEqual(readiness["status"], "ready")
+        self.assertEqual(readiness["status"], "degraded")
         self.assertFalse(readiness["mineru_configured"])
+        checks = {check["name"]: check for check in readiness["checks"]}
+        self.assertEqual(
+            checks["mineru"],
+            {
+                "name": "mineru",
+                "status": "error",
+                "detail": "MinerU is not configured",
+            },
+        )
 if __name__ == "__main__":
     unittest.main()

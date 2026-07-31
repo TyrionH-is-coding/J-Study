@@ -23,7 +23,12 @@ from packages.core.jstudy_core.documents import (  # noqa: E402
     ParsedDocument,
     ParsedPage,
 )
-from packages.core.jstudy_core.job_system import JobRepository, JobService, JobState  # noqa: E402
+from packages.core.jstudy_core.job_system import (  # noqa: E402
+    ArtifactKind,
+    JobRepository,
+    JobService,
+    JobState,
+)
 from packages.core.jstudy_core.job_system.worker import JobWorker  # noqa: E402
 from packages.core.jstudy_core.settings import RuntimeSettings  # noqa: E402
 
@@ -178,6 +183,7 @@ class WebMvpTest(unittest.TestCase):
             max_pdf_bytes=max_pdf_bytes,
             job_retention_hours=job_retention_hours,
             invite_required=invite_required,
+            mineru_api_token="test-mineru-token",
         )
 
     def register_user(
@@ -625,6 +631,7 @@ class WebMvpTest(unittest.TestCase):
             service = AdminSettingsService(root / "data" / "settings")
             payload = service.load_all()
             payload["model_catalog"]["services"]["llm"]["profiles"][0]["api_key"] = "sk-secret"
+            payload["runtime"]["parser"]["mineru"]["api_token"] = "mineru-key"
             service.save_all(payload)
             settings = RuntimeSettings.from_env(root)
             client = TestClient(create_app(settings=settings))
@@ -809,6 +816,98 @@ class WebMvpTest(unittest.TestCase):
         self.assertNotIn("db.internal", serialized)
         self.assertNotIn(r"D:\private\jobs", serialized)
 
+    def test_missing_mineru_degrades_readiness_and_blocks_admission_without_job(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            settings = replace(self.ready_settings(root), mineru_api_token="")
+            client = TestClient(create_app(settings=settings))
+            self.register_user(client)
+
+            readiness = client.get("/api/readiness")
+            generated = client.post(
+                "/api/generate",
+                files={
+                    "pdf": (
+                        "lecture.pdf",
+                        self.make_pdf_bytes(),
+                        "application/pdf",
+                    )
+                },
+            )
+
+            repository = client.app.state.job_repository
+            self.assertEqual(repository.count_queued(), 0)
+            self.assertFalse(
+                any(
+                    path.is_dir() and path.name != "settings"
+                    for path in settings.jobs_root.iterdir()
+                )
+            )
+
+        self.assertEqual(readiness.status_code, 200)
+        self.assertEqual(readiness.json()["status"], "degraded")
+        checks = {
+            item["name"]: item
+            for item in readiness.json()["checks"]
+        }
+        self.assertEqual(
+            checks["mineru"],
+            {
+                "name": "mineru",
+                "status": "error",
+                "detail": "unavailable",
+            },
+        )
+        self.assertEqual(generated.status_code, 503)
+        self.assertNotIn("token", json.dumps(generated.json()).lower())
+
+    def test_generate_uses_hot_reloaded_mineru_readiness_without_restart(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            initial = replace(self.ready_settings(root), mineru_api_token="")
+            current = [initial]
+            repository, service = self.durable_dependencies(initial)
+            client = TestClient(
+                create_app(
+                    settings=initial,
+                    job_repository=repository,
+                    job_service=service,
+                    settings_provider=lambda: current[0],
+                )
+            )
+            self.register_user(client)
+
+            rejected = client.post(
+                "/api/generate",
+                files={
+                    "pdf": (
+                        "lecture.pdf",
+                        self.make_pdf_bytes(),
+                        "application/pdf",
+                    )
+                },
+            )
+            current[0] = replace(
+                initial,
+                mineru_api_token="updated-mineru-token",
+            )
+            accepted = client.post(
+                "/api/generate",
+                files={
+                    "pdf": (
+                        "lecture.pdf",
+                        self.make_pdf_bytes(),
+                        "application/pdf",
+                    )
+                },
+            )
+            queued_count = repository.count_queued()
+
+        self.assertEqual(rejected.status_code, 503)
+        self.assertEqual(accepted.status_code, 200)
+        self.assertEqual(accepted.json()["status"], "queued")
+        self.assertEqual(queued_count, 1)
+
     def test_generate_rejects_unready_runtime_config(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -988,7 +1087,10 @@ class WebMvpTest(unittest.TestCase):
             response = client.post(
                 "/api/generate",
                 files=[
-                    ("outline", ("outline.md", b"# Unit One\n", "text/markdown")),
+                    (
+                        "outline",
+                        ("课程大纲.md", b"# Unit One\n", "text/markdown"),
+                    ),
                     ("pdfs", ("lecture-01.pdf", self.make_pdf_bytes(), "application/pdf")),
                     ("pdfs", ("lecture-02.pdf", self.make_pdf_bytes(), "application/pdf")),
                 ],
@@ -1005,6 +1107,27 @@ class WebMvpTest(unittest.TestCase):
             second_page = client.get(f"/api/jobs/{job_id}/pdfs/S002/pdf-page/1.png")
             record = client.app.state.job_repository.get(job_id)
             sections = client.app.state.job_repository.list_sections(job_id)
+            manifest_artifact = next(
+                artifact
+                for artifact in client.app.state.job_repository.list_artifacts(
+                    job_id
+                )
+                if artifact.kind is ArtifactKind.MANIFEST
+            )
+            manifest_path = (
+                settings.jobs_root / manifest_artifact.relative_path
+            )
+            tampered = json.loads(manifest_path.read_text(encoding="utf-8"))
+            tampered["outline"]["sections"][0]["title"] = "tampered-title"
+            manifest_path.write_text(
+                json.dumps(tampered),
+                encoding="utf-8",
+            )
+            tampered_responses = [
+                client.get(f"/api/jobs/{job_id}/manifest"),
+                client.get(f"/api/jobs/{job_id}/learning-map"),
+                client.get(f"/api/jobs/{job_id}/coverage"),
+            ]
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(record.service_mode, "course_outline")
@@ -1040,6 +1163,10 @@ class WebMvpTest(unittest.TestCase):
             manifest_response.json()["schema_version"],
             "courseware-manifest.v1",
         )
+        self.assertEqual(
+            manifest_response.json()["outline"]["original_filename"],
+            "课程大纲.md",
+        )
         self.assertEqual(learning_map_response.status_code, 200)
         self.assertEqual(
             learning_map_response.json()["schema_version"],
@@ -1049,6 +1176,10 @@ class WebMvpTest(unittest.TestCase):
         self.assertEqual(
             coverage_response.json()["schema_version"],
             "coverage-ledger.v1",
+        )
+        self.assertEqual(
+            [item.status_code for item in tampered_responses],
+            [500, 500, 500],
         )
         self.assertEqual(
             {
@@ -1617,6 +1748,7 @@ class WebMvpTest(unittest.TestCase):
             payload["model_catalog"]["services"]["embedding"]["profiles"][0]["models"][0]["model"] = "catalog-embed"
             payload["runtime"]["rag"]["chunk_max_chars"] = 888
             payload["runtime"]["rag"]["per_query_limit"] = 4
+            payload["runtime"]["parser"]["mineru"]["api_token"] = "mineru-key"
             service.save_all(payload)
             settings = RuntimeSettings.from_env(root)
             client = TestClient(create_app(settings=settings))
@@ -1669,7 +1801,9 @@ class WebMvpTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             service = AdminSettingsService(root / "data" / "settings")
-            service.load_all()
+            payload = service.load_all()
+            payload["runtime"]["parser"]["mineru"]["api_token"] = "mineru-key"
+            service.save_all(payload)
             settings = RuntimeSettings.from_env(root, jobs_root=root / "jobs")
             settings.soul_path.write_text("soul", encoding="utf-8")
             settings.mnemonics_path.write_text("mnemonics", encoding="utf-8")
@@ -1727,6 +1861,7 @@ class WebMvpTest(unittest.TestCase):
                 item for item in payload["content_pack"]["soul_profiles"] if item["id"] == "general-blank"
             )
             profile["soul_path"] = "souls/general.md"
+            payload["runtime"]["parser"]["mineru"]["api_token"] = "mineru-key"
             service.save_all(payload)
             settings = RuntimeSettings.from_env(root, jobs_root=root / "jobs")
             settings.soul_path.write_text("medicine soul", encoding="utf-8")
@@ -1757,6 +1892,7 @@ class WebMvpTest(unittest.TestCase):
             payload = service.load_all()
             quality = next(item for item in payload["runtime"]["parser_profiles"]["profiles"] if item["id"] == "quality")
             quality["enabled"] = True
+            payload["runtime"]["parser"]["mineru"]["api_token"] = "mineru-key"
             service.save_all(payload)
             settings = RuntimeSettings.from_env(root, jobs_root=root / "jobs")
             settings.soul_path.write_text("soul", encoding="utf-8")

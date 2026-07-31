@@ -5,6 +5,7 @@ from packages.core.jstudy_core.courseware.planning import (
     build_courseware_manifest,
     plan_learning_map,
     validate_courseware_coordination,
+    validate_manifest_snapshot,
 )
 from packages.core.jstudy_core.documents import (
     ParsedBlock,
@@ -92,6 +93,96 @@ class CoursewarePlanningTest(unittest.TestCase):
         self.assertIsNone(
             manifest.ordered_sources()[1].primary_outline_section_id
         )
+
+    def test_manifest_snapshot_rejects_every_persisted_identity_mismatch(self):
+        sources = self.sources()
+        manifest = build_courseware_manifest(
+            job_id="job-1",
+            service_mode="course_outline",
+            sources=sources,
+            outline_filename="outline.md",
+            outline_sha256="c" * 64,
+            outline_text="# First",
+        )
+        job = SimpleNamespace(
+            id="job-1",
+            service_mode="course_outline",
+            outline_original_filename="outline.md",
+            outline_sha256="c" * 64,
+        )
+        validate_manifest_snapshot(manifest, job=job, sources=sources)
+        changed_outline = manifest.model_copy(deep=True)
+        changed_outline.outline.sections[0].title = "Tampered"
+        with self.assertRaisesRegex(ValueError, "manifest snapshot"):
+            validate_manifest_snapshot(
+                changed_outline,
+                job=job,
+                sources=sources,
+                expected_manifest=manifest,
+            )
+
+        mutations = {
+            "job_id": lambda value: setattr(value, "job_id", "other-job"),
+            "service_mode": lambda value: setattr(
+                value,
+                "service_mode",
+                "single_courseware",
+            ),
+            "source_id": lambda value: setattr(
+                value.sources[0],
+                "source_id",
+                "S999",
+            ),
+            "original_filename": lambda value: setattr(
+                value.sources[0],
+                "original_filename",
+                "tampered.pdf",
+            ),
+            "sha256": lambda value: setattr(
+                value.sources[0],
+                "sha256",
+                "0" * 64,
+            ),
+            "display_title": lambda value: setattr(
+                value.sources[0],
+                "display_title",
+                "tampered-title",
+            ),
+            "display_order": lambda value: setattr(
+                value.sources[0],
+                "display_order",
+                99,
+            ),
+            "outline_mapping": lambda value: setattr(
+                value.sources[0],
+                "primary_outline_section_id",
+                None,
+            ),
+            "title_origin": lambda value: setattr(
+                value.sources[0],
+                "title_origin",
+                "user",
+            ),
+            "order_origin": lambda value: setattr(
+                value.sources[0],
+                "order_origin",
+                "user",
+            ),
+        }
+        for name, mutate in mutations.items():
+            with self.subTest(name=name):
+                invalid = manifest.model_copy(deep=True)
+                mutate(invalid)
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "manifest snapshot",
+                ):
+                    validate_manifest_snapshot(
+                        invalid,
+                        job=job,
+                        sources=sources,
+                        expected_manifest=manifest,
+                    )
 
     def test_planner_is_continuous_ordered_and_covers_every_block_once(self):
         manifest = build_courseware_manifest(

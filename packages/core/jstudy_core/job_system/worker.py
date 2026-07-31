@@ -27,8 +27,10 @@ from packages.core.jstudy_core.job_system.repository import (
 from packages.core.jstudy_core.job_system.states import JobState
 from packages.core.jstudy_core.pipeline import run_course_outline, run_mvp
 from packages.core.jstudy_core.courseware import (
+    CoursewareManifestV1,
     build_courseware_manifest,
     plan_learning_map,
+    validate_manifest_snapshot,
 )
 from packages.core.jstudy_core.documents import (
     DocumentServiceError,
@@ -215,7 +217,7 @@ class JobWorker:
         )
         heartbeat.start()
         try:
-            runner, kwargs, sequence_outputs = self._runner_call(
+            runner, kwargs, sequence_outputs, expected_manifest = self._runner_call(
                 job,
                 heartbeat,
             )
@@ -224,6 +226,11 @@ class JobWorker:
                 **sequence_outputs,
             }
             self._require_current_lease(heartbeat)
+            self._validate_manifest_output(
+                job,
+                outputs,
+                expected_manifest=expected_manifest,
+            )
             artifacts = self._build_artifacts(job, outputs)
             artifact_kinds = {artifact.kind for artifact in artifacts}
             if not REQUIRED_PUBLIC_ARTIFACT_KINDS.issubset(artifact_kinds):
@@ -305,7 +312,12 @@ class JobWorker:
         self,
         job: JobSnapshot,
         heartbeat: _LeaseHeartbeat,
-    ) -> tuple[Runner, dict[str, Any], dict[str, Path]]:
+    ) -> tuple[
+        Runner,
+        dict[str, Any],
+        dict[str, Path],
+        CoursewareManifestV1,
+    ]:
         sources = self.repository.list_sources(job.id)
         if not sources:
             raise PermanentJobError(
@@ -353,6 +365,8 @@ class JobWorker:
                 "The job service mode is unsupported.",
             )
 
+        if outline_path is not None:
+            self._verify_outline_snapshot(job, outline_path)
         soul_path, mnemonics_path, scenario_metadata = self._content_routing(job)
 
         def progress_callback(state: JobState) -> None:
@@ -386,10 +400,8 @@ class JobWorker:
         outline_filename = None
         parse_sources = list(document_sources)
         if outline_path is not None:
-            outline_filename = outline_path.name
-            outline_sha256 = hashlib.sha256(
-                outline_path.read_bytes()
-            ).hexdigest()
+            outline_filename = job.outline_original_filename
+            outline_sha256 = job.outline_sha256
             if outline_path.suffix.lower() == ".pdf":
                 parse_sources.append(
                     DocumentSource(
@@ -404,6 +416,7 @@ class JobWorker:
                     max_bytes=self.settings.max_outline_bytes,
                 )
 
+        owns_service = self.document_service is None
         service = self.document_service or self._create_document_service()
         try:
             parsed = service.parse(
@@ -438,6 +451,9 @@ class JobWorker:
                 getattr(exc, "code", "invalid_mineru_output"),
                 "MinerU output is invalid.",
             ) from exc
+        finally:
+            if owns_service:
+                service.close()
 
         parsed_by_id = {item.source_id: item for item in parsed}
         if "__outline__" in parsed_by_id:
@@ -521,7 +537,82 @@ class JobWorker:
             "learning_map": learning_map,
             "coverage_ledger": coverage_ledger,
         }
-        return runner, kwargs, sequence_outputs
+        return (
+            runner,
+            kwargs,
+            sequence_outputs,
+            manifest.model_copy(deep=True),
+        )
+
+    def _verify_outline_snapshot(
+        self,
+        job: JobSnapshot,
+        outline_path: Path,
+    ) -> None:
+        if (
+            not job.outline_original_filename
+            or not job.outline_sha256
+            or job.outline_byte_size is None
+            or not job.outline_mime_type
+        ):
+            raise PermanentJobError(
+                "outline_identity_mismatch",
+                "The course outline identity is invalid.",
+            )
+        try:
+            if (
+                not outline_path.is_file()
+                or outline_path.stat().st_size != job.outline_byte_size
+                or job.outline_byte_size > self.settings.max_outline_bytes
+            ):
+                raise ValueError("outline size mismatch")
+            digest = hashlib.sha256()
+            total = 0
+            with outline_path.open("rb") as handle:
+                while True:
+                    chunk = handle.read(64 * 1024)
+                    if not chunk:
+                        break
+                    total += len(chunk)
+                    if total > self.settings.max_outline_bytes:
+                        raise ValueError("outline exceeds read limit")
+                    digest.update(chunk)
+            if digest.hexdigest() != job.outline_sha256:
+                raise ValueError("outline hash mismatch")
+        except (OSError, ValueError) as exc:
+            raise PermanentJobError(
+                "outline_identity_mismatch",
+                "The course outline no longer matches its admission identity.",
+            ) from exc
+
+    def _validate_manifest_output(
+        self,
+        job: JobSnapshot,
+        outputs: Mapping[str, Path],
+        *,
+        expected_manifest: CoursewareManifestV1,
+    ) -> None:
+        manifest_path = outputs.get("manifest")
+        if manifest_path is None:
+            raise PermanentJobError(
+                "invalid_job_output",
+                "The courseware manifest is missing.",
+            )
+        try:
+            manifest = CoursewareManifestV1.model_validate_json(
+                Path(manifest_path).read_bytes()
+            )
+            validate_manifest_snapshot(
+                manifest,
+                job=job,
+                sources=self.repository.list_sources(job.id),
+                expected_manifest=expected_manifest,
+            )
+        except (OSError, UnicodeError, ValueError) as exc:
+            raise PermanentJobError(
+                "invalid_job_output",
+                "The courseware manifest is invalid.",
+            ) from exc
 
     def _create_document_service(self) -> MinerUDocumentService:
         if not self.settings.mineru_api_token.strip():

@@ -229,8 +229,9 @@ class MinerUClientTest(unittest.TestCase):
             client, http_client = self.client(handler)
             with http_client:
                 artifacts = client.extract(self.inputs(Path(tmp), count=1))
+                zip_content = artifacts[0].zip_path.read_bytes()
 
-        self.assertEqual(artifacts[0].zip_bytes, b"zip")
+        self.assertEqual(zip_content, b"zip")
         self.assertEqual(poll_statuses, [])
 
     def test_authentication_failure_is_not_retried(self):
@@ -290,6 +291,71 @@ class MinerUClientTest(unittest.TestCase):
             client, http_client = self.client(handler, max_result_bytes=4)
             with http_client, self.assertRaises(MinerUProtocolError):
                 client.extract(self.inputs(Path(tmp), count=1))
+
+    def test_streams_results_to_private_files_and_enforces_batch_limit(self):
+        download_calls = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.method == "POST":
+                return httpx.Response(
+                    200,
+                    json={
+                        "code": 0,
+                        "trace_id": "trace",
+                        "data": {
+                            "batch_id": "batch",
+                            "file_urls": [
+                                "https://uploads.example/one",
+                                "https://uploads.example/two",
+                            ],
+                        },
+                    },
+                )
+            if request.method == "PUT":
+                return httpx.Response(200)
+            if request.url.host == "mineru.net":
+                return httpx.Response(
+                    200,
+                    json={
+                        "code": 0,
+                        "trace_id": "poll",
+                        "data": {
+                            "batch_id": "batch",
+                            "extract_result": [
+                                {
+                                    "data_id": source_id,
+                                    "file_name": f"{source_id}.pdf",
+                                    "state": "done",
+                                    "full_zip_url": (
+                                        f"https://downloads.example/{source_id}.zip"
+                                    ),
+                                }
+                                for source_id in ("S001", "S002")
+                            ],
+                        },
+                    },
+                )
+            download_calls.append(request.url.path)
+            return httpx.Response(200, content=b"1234")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            client, http_client = self.client(
+                handler,
+                max_result_bytes=8,
+                max_batch_result_bytes=6,
+            )
+            with http_client, self.assertRaises(MinerUProtocolError):
+                list(
+                    client.extract(
+                        self.inputs(root),
+                        download_root=root / "private-downloads",
+                    )
+                )
+            downloaded = list((root / "private-downloads").glob("*.zip"))
+
+        self.assertEqual(download_calls, ["/S001.zip", "/S002.zip"])
+        self.assertEqual(downloaded, [])
 
     def test_rejects_malformed_download_content_length_without_retry(self):
         def handler(request: httpx.Request) -> httpx.Response:

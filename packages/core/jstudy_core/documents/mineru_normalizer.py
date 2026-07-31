@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import shutil
 import stat
 import zipfile
 from collections import Counter
@@ -47,7 +48,8 @@ class MinerUNormalizerLimits:
 
 def normalize_mineru_zip(
     *,
-    zip_bytes: bytes,
+    zip_bytes: bytes | None = None,
+    zip_path: Path | None = None,
     source_id: str,
     source_file: str,
     source_sha256: str,
@@ -63,8 +65,11 @@ def normalize_mineru_zip(
     if artifact_dir.exists() and _is_link_or_reparse(artifact_dir):
         raise MinerUNormalizationError("artifact directory cannot be a symlink")
 
+    if (zip_bytes is None) == (zip_path is None):
+        raise MinerUNormalizationError("exactly one MinerU ZIP source is required")
+    archive_source = io.BytesIO(zip_bytes) if zip_bytes is not None else zip_path
     try:
-        archive = zipfile.ZipFile(io.BytesIO(zip_bytes))
+        archive = zipfile.ZipFile(archive_source)
     except (zipfile.BadZipFile, OSError) as exc:
         raise MinerUNormalizationError("MinerU artifact is not a valid ZIP") from exc
 
@@ -97,7 +102,13 @@ def normalize_mineru_zip(
             parser_model=parser_model,
             provider_trace_id=provider_trace_id,
         )
-        _write_private_artifacts(archive, members, zip_bytes, artifact_dir)
+        _write_private_artifacts(
+            archive,
+            members,
+            zip_bytes=zip_bytes,
+            zip_path=zip_path,
+            artifact_dir=artifact_dir,
+        )
         return document
 
 
@@ -384,7 +395,9 @@ def _normalize_bbox(value: Any) -> tuple[float, float, float, float] | None:
 def _write_private_artifacts(
     archive: zipfile.ZipFile,
     members: list[zipfile.ZipInfo],
-    zip_bytes: bytes,
+    *,
+    zip_bytes: bytes | None,
+    zip_path: Path | None,
     artifact_dir: Path,
 ) -> None:
     artifact_dir.mkdir(parents=True, exist_ok=True)
@@ -404,11 +417,17 @@ def _write_private_artifacts(
             continue
         _safe_write_bytes(extraction_root, target, archive.read(info))
 
-    _safe_write_bytes(
-        artifact_dir,
-        artifact_dir / "mineru-original.zip",
-        zip_bytes,
-    )
+    original_zip = artifact_dir / "mineru-original.zip"
+    if zip_path is not None:
+        _assert_safe_target(artifact_dir, original_zip)
+        with zip_path.open("rb") as source, original_zip.open("xb") as target:
+            shutil.copyfileobj(source, target, length=64 * 1024)
+    else:
+        _safe_write_bytes(
+            artifact_dir,
+            original_zip,
+            zip_bytes or b"",
+        )
     full_markdown = [
         info
         for info in members

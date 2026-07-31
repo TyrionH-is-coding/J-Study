@@ -97,6 +97,10 @@ class CreateJobCommand:
     idempotency_key: str | None = None
     request_fingerprint: str | None = None
     outline_relative_path: str | None = None
+    outline_original_filename: str | None = None
+    outline_sha256: str | None = None
+    outline_byte_size: int | None = None
+    outline_mime_type: str | None = None
     created_at: datetime | None = None
     sources: tuple[JobSourceInput, ...] = field(default_factory=tuple)
     sections: tuple[SectionInput, ...] = field(default_factory=tuple)
@@ -138,6 +142,10 @@ class JobSnapshot:
     idempotency_key: str | None
     request_fingerprint: str | None
     outline_relative_path: str | None
+    outline_original_filename: str | None
+    outline_sha256: str | None
+    outline_byte_size: int | None
+    outline_mime_type: str | None
     error_code: str | None
     error_message: str | None
     created_at: datetime
@@ -248,6 +256,10 @@ def _job_snapshot(job: Job) -> JobSnapshot:
         idempotency_key=job.idempotency_key,
         request_fingerprint=job.request_fingerprint,
         outline_relative_path=job.outline_relative_path,
+        outline_original_filename=job.outline_original_filename,
+        outline_sha256=job.outline_sha256,
+        outline_byte_size=job.outline_byte_size,
+        outline_mime_type=job.outline_mime_type,
         error_code=job.error_code,
         error_message=job.error_message,
         created_at=job.created_at,
@@ -384,6 +396,10 @@ class JobRepository:
             idempotency_key=command.idempotency_key,
             request_fingerprint=command.request_fingerprint,
             outline_relative_path=command.outline_relative_path,
+            outline_original_filename=command.outline_original_filename,
+            outline_sha256=command.outline_sha256,
+            outline_byte_size=command.outline_byte_size,
+            outline_mime_type=command.outline_mime_type,
             created_at=created_at,
             updated_at=created_at,
         )

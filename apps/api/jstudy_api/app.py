@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+import hashlib
 import json
 import os
 from pathlib import Path, PurePosixPath, PureWindowsPath
@@ -42,6 +43,7 @@ from packages.core.jstudy_core.courseware import (
     CoverageLedgerV1,
     LearningMapV1,
     validate_courseware_coordination,
+    validate_manifest_snapshot,
 )
 from packages.core.jstudy_core.scenario_router import ScenarioRoutingError, resolve_scenario
 from packages.core.jstudy_core.materials.models import (
@@ -389,11 +391,17 @@ def create_app(
         model: type[BaseModel],
         *,
         expected_manifest_id: str,
+        expected_sha256: str | None = None,
     ) -> BaseModel:
         with path.open("rb") as handle:
             payload = handle.read(SYNC_ARTIFACT_MAX_BYTES + 1)
         if len(payload) > SYNC_ARTIFACT_MAX_BYTES:
             raise ValueError("synchronization artifact is too large")
+        if (
+            expected_sha256 is not None
+            and hashlib.sha256(payload).hexdigest() != expected_sha256
+        ):
+            raise ValueError("synchronization artifact hash mismatch")
         parsed = model.model_validate_json(payload)
         manifest_id = getattr(parsed, "manifest_id", None)
         if manifest_id != expected_manifest_id:
@@ -401,6 +409,16 @@ def create_app(
         if isinstance(parsed, CoursewareManifestV1) and parsed.job_id != expected_manifest_id:
             raise ValueError("courseware manifest job identity mismatch")
         return parsed
+
+    def validate_job_manifest(
+        job: JobSnapshot,
+        manifest: CoursewareManifestV1,
+    ) -> None:
+        validate_manifest_snapshot(
+            manifest,
+            job=job,
+            sources=repository.list_sources(job.id),
+        )
 
     def quality_payload(job: JobSnapshot) -> dict[str, Any]:
         artifact = artifact_map(job).get(ArtifactKind.QUALITY)
@@ -844,11 +862,16 @@ def create_app(
             "Courseware manifest is not ready",
         )
         try:
-            return read_sync_artifact(
+            manifest = read_sync_artifact(
                 path,
                 CoursewareManifestV1,
                 expected_manifest_id=job.id,
+                expected_sha256=artifact_map(job)[
+                    ArtifactKind.MANIFEST
+                ].sha256,
             )
+            validate_job_manifest(job, manifest)
+            return manifest
         except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
             raise HTTPException(
                 status_code=500,
@@ -885,7 +908,11 @@ def create_app(
                 ),
                 CoursewareManifestV1,
                 expected_manifest_id=job.id,
+                expected_sha256=artifact_map(job)[
+                    ArtifactKind.MANIFEST
+                ].sha256,
             )
+            validate_job_manifest(job, manifest)
             coverage = read_sync_artifact(
                 ready_output_path(
                     job,
@@ -941,7 +968,11 @@ def create_app(
                 ),
                 CoursewareManifestV1,
                 expected_manifest_id=job.id,
+                expected_sha256=artifact_map(job)[
+                    ArtifactKind.MANIFEST
+                ].sha256,
             )
+            validate_job_manifest(job, manifest)
             learning_map = read_sync_artifact(
                 ready_output_path(
                     job,

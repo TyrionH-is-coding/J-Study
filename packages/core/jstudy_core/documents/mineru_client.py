@@ -71,7 +71,7 @@ class MinerUSourceState:
 class MinerUArtifact:
     source_id: str
     provider_file_name: str
-    zip_bytes: bytes
+    zip_path: Path
     provider_trace_id: str
 
 
@@ -86,6 +86,7 @@ class MinerUClientConfig:
     poll_interval_seconds: float = 2.0
     deadline_seconds: float = 900.0
     max_result_bytes: int = 268435456
+    max_batch_result_bytes: int = 536870912
     allowed_download_hosts: tuple[str, ...] = (
         "cdn-mineru.openxlab.org.cn",
         "mineru.oss-cn-shanghai.aliyuncs.com",
@@ -101,7 +102,11 @@ class MinerUClientConfig:
             raise MinerUProtocolError("MinerU API base URL must use a mineru.net host")
         if self.deadline_seconds <= 0 or self.poll_interval_seconds < 0:
             raise MinerUProtocolError("MinerU polling settings are invalid")
-        if self.max_result_bytes <= 0 or self.max_poll_retries < 0:
+        if (
+            self.max_result_bytes <= 0
+            or self.max_batch_result_bytes <= 0
+            or self.max_poll_retries < 0
+        ):
             raise MinerUProtocolError("MinerU transport limits are invalid")
 
 
@@ -126,13 +131,39 @@ class MinerUPrecisionClient:
         self._monotonic = monotonic
         self._api_base_url = config.api_base_url.rstrip("/")
 
-    def extract(self, files: list[MinerUInput]) -> list[MinerUArtifact]:
+    def extract(
+        self,
+        files: list[MinerUInput],
+        *,
+        download_root: Path | None = None,
+    ) -> list[MinerUArtifact]:
         self._validate_inputs(files)
+        target_root = download_root or files[0].path.parent / ".mineru-downloads"
+        target_root.mkdir(parents=True, exist_ok=True)
         submission = self._submit(files)
         for item, upload_url in zip(files, submission.upload_urls, strict=True):
             self._upload(item.path, upload_url)
         states, trace = self._poll_until_complete(submission.batch_id, files)
-        return [self._download(state, trace) for state in states]
+        artifacts = []
+        batch_bytes = 0
+        try:
+            for state in states:
+                artifact, byte_size = self._download(
+                    state,
+                    trace,
+                    target_root,
+                    batch_bytes=batch_bytes,
+                )
+                batch_bytes += byte_size
+                artifacts.append(artifact)
+        except Exception:
+            for artifact in artifacts:
+                artifact.zip_path.unlink(missing_ok=True)
+            raise
+        return artifacts
+
+    def close(self) -> None:
+        self._client.close()
 
     def _validate_inputs(self, files: list[MinerUInput]) -> None:
         if not files:
@@ -286,8 +317,14 @@ class MinerUPrecisionClient:
         self,
         state: MinerUSourceState,
         trace: MinerUProviderTrace,
-    ) -> MinerUArtifact:
+        download_root: Path,
+        *,
+        batch_bytes: int,
+    ) -> tuple[MinerUArtifact, int]:
         self._validate_download_url(state.full_zip_url)
+        destination = download_root / f"{state.source_id}.zip"
+        temporary = destination.with_suffix(".zip.part")
+        temporary.unlink(missing_ok=True)
         request = self._client.build_request("GET", state.full_zip_url, timeout=DOWNLOAD_TIMEOUT)
         request.headers.pop("authorization", None)
         try:
@@ -313,27 +350,43 @@ class MinerUPrecisionClient:
                     raise MinerUProtocolError(
                         "MinerU ZIP exceeds the configured download limit"
                     )
-            chunks: list[bytes] = []
+                if batch_bytes + declared_length > self._config.max_batch_result_bytes:
+                    raise MinerUProtocolError(
+                        "MinerU batch exceeds the configured download limit"
+                    )
             total = 0
-            for chunk in response.iter_bytes():
-                total += len(chunk)
-                if total > self._config.max_result_bytes:
-                    raise MinerUProtocolError("MinerU ZIP exceeds the configured download limit")
-                chunks.append(chunk)
+            with temporary.open("xb") as output:
+                for chunk in response.iter_bytes():
+                    total += len(chunk)
+                    if total > self._config.max_result_bytes:
+                        raise MinerUProtocolError(
+                            "MinerU ZIP exceeds the configured download limit"
+                        )
+                    if batch_bytes + total > self._config.max_batch_result_bytes:
+                        raise MinerUProtocolError(
+                            "MinerU batch exceeds the configured download limit"
+                        )
+                    output.write(chunk)
+            temporary.replace(destination)
         except MinerUError:
+            temporary.unlink(missing_ok=True)
             raise
         except (httpx.HTTPError, OSError) as exc:
+            temporary.unlink(missing_ok=True)
             raise MinerURetryableProviderError(
                 self._safe_message(f"MinerU ZIP download failed: {exc}")
             ) from exc
         finally:
             if "response" in locals():
                 response.close()
-        return MinerUArtifact(
-            source_id=state.source_id,
-            provider_file_name=state.provider_file_name,
-            zip_bytes=b"".join(chunks),
-            provider_trace_id=trace.trace_id,
+        return (
+            MinerUArtifact(
+                source_id=state.source_id,
+                provider_file_name=state.provider_file_name,
+                zip_path=destination,
+                provider_trace_id=trace.trace_id,
+            ),
+            total,
         )
 
     def _api_request(

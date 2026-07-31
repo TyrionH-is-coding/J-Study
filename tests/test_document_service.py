@@ -34,8 +34,8 @@ class FakeClient:
         self.error = error
         self.calls = []
 
-    def extract(self, inputs):
-        self.calls.append(inputs)
+    def extract(self, inputs, *, download_root):
+        self.calls.append((inputs, download_root))
         if self.error is not None:
             raise self.error
         return self.artifacts
@@ -55,10 +55,22 @@ class DocumentServiceTest(unittest.TestCase):
             ]
             client = FakeClient(
                 [
-                    MinerUArtifact("S001", "first.pdf", b"one", "trace-1"),
-                    MinerUArtifact("S002", "second.pdf", b"two", "trace-2"),
+                    MinerUArtifact(
+                        "S001",
+                        "first.pdf",
+                        root / "S001.zip",
+                        "trace-1",
+                    ),
+                    MinerUArtifact(
+                        "S002",
+                        "second.pdf",
+                        root / "S002.zip",
+                        "trace-2",
+                    ),
                 ]
             )
+            (root / "S001.zip").write_bytes(b"one")
+            (root / "S002.zip").write_bytes(b"two")
             normalizer_calls = []
 
             def normalizer(**kwargs):
@@ -96,8 +108,12 @@ class DocumentServiceTest(unittest.TestCase):
 
         self.assertEqual(len(client.calls), 1)
         self.assertEqual(
-            [item.source_id for item in client.calls[0]],
+            [item.source_id for item in client.calls[0][0]],
             ["S002", "S001"],
+        )
+        self.assertEqual(
+            client.calls[0][1].name,
+            "downloads",
         )
         self.assertEqual(
             [item.source_id for item in documents],
@@ -110,6 +126,8 @@ class DocumentServiceTest(unittest.TestCase):
             by_source["S001"]["artifact_dir"].name,
             "S001",
         )
+        self.assertIn("zip_path", by_source["S001"])
+        self.assertNotIn("zip_bytes", by_source["S001"])
 
     def test_timeout_error_remains_typed(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -126,6 +144,53 @@ class DocumentServiceTest(unittest.TestCase):
                     [DocumentSource("S001", pdf, pdf_sha256(pdf))],
                     artifact_root=root / "artifacts",
                 )
+
+    def test_normalization_failure_cleans_all_downloaded_zip_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            first = root / "first.pdf"
+            second = root / "second.pdf"
+            make_pdf(first, 1)
+            make_pdf(second, 1)
+            first_zip = root / "first.zip"
+            second_zip = root / "second.zip"
+            first_zip.write_bytes(b"first")
+            second_zip.write_bytes(b"second")
+            service = MinerUDocumentService(
+                FakeClient(
+                    [
+                        MinerUArtifact(
+                            "S001",
+                            "first.pdf",
+                            first_zip,
+                            "trace-1",
+                        ),
+                        MinerUArtifact(
+                            "S002",
+                            "second.pdf",
+                            second_zip,
+                            "trace-2",
+                        ),
+                    ]
+                ),
+                parser_version="v4",
+                parser_model="vlm",
+                normalizer=lambda **_kwargs: (_ for _ in ()).throw(
+                    ValueError("invalid archive")
+                ),
+            )
+
+            with self.assertRaisesRegex(ValueError, "invalid archive"):
+                service.parse(
+                    [
+                        DocumentSource("S001", first, pdf_sha256(first)),
+                        DocumentSource("S002", second, pdf_sha256(second)),
+                    ],
+                    artifact_root=root / "artifacts",
+                )
+
+            self.assertFalse(first_zip.exists())
+            self.assertFalse(second_zip.exists())
 
     def test_rejects_source_content_that_no_longer_matches_admission_hash(self):
         with tempfile.TemporaryDirectory() as tmp:

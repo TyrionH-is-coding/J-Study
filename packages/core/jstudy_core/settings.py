@@ -312,6 +312,7 @@ class RuntimeSettings:
             self._file_check("soul_path", self.soul_path),
             self._file_check("mnemonics_path", self.mnemonics_path),
             self._api_key_check(),
+            self._mineru_check(),
             self._max_pdf_bytes_check(),
             self._job_retention_check(),
         ]
@@ -352,6 +353,19 @@ class RuntimeSettings:
                 "detail": error or "API key is missing",
             }
         return {"name": "api_key", "status": "ok", "detail": source}
+
+    def _mineru_check(self) -> dict[str, str]:
+        if not self.mineru_api_token.strip():
+            return {
+                "name": "mineru",
+                "status": "error",
+                "detail": "MinerU is not configured",
+            }
+        return {
+            "name": "mineru",
+            "status": "ok",
+            "detail": "MinerU is configured",
+        }
 
     def _max_pdf_bytes_check(self) -> dict[str, str]:
         if self.max_pdf_bytes <= 0:

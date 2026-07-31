@@ -7,6 +7,7 @@
 - Code Agent thread：`019efec4-1e17-7443-8496-c1fea5d6bcb5`
 - Status：`completed`
 - 起始基线：`6f915dd92a0587348b9c5c234f311b241f0f6f8f`
+- Corrective baseline：`633d15db1f0a30e3a797e3215b1e32ebd062e923`
 - 最终 SHA：本报告所在提交不能在提交自身中自指，以 Supervisor 回报中的完整 SHA 为准。
 - 基线核对：分支为 `feature/backend-frontend-mvp`；开始时仅有 Supervisor-owned `supervisor_review.md` 修改及任务卡列明的六个 untracked 排除目录，实施期间未修改、stage 或清理这些内容。
 - 阶段提交：
@@ -37,6 +38,37 @@
   - `GET /api/jobs/{job_id}/coverage`
 - source payload 公开 `source_id`、`original_filename`、`display_title`、`display_order`；不公开 MinerU signed URL、原始 provider JSON、ZIP、token、绝对路径或完整 ParsedDocument。
 - citation link 保留 `relation` 与 `navigation_policy`；跨 source 关系可标记为 `cross_source / non_interactive`，不会制造强制跳转。
+
+### Supervisor corrective patch
+
+- MinerU 已是唯一产品解析路径，因此 readiness 新增不泄密的 `mineru` check。缺少 token 时 `/api/readiness` 为 degraded，`POST /api/generate` 在 admission 和上传落盘前返回安全 503；同进程 admin/runtime 热更新后，下一次 submission 立即使用新快照。
+- MinerU ZIP 不再以 `bytes[]` 聚合返回。HTTP body 以流式 chunk 写入 job-owned 私有 `downloads/`，normalizer 直接读取 ZIP path；单 ZIP 上限保持 256 MiB，整个 batch 新增 512 MiB 累计上限。ZIP、signed URL 和 provider JSON 均不进入公开 artifact 表。
+- Worker 仅关闭自己创建的 `MinerUDocumentService/httpx.Client`，成功、retryable failure 和 permanent failure 都确定性关闭；注入的测试/调用方 service 不由 Worker 关闭。
+- shared `validate_manifest_snapshot()` 同时供 Worker 完成前和 `/manifest`、`/learning-map`、`/coverage` 使用，核对 Job identity、service mode、source 集合、文件名、SHA256、显示标题/顺序、outline mapping 与 origin metadata。任何偏差均在 Worker 侧成为 permanent `invalid_job_output`，API 侧统一返回安全 500。
+- Job admission 现在持久化 outline 的安全原始文件名、SHA256、byte size 和 MIME。每次 claim 在任何 MinerU/provider I/O 前有界重算 size/SHA；不匹配永久失败且不重试。Manifest 使用持久化原始名和 admission SHA，不再暴露内部 `outline.pdf`/`outline.md` 文件名。
+
+Corrective patch 精确文件：
+
+- `apps/api/jstudy_api/app.py`
+- `multi-agent/jstudy-product-build/reports/0008-mineru-sequence-first-backend-report.md`
+- `packages/core/jstudy_core/courseware/__init__.py`
+- `packages/core/jstudy_core/courseware/planning.py`
+- `packages/core/jstudy_core/documents/mineru_client.py`
+- `packages/core/jstudy_core/documents/mineru_normalizer.py`
+- `packages/core/jstudy_core/documents/service.py`
+- `packages/core/jstudy_core/job_system/models.py`
+- `packages/core/jstudy_core/job_system/repository.py`
+- `packages/core/jstudy_core/job_system/service.py`
+- `packages/core/jstudy_core/job_system/worker.py`
+- `packages/core/jstudy_core/settings.py`
+- `tests/test_courseware_planning.py`
+- `tests/test_document_service.py`
+- `tests/test_job_service.py`
+- `tests/test_job_worker.py`
+- `tests/test_mineru_client.py`
+- `tests/test_security_controls.py`
+- `tests/test_settings.py`
+- `tests/test_web_mvp.py`
 
 ## 3. Parser 调用链
 
@@ -75,7 +107,12 @@ POST /api/generate
 - Corrective GREEN：document/client/models/planning/sequence `31/31`，Worker/API error semantics `2/2`。
 - 第二轮只读复核的 3 个 P2 已修复：主序列单调性、畸形 download `Content-Length` permanent protocol error、trace `file_name/page_count/parser_backend` 旧字段兼容。对应 RED `4` 项，GREEN `4/4`。
 - 第三轮只读复核的 2 个 P2 已修复：Learning Unit page span 同时受 ParsedDocument/API source page count 约束；`ignored_reason_counts` 必须与 ignored entries 精确对账。对应 RED `3` 项，GREEN `3/3`。
-- 最终完整后端：`352/352`；`compileall` exit 0。
+- Supervisor corrective P1-1 RED：无 MinerU 时 readiness 仍 ready、submission 返回 200 并产生 queued Job；GREEN：settings/API/hot reload `3/3`。
+- Supervisor corrective P1-2 RED：client config 无 batch limit、DocumentService 仍消费 `zip_bytes`、owned service 三条终止路径 close count 均为 0；GREEN：流式私有文件、累计上限与生命周期 `3/3`。
+- Supervisor corrective P2-1 RED：共享 validator import 不存在，runner 篡改 Manifest SHA 后 Worker 仍 completed；GREEN：共享逐字段 validator、Worker、三个 API endpoint `3/3`。
+- Supervisor corrective P2-2 RED：JobSnapshot 无 outline metadata、Worker command 无冻结字段、Manifest 返回内部 `outline.md`；GREEN：restart persistence、篡改前置拒绝、真实原始名 `4/4`。
+- 提交前独立只读审查发现 2 个 P2：batch/normalizer 中途失败会遗留私有 ZIP；Manifest outline sections 的预期值仍来自待校验文件自身。对应 RED 显示 ZIP 残留、Worker completed、三个 API 返回 200；GREEN `5/5`，现在异常路径清理本批全部 ZIP，Worker 与 runner 前深拷贝 expected Manifest 精确比较，API 对 Manifest 内容复核原子完成时持久化的 artifact SHA。
+- Corrective 完整后端：`361/361`；`compileall` exit 0。
 - 前端未改动回归：lint、typecheck、Vitest `5/5`、production build、Playwright `6/6` 全部通过。
 - `test_sequence_generation_uses_learning_map_not_parsing_or_scores` 将 PyMuPDF/MinerU legacy extract 入口和 `select_evidence_chunks` patch 为立即失败，sequence-first 运行仍成功，证明主生成不调用文本抽取或 relevance selector。
 - planner 输入不存在 similarity score，排序键只来自 Manifest display order 与 ParsedDocument page/block order；改变 embedding relevance 无法改变主 section 顺序。
@@ -102,6 +139,7 @@ POST /api/generate
 - `packages/core/jstudy_core/courseware/planning.py`
 - `packages/core/jstudy_core/documents/__init__.py`
 - `packages/core/jstudy_core/documents/mineru_client.py`
+- `packages/core/jstudy_core/documents/mineru_normalizer.py`
 - `packages/core/jstudy_core/documents/service.py`
 - `packages/core/jstudy_core/job_system/models.py`
 - `packages/core/jstudy_core/job_system/repository.py`
@@ -109,6 +147,7 @@ POST /api/generate
 - `packages/core/jstudy_core/job_system/worker.py`
 - `packages/core/jstudy_core/pipeline.py`
 - `packages/core/jstudy_core/storage.py`
+- `packages/core/jstudy_core/settings.py`
 - `tests/test_courseware_models.py`
 - `tests/test_courseware_planning.py`
 - `tests/test_document_service.py`
@@ -118,6 +157,7 @@ POST /api/generate
 - `tests/test_job_worker.py`
 - `tests/test_mvp_runner.py`
 - `tests/test_security_controls.py`
+- `tests/test_settings.py`
 - `tests/test_web_mvp.py`
 
 ## 7. 剩余限制
@@ -125,8 +165,9 @@ POST /api/generate
 - 未实现正式 courseware draft/organizer UI 或 organizer API；当前 title/order 是上传默认值，尚无用户确认与编辑闭环。
 - 未实施 HTML renderer/theme、HTML export、Batch Courseware、question generation、BYOK、quota 或 billing。
 - 未修改 `apps/web/**`；前端门只证明无回归，不证明 synchronized Reader 已消费三个新合同。
-- 未引入 Alembic。`job_sources` 新列会使旧 disposable pilot database 不兼容；旧 pilot DB 需要显式重建，不能对持久用户数据使用 `create_all()` 冒充迁移。
+- 未引入 Alembic。`job_sources` 与 `jobs` 的新 outline identity 列会使旧 disposable pilot database 不兼容；旧 pilot DB 需要显式重建，不能对持久用户数据使用 `create_all()` 冒充迁移。
 - 未执行 live MinerU provider smoke、真实 PostgreSQL smoke 或部署验收。
+- 512 MiB 是一个 Job 的 MinerU ZIP 累计磁盘传输上限，不是公开上传配额；normalizer 仍受既有 2,000 members、512 MiB uncompressed 和 100x compression ratio 限制。
 - 当前 package hash 与后续读取仍沿用 Task 0007 已披露的受信单写者文件边界，理论 TOCTOU 风险未在本任务扩大处理。
 - 临时 backend-served UI 仍保留历史 parser selector markup，但 `/api/options` 不再提供 parser profiles；正式 `apps/web` 接入应完全省略该控件。
 

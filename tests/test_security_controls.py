@@ -87,6 +87,7 @@ class BackendSecurityControlsTest(unittest.TestCase):
             chat_model="chat-model",
             embed_model="embed-model",
             cookie_secure=cookie_secure,
+            mineru_api_token="test-mineru-token",
         )
 
     def register_user(

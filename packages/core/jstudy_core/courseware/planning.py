@@ -108,6 +108,69 @@ def build_courseware_manifest(
     )
 
 
+def validate_manifest_snapshot(
+    manifest: CoursewareManifestV1,
+    *,
+    job: Any,
+    sources: Sequence[Any],
+    expected_manifest: CoursewareManifestV1 | None = None,
+) -> None:
+    if (
+        expected_manifest is not None
+        and manifest.model_dump(mode="json")
+        != expected_manifest.model_dump(mode="json")
+    ):
+        raise ValueError("manifest snapshot content mismatch")
+    if (
+        manifest.manifest_id != job.id
+        or manifest.job_id != job.id
+        or manifest.service_mode != job.service_mode
+    ):
+        raise ValueError("manifest snapshot job identity mismatch")
+    expected_outline_name = getattr(
+        job,
+        "outline_original_filename",
+        None,
+    )
+    expected_outline_sha256 = getattr(job, "outline_sha256", None)
+    if expected_outline_name is not None or expected_outline_sha256 is not None:
+        if (
+            manifest.outline is None
+            or manifest.outline.original_filename != expected_outline_name
+            or manifest.outline.sha256 != expected_outline_sha256
+        ):
+            raise ValueError("manifest snapshot outline identity mismatch")
+    elif manifest.outline is not None:
+        raise ValueError("manifest snapshot outline identity mismatch")
+
+    ordered_sources = sorted(sources, key=lambda item: item.display_order)
+    manifest_sources = manifest.ordered_sources()
+    if len(manifest_sources) != len(ordered_sources):
+        raise ValueError("manifest snapshot source set mismatch")
+    outline_sections = (
+        sorted(manifest.outline.sections, key=lambda item: item.order)
+        if manifest.outline is not None
+        else []
+    )
+    for index, (actual, expected) in enumerate(
+        zip(manifest_sources, ordered_sources, strict=True)
+    ):
+        expected_mapping = expected.primary_outline_section_id
+        if expected_mapping is None and index < len(outline_sections):
+            expected_mapping = outline_sections[index].id
+        if (
+            actual.source_id != expected.source_id
+            or actual.original_filename != expected.original_filename
+            or actual.sha256 != expected.sha256
+            or actual.display_title != expected.display_title
+            or actual.display_order != expected.display_order
+            or actual.primary_outline_section_id != expected_mapping
+            or actual.title_origin != expected.title_origin
+            or actual.order_origin != expected.order_origin
+        ):
+            raise ValueError("manifest snapshot source identity mismatch")
+
+
 def _is_cover_page(page_number: int, blocks: list[ParsedBlock]) -> bool:
     return (
         page_number == 1
