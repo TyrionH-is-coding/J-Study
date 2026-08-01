@@ -10,7 +10,8 @@
 | 学科模式与资料工作流 | [product/service-modes.md](product/service-modes.md) |
 | 当前后端架构与技术边界 | [architecture/overview.md](architecture/overview.md) |
 | 当前完成状态与后续顺序 | [roadmap.md](roadmap.md) |
-| 前端体验与模块规范 | [frontend/clinical-workbench-spec.md](frontend/clinical-workbench-spec.md) |
+| 当前前端页面、布局与响应式规则 | [frontend/layout-rules.md](frontend/layout-rules.md) |
+| 较早的前端实现与 API 基线 | [frontend/clinical-workbench-spec.md](frontend/clinical-workbench-spec.md) |
 | 开发与安全规范 | [development/standards.md](development/standards.md) |
 | Git 协作规则 | [development/git-workflow.md](development/git-workflow.md) |
 | 首次服务器部署 | [deployment/server-runbook.md](deployment/server-runbook.md) |

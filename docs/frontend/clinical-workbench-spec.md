@@ -2,7 +2,15 @@
 
 ## Status
 
-This is the approved baseline for the first formal J-Study frontend. Do not start `apps/web` implementation by inventing a new visual direction or route model.
+This document preserves the earlier implementation and API baseline for the
+first formal J-Study frontend.
+
+The current authoritative page scope, layout, responsive behavior, and visual
+decision boundaries are maintained in
+[`layout-rules.md`](layout-rules.md). When the two documents conflict on those
+topics, `layout-rules.md` wins. The color tokens and “Clinical Workbench”
+visual description below are historical suggestions, not a frozen visual
+system.
 
 ## Product Entry
 
