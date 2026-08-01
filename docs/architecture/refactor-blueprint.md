@@ -373,7 +373,8 @@ It is not a database host, public API host, or mandatory production dependency.
 ### Phase 6: Product expansion
 
 - Improve Soul Profile and Knowledge Snippet administration.
-- Add Batch Courseware Mode.
+- Add Multi Courseware Mode using the strict contract in
+  `docs/product/service-modes.md`.
 - Evaluate Tencent COS and the spare-computer MinerU worker.
 - Add past-paper question generation only after the base workflow is measured.
 

@@ -125,7 +125,7 @@ Task 0008 does not include:
 - formal frontend organizer, drag-and-drop, or rename UI
 - semantic auto-organization quality tuning
 - HTML renderer or theme presets
-- Batch Courseware Mode
+- Multi Courseware Mode
 - Alembic or production deployment
 - question generation, BYOK, quota, or billing
 
@@ -231,11 +231,15 @@ Acceptance:
 
 ## Phase 4.5: Service Mode Model
 
-Goal: define the product and backend boundary for the three generation modes before expanding upload flows.
+Goal: implement the approved, mutually exclusive product contracts for the three
+generation workflows without mixing them with subject profiles or parser
+infrastructure.
 
 Deliverables:
 
-- explicit `single_courseware`, `batch_courseware`, and `course_outline` service modes - backend contract done for `single_courseware` and `course_outline`
+- explicit `single_courseware`, `course_outline`, and `multi_courseware`
+  service modes - backend paths currently exist for `single_courseware` and
+  `course_outline`; strict input cleanup and `multi_courseware` remain pending
 - frontend upload entry points that explain the three modes without mixing them
   with subject scenario or internal parser infrastructure
 - backend request contract that records service mode separately from
@@ -245,13 +249,21 @@ Deliverables:
 - package-output contract for multi-section material - strict v2 backend contract done for `single_courseware` and `course_outline`
 - section-level blocks, structural citations, source/evidence identities, and direct quality status - backend v2 done for both implemented modes
 - full-export contract that can assemble all sections into one complete document
+- Multi Courseware association discovery that proposes cross-source candidates,
+  validates both sides, and adds bounded non-interactive knowledge connections
+  without changing the main Learning Map
 
 Acceptance:
 
-- Single Courseware Mode remains the default MVP path and produces one generated material output
-- Batch Courseware Mode is designed as a chapter/topic-browsable material package, not just several independent single-PDF jobs
-- Course Outline Mode is designed as an outline-driven material package whose section order follows the uploaded outline
-- Batch Courseware Mode and Course Outline Mode both support web browsing by section and full-document export
+- Single Courseware accepts exactly one PDF and no outline
+- Course Outline accepts exactly one outline and at least one PDF
+- Multi Courseware accepts at least two PDFs from the same course and no outline
+- Multi Courseware is not implemented as several independent single-PDF jobs
+- Course Outline uses the outline for matching and grouping while preserving the
+  user-confirmed courseware and page order
+- Multi Courseware and Course Outline both support web browsing by section and full-document export
+- cross-courseware relationships are evidence-bounded, rendered as natural
+  language, and never become automatic cross-courseware Reader navigation
 - service mode selection does not change the selected subject scenario or parser profile
 
 ## Phase 5: Multi-Discipline Domain Packs
@@ -274,25 +286,36 @@ Acceptance:
 - a new subject can start with a blank hidden soul profile, then become visible only after the profile has usable content
 - service delivery is not blocked by fully populated soul libraries
 
-## Phase 5.25: Batch Courseware Mode
+## Phase 5.25: Multi Courseware Mode
 
-Goal: let users upload multiple related courseware PDFs and receive one navigable study-material package.
+Goal: let users upload at least two ordered PDFs from the same course and receive
+one sequence-first material package with bounded cross-courseware knowledge
+connections.
 
 Deliverables:
 
-- multi-PDF upload API and frontend flow - Course Outline path done; Batch Courseware remains pending
+- strict `multi_courseware` admission with at least two PDFs and no outline
+- frontend entry point that distinguishes Multi Courseware from Course Outline
+- user-confirmed source title and order before generation
 - source-file metadata in chunks, evidence, and citation links - done
-- section planning from file order, detected headings, or inferred topics
-- cross-file retrieval and evidence aggregation
-- duplicate-topic handling across uploaded PDFs
-- package reader with section navigation and source preview - shared Course Outline reader foundation done; Batch planning remains pending
+- sequence-first section planning from the confirmed source/page/block order
+- embedding-based candidate discovery across different `source_id` values
+- dual-sided evidence validation and explicit relationship classification
+- bounded association hints that never reorder the main Learning Map
+- duplicate relationship merging within a learning unit
+- non-interactive natural-language relationship rendering in the Reader
+- package reader with section navigation and source preview
 - full-document export assembled from package sections
 
 Acceptance:
 
-- user can upload multiple PDFs in one job
+- user can upload at least two PDFs from the same course in one Job
+- an outline is rejected with a clear instruction to use Course Outline Mode
 - generated output is browsable by chapter or topic in the web app
-- each section can cite evidence from one or more source PDFs
+- the main material follows the user-confirmed source and page order
+- every displayed cross-courseware relationship has evidence from both sources
+- association failure omits the relationship without failing the main material
+- cross-courseware relationships do not navigate the Reader to another source
 - user can export the whole package as one complete material file
 - the system does not lose source-file identity when rendering citation jumps
 

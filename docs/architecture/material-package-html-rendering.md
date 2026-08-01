@@ -4,7 +4,7 @@
 
 - 决策日期：2026-07-28
 - 状态：设计已获产品方向认可，尚未实施
-- 适用范围：Single Courseware、Batch Courseware、Course Outline 的正式资料输出
+- 适用范围：Single Courseware、Multi Courseware、Course Outline 的正式资料输出
 - 首个模板：`clinical-standard@1.0.0`
 
 ## 核心决策

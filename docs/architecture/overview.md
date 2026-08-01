@@ -78,14 +78,22 @@ Embedding index
 The platform should distinguish service mode from subject scenario and internal
 parser infrastructure.
 
-- `single_courseware`: one PDF, optional outline, one generated material output. This remains the compatible default MVP path.
-- `batch_courseware`: multiple PDFs, optional user notes or loose outline, one material package. The web app should browse the package by chapter or topic and should also export the complete package as one document.
-- `course_outline`: course outline plus all courseware for a full course, one
-  material package. The backend upload contract, stable source identities and
-  package artifacts are implemented. The formal `apps/web` business workflow
-  is not implemented yet; its current pages are foundation placeholders.
+The approved target contracts are:
 
-The two currently implemented service modes now use the same v2 package-output contract. Batch Courseware remains pending:
+- `single_courseware`: exactly one PDF and no outline.
+- `course_outline`: exactly one outline and at least one PDF.
+- `multi_courseware`: at least two PDFs from the same course and no outline.
+
+The modes are mutually exclusive and do not convert after submission. The
+complete product rules live in `docs/product/service-modes.md`.
+
+The backend currently implements `single_courseware` and `course_outline`.
+`single_courseware` still has bounded optional-outline compatibility that must be
+removed through a tested migration. `multi_courseware` admission and
+cross-courseware association generation remain pending. The formal `apps/web`
+business workflows remain foundation placeholders.
+
+The two currently implemented service modes use the same v2 package-output contract:
 
 ```text
 material-package.v2
@@ -97,7 +105,11 @@ material-package.v2
 -> deterministic compatibility Markdown assembled from sections
 ```
 
-The difference is planning. Batch Courseware Mode can derive sections from uploaded file order, detected headings, or inferred topics. Course Outline Mode follows the uploaded outline first and marks sections with weak evidence in the package instead of silently inventing support.
+The difference is planning. Multi Courseware Mode follows the user-confirmed
+courseware order and adds only evidence-validated, non-interactive
+cross-courseware relationships. Course Outline Mode uses the uploaded outline
+for matching, naming, and grouping while preserving the confirmed source and
+page order; weak evidence remains visible instead of being silently invented.
 
 ## Platform Layer
 

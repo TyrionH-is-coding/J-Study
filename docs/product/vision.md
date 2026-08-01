@@ -3,12 +3,17 @@
 ## What J-Study Is
 
 J-Study is a multi-discipline, courseware-synchronized learning product. It
-turns courseware and optional outlines into structured study materials while
+turns courseware, or courseware plus an outline in the dedicated outline
+workflow, into structured study materials while
 preserving the teacher's original teaching sequence. Generated content remains
 tied to source evidence, and learners can return to the original page behind a
 claim without losing their position in the main learning path.
 
-The first validated domain is medicine. That does not define the long-term boundary of the product. Medicine is the first subject pack because domain quality can be judged directly and the initial workload is mostly organization, citation, and learning-output design.
+The product default is General Mode. Medicine was the first validation domain,
+but it does not define either the default experience or the long-term boundary.
+General Mode remains neutral and never detects or silently switches the user's
+discipline. Future Medicine, Engineering, and Humanities modes add broad
+discipline-specific quality assets only when the user explicitly selects them.
 
 J-Study is intentionally more vertical than DeepTutor. DeepTutor can remain a broad general-purpose learning framework; J-Study should build subject-specific depth through curated soul profiles and a reviewed knowledge snippet library. Those two libraries are product assets, not incidental prompt files. They will be improved one subject at a time after the core service is running.
 
@@ -45,18 +50,18 @@ J-Study is intentionally more vertical than DeepTutor. DeepTutor can remain a br
 
 The backend currently supports Single Courseware and Course Outline submissions,
 durable Jobs, multiple PDFs, source previews, and strict
-`material-package.v2`. The current production path still extracts text with
-PyMuPDF and lets embedding plus BM25/RRF rank the evidence used for generation.
-That is migration state, not the approved product design.
+`material-package.v2`. The Worker uses MinerU for product text and structure,
+freezes a versioned Courseware Manifest, builds continuous learning units, and
+generates complete materials in source/page/block order. Embedding no longer
+controls the main learning sequence.
 
-The next backend milestone is:
+The next product-backend milestones are:
 
-1. freeze a versioned Courseware Manifest;
-2. parse all product text and structure with MinerU;
-3. form continuous learning units in courseware order;
-4. generate complete materials in that order;
-5. use embedding only for optional associations, search, and snippet ecology;
-6. audit page/block coverage and large jumps.
+1. provide a real `general-default` Soul Profile and make it the product default;
+2. tighten the three service-mode input contracts;
+3. implement Multi Courseware association discovery and evidence validation;
+4. implement the Courseware Organizer and user-confirmed Manifest workflow;
+5. expose the confirmed workflows through the formal frontend.
 
 The controlling design is
 `docs/superpowers/specs/2026-07-31-courseware-synchronized-learning-design.md`.
@@ -66,14 +71,10 @@ The controlling design is
 J-Study should support three service modes. They should share the same source-grounded generation philosophy, but they should not be treated as the same backend workflow.
 
 1. Single Courseware Mode
-   One courseware PDF produces one structured study material output. This remains
-   a compatibility path and a useful small-fixture validation route, but Course
-   Outline Mode is the first formal product workflow.
+   Exactly one courseware PDF produces one structured study material output.
+   The target product contract does not accept an outline in this workflow.
 
-2. Batch Courseware Mode
-   Multiple courseware PDFs are uploaded together and become one study-material package. The package should be browsable by chapter or topic in the web app and exportable as one complete document. Unlike the current MVP, this mode needs source-file metadata, cross-file evidence aggregation, duplicate-topic handling, and a package output model instead of assuming one markdown file per job.
-
-3. Course Outline Mode
+2. Course Outline Mode
    The user uploads a course outline plus all courseware for a full course. The
    outline helps match, name, and group courseware, while the user-confirmed
    Courseware Manifest defines the source order used by generation. The backend
@@ -81,13 +82,20 @@ J-Study should support three service modes. They should share the same source-gr
    shows the result as a chapter-by-chapter course package, and allows exporting
    the complete material. Missing or weak coverage remains visible.
 
-Batch Courseware Mode and Course Outline Mode should converge on the same user-facing output model: a navigable material package with section-level evidence and full-document export. Their main difference is how the section plan is created.
+3. Multi Courseware Mode
+   The user uploads at least two ordered courseware PDFs from the same course
+   without an outline. The main material follows the confirmed courseware order.
+   Embedding proposes cross-courseware relationships, an evidence-bounded model
+   pass validates and classifies them, and a small number of useful relationships
+   are rendered as non-interactive natural-language study connections.
+
+The strict contracts and current implementation status are maintained in
+`docs/product/service-modes.md`.
 
 The current product does not yet include:
 
 - the formal courseware organizer and editable draft workflow
-- the MinerU production pipeline switch
-- sequence-first generation and coverage ledger
+- Multi Courseware admission and association generation
 - completed frontend auth/upload/polling/reader workflows
 - object storage and versioned database migrations
 - question generation from past exam papers
@@ -105,7 +113,10 @@ A domain pack owns subject-specific behavior:
 - quality checks
 - question-generation rules
 
-The default domain pack is `medicine`. Future domains should be added without rewriting the platform pipeline.
+The product default should be a real `general-default` profile. The current
+runtime still has Medicine as its only complete domain asset, so General must
+not be enabled from a blank placeholder. Future broad discipline modes should
+be added without rewriting the platform pipeline.
 
 J-Study should use a hybrid domain-pack model:
 

@@ -1,6 +1,10 @@
 # J-Study
 
-J-Study is a multi-discipline study-material generation product. The current MVP starts with medicine because it is the first domain where we can validate quality, citation, and learning-output design with real domain judgment.
+J-Study is a multi-discipline study-material generation product. Medicine was
+the first domain used to validate quality, citation, and learning-output design.
+The approved product default is General Mode; the current runtime must keep
+Medicine active until a real `general-default` Soul Profile replaces the blank
+placeholder.
 
 The product goal is not limited to medicine. The platform should eventually support different subject packs, each with its own prompts, retrieval strategy, output templates, quality checks, and question-generation logic.
 
@@ -10,6 +14,10 @@ The product is not a generic PDF RAG assistant. Its core direction is
 courseware-synchronized learning: the main material follows the
 user-confirmed courseware and page order, while semantic retrieval only adds
 optional relationships without controlling the reading sequence.
+
+Permanent documentation starts at `docs/README.md`. Product mode contracts are
+maintained in `docs/product/service-modes.md`; task cards and Agent reports are
+delivery evidence rather than product truth.
 
 ## Approved Refactor Direction
 
@@ -31,7 +39,8 @@ The controlling design and migration gates are in:
 
 The current backend can:
 
-- accept one courseware PDF and an optional outline
+- accept one courseware PDF and an optional outline as a bounded compatibility
+  path; the target Single Courseware contract rejects outlines
 - accept `service_mode=course_outline` with a required outline and one or more repeated `pdfs` uploads
 - expose public subject scenarios without exposing parser choices
 - batch-parse all Job sources through MinerU Precision Extract and normalize them to versioned `ParsedDocument` contracts
