@@ -299,10 +299,12 @@ Deliverables:
 - user-confirmed source title and order before generation
 - source-file metadata in chunks, evidence, and citation links - done
 - sequence-first section planning from the confirmed source/page/block order
-- embedding-based candidate discovery across different `source_id` values
-- dual-sided evidence validation and explicit relationship classification
-- bounded association hints that never reorder the main Learning Map
-- duplicate relationship merging within a learning unit
+- an offline evaluation fixture using the same representative courseware across
+  pre-generation, post-generation, and separate association-layer approaches
+- comparison metrics for accuracy, evidence validity, learning value,
+  redundancy, ambiguity, sequence disturbance, cost, latency, and failure rate
+- a selected association workflow only after the evaluation result is reviewed
+- bounded relationships that never reorder the main Learning Map
 - non-interactive natural-language relationship rendering in the Reader
 - package reader with section navigation and source preview
 - full-document export assembled from package sections

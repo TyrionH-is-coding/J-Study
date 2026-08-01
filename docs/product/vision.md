@@ -85,9 +85,10 @@ J-Study should support three service modes. They should share the same source-gr
 3. Multi Courseware Mode
    The user uploads at least two ordered courseware PDFs from the same course
    without an outline. The main material follows the confirmed courseware order.
-   Embedding proposes cross-courseware relationships, an evidence-bounded model
-   pass validates and classifies them, and a small number of useful relationships
-   are rendered as non-interactive natural-language study connections.
+   The system may add a small number of evidence-bounded, non-interactive
+   cross-courseware study connections. The production association workflow is
+   intentionally undecided until pre-generation, post-generation, and separate
+   association-layer approaches are compared on representative courseware.
 
 The strict contracts and current implementation status are maintained in
 `docs/product/service-modes.md`.
