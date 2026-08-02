@@ -88,7 +88,9 @@ Task 0007 当前边界：
 - JSON 格式或 schema 失败最多进行一次受控修复；
 - Markdown 由 v2 确定性派生并继续满足现有 `/output` 与 `/export` 兼容合同；
 - Worker 原子持久化 v2 sections/artifacts/completion，package API 保持 owner check 并继续读取 legacy v1；
-- 未实施 React/HTML renderer、HTML export、MinerU pipeline switch、Markdown 删除或数据库迁移。
+- Task 0007 当时未实施 React/HTML renderer、HTML export、MinerU pipeline
+  switch、Package-based Markdown Renderer 或数据库迁移；Task 0008 后续已完成
+  MinerU Worker pipeline 切换。
 
 ## Phase 1S: Courseware-Synchronized Generation
 
@@ -175,6 +177,11 @@ Deliverables:
 - Course Outline upload and job polling - pending
 - generated material reader and source-specific PDF preview - pending
 - citation-to-source-preview interaction - pending
+- Package-based HTML and Markdown renderers - pending
+- themed HTML print view and minimal Markdown print view - pending
+- browser PDF acceptance for both print views - pending
+- failed-section summary and targeted retry without regenerating successful
+  sections - pending
 
 Acceptance:
 
@@ -248,7 +255,8 @@ Deliverables:
   empty/`fast`/`quality` request compatibility
 - package-output contract for multi-section material - strict v2 backend contract done for `single_courseware` and `course_outline`
 - section-level blocks, structural citations, source/evidence identities, and direct quality status - backend v2 done for both implemented modes
-- full-export contract that can assemble all sections into one complete document
+- full-export contract that can assemble all sections into HTML or deterministic
+  Markdown from the same `material-package.v2`
 - Multi Courseware association discovery that proposes cross-source candidates,
   validates both sides, and adds bounded non-interactive knowledge connections
   without changing the main Learning Map

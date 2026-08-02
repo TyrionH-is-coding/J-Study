@@ -8,6 +8,7 @@
 |---|---|
 | 产品定位与长期原则 | [product/vision.md](product/vision.md) |
 | 学科模式与资料工作流 | [product/service-modes.md](product/service-modes.md) |
+| 学习资料内容与导出 | [product/study-materials.md](product/study-materials.md) |
 | 当前后端架构与技术边界 | [architecture/overview.md](architecture/overview.md) |
 | 当前完成状态与后续顺序 | [roadmap.md](roadmap.md) |
 | 当前前端页面、布局与响应式规则 | [frontend/layout-rules.md](frontend/layout-rules.md) |

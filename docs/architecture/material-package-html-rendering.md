@@ -1,4 +1,4 @@
-# Material Package JSON 与 HTML 渲染设计
+# Material Package JSON、HTML 与 Markdown 渲染设计
 
 ## 状态
 
@@ -9,7 +9,8 @@
 
 ## 核心决策
 
-J-Study 不再把 Markdown 作为正式产品输出和长期内容契约。
+J-Study 不把 Markdown 或 HTML 作为长期内容契约。Markdown 重新成为正式
+导出格式，但唯一内容源仍是 `material-package.v2`。
 
 正式架构为：
 
@@ -19,18 +20,22 @@ flowchart LR
     Generation --> Package["Material Package JSON"]
     Package --> Validation["Schema 与证据校验"]
     Validation --> Web["网页 HTML Reader"]
-    Validation --> Export["独立 HTML 导出"]
+    Validation --> HtmlExport["独立 HTML 导出"]
+    Validation --> MdExport["确定性 Markdown 导出"]
+    HtmlExport --> HtmlPdf["HTML 风格 PDF"]
+    MdExport --> MdPdf["Markdown 风格 PDF"]
     Theme["版本化视觉主题"] --> Web
-    Theme --> Export
+    Theme --> HtmlExport
 ```
 
 约束如下：
 
 1. Material Package JSON 是唯一正式内容数据源。
-2. HTML 是用户阅读、分享、打印和导出的产品形态。
-3. 模型不得直接输出任意 HTML、CSS、JavaScript 或主题配置。
-4. 视觉主题只改变呈现，不改变内容语义、引用和质量状态。
-5. Markdown 仅作为迁移期兼容产物，完成迁移后删除。
+2. HTML 是网页阅读和主题化导出的产品形态。
+3. Markdown 是简洁、可编辑的正式导出格式，但不是模型输入输出合同。
+4. HTML 与 Markdown 都能生成各自视觉的 PDF。
+5. 模型不得直接输出任意 HTML、CSS、JavaScript 或主题配置。
+6. 视觉主题只改变呈现，不改变内容语义、引用和质量状态。
 
 ## 为什么不直接保存模型生成的 HTML
 
@@ -185,7 +190,7 @@ Reader 保持现有三栏边界：
 
 点击 citation run 继续使用 `job_id + source_id + page + chunk_id` 定位，只滚动右侧 source preview。
 
-### 独立 HTML 导出
+### HTML、Markdown 与 PDF 导出
 
 第一版 HTML 导出由同一个 TypeScript renderer 在用户端生成并下载：
 
@@ -197,6 +202,17 @@ Reader 保持现有三栏边界：
 - 提供打印 CSS，可从浏览器打印为 PDF；
 - 文本和属性统一转义；
 - 使用限制脚本、对象和外部连接的 CSP meta。
+
+Markdown 导出由独立的确定性 renderer 从同一个 Package 生成：
+
+- 不读取或转换已经渲染的 HTML；
+- 使用统一的简洁文档结构；
+- 保留章节、表格、公式、Citation 标签和质量状态；
+- 对失败章节和弱证据章节生成明确提示。
+
+HTML 与 Markdown 使用不同打印视图。第一版调用浏览器打印能力生成
+各自风格的 PDF；不在生产服务器部署 Chromium。只有真实使用证明需要
+一键稳定下载、批量导出或统一分页时，才增加服务器 PDF Renderer。
 
 第一版不要求后端持久化渲染后的 HTML。后端保存 Material Package JSON，避免内容与导出副本漂移。只有在未来出现服务端分享、邮件发送或批量归档需求时，才评估服务端 HTML artifact。
 
@@ -280,11 +296,12 @@ HTML theme 不进入 retrieval、evidence selection 或 generation prompt。
 2. generation stage 直接生成 section blocks 和 citation runs；
 3. Package API 返回 v2 JSON；
 4. Reader 改用 Material Renderer，不再调用 `splitMarkdownBySections()`；
-5. 增加 `clinical-standard@1.0.0` 和独立 HTML 导出；
-6. 保留旧 `/output` 和 Markdown export 作为短期兼容；
-7. 后端、前端和真实浏览器回归通过后，删除 Markdown section splitter、evidence comment replacement 和 Markdown 正式导出。
+5. 增加 `clinical-standard@1.0.0`、独立 HTML 导出和确定性 Markdown Renderer；
+6. 用新的 Package-based Markdown Renderer 替换旧 `/output` 兼容实现；
+7. 后端、前端和真实浏览器回归通过后，删除 Markdown section splitter 和 evidence comment replacement。
 
-旧 Markdown 不进行长期双写。兼容期结束后，Material Package v2 是唯一真实内容源。
+不保留以 Markdown 为正文数据库的长期双写。兼容期结束后，
+Material Package v2 是唯一真实内容源，Markdown 只是可重复生成的正式导出。
 
 ## 与当前重构顺序的关系
 
@@ -293,8 +310,8 @@ HTML theme 不进入 retrieval、evidence selection 或 generation prompt。
 HTML 迁移应进入 Generation Modules 与 API/Frontend Contract 阶段，拆为三个窄任务：
 
 1. Material Package v2 schema、结构化生成和质量检查；
-2. React Material Renderer、Clinical Standard 和 HTML 导出；
-3. Markdown 兼容删除与 API contract 收口。
+2. React Material Renderer、Clinical Standard、HTML 与 Markdown 导出；
+3. 两种浏览器打印视图和旧 Markdown compatibility path 收口。
 
 不得把数据库迁移、MinerU pipeline switch、HTML renderer 和多主题同时塞进一张任务卡。
 
@@ -313,6 +330,8 @@ HTML 迁移应进入 Generation Modules 与 API/Frontend Contract 阶段，拆�
 - citation 点击只滚动 source preview；
 - 同一 Package 在刷新后恢复相同内容；
 - HTML export 可以离线打开；
+- Markdown export 可以离线编辑并保持章节、Citation 和质量提示；
+- HTML 与 Markdown 打印视图生成不同视觉但相同内容的 PDF；
 - 导出文件无脚本、无远程资源和未转义模型内容；
 - Clinical Standard 在 `390x844`、`768x1024`、`1440x900` 无横向溢出。
 
@@ -327,7 +346,7 @@ HTML 迁移应进入 Generation Modules 与 API/Frontend Contract 阶段，拆�
 
 - Course Outline 上传、Job polling、章节切换、citation jump、刷新恢复和完整导出通过真实浏览器 E2E；
 - owner check 继续覆盖 package、evidence、source preview 和 export；
-- Markdown 兼容代码只在替代 contract 全部通过后删除。
+- 旧 Markdown 兼容代码只在 Package-based Markdown Renderer 通过后删除。
 
 ## 非目标
 
@@ -342,4 +361,5 @@ HTML 迁移应进入 Generation Modules 与 API/Frontend Contract 阶段，拆�
 - PWA、国际化或通用文档编辑器；
 - 口诀、思维导图、对比表格和高频考点等额外生成模式。
 
-当前目标只有一个：用稳定的 Material Package JSON 生成统一、安全、可追溯的正式 HTML 学习资料。
+当前目标是用稳定的 Material Package JSON 生成统一、安全、可追溯的
+HTML Reader、HTML 导出、Markdown 导出和两种打印视图。

@@ -93,6 +93,10 @@ J-Study should support three service modes. They should share the same source-gr
 The strict contracts and current implementation status are maintained in
 `docs/product/service-modes.md`.
 
+The content structure, controlled supplementation, partial-failure behavior,
+and HTML/Markdown/PDF export rules are maintained in
+`docs/product/study-materials.md`.
+
 The current product does not yet include:
 
 - the formal courseware organizer and editable draft workflow
