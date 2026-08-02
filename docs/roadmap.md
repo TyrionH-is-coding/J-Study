@@ -219,6 +219,15 @@ Goal: make generated output more stable and auditable.
 Deliverables:
 
 - stronger quality report - done for evidence-id validation, unused-evidence warnings, implementation wording checks, and section citation coverage
+- section-level `GenerationFingerprint` covering source, Learning Unit, Soul,
+  Snippet, provider/model, prompt, and package schema - pending
+- separate `ExportFingerprint` covering Package SHA, renderer, theme, and output
+  profile - pending
+- resumable section generation that reuses only exact fingerprint matches and
+  retries failed sections without regenerating successful sections - pending
+- deterministic gates for package identity, coverage coordination, required
+  assets, unsafe output, multi-format structural parity, and cache compatibility
+  - pending
 - parser/retrieval trace review tools - done for retrieval trace API
 - Markdown export endpoint - done for completed single-courseware jobs
 - single-courseware material-package metadata wrapper - done as a compatibility foundation, not full multi-section generation
@@ -235,6 +244,10 @@ Acceptance:
 - frontend polling is not served stale job state from browser caches
 - single-server deployments can opt into finished-job cleanup without deleting queued or running jobs
 - low-quality output is flagged before user trust is damaged
+- changing a theme never triggers model generation
+- changing source, Soul, Snippet, model, Prompt, or schema cannot silently reuse
+  an incompatible section
+- LLM review does not replace deterministic validation
 
 ## Phase 4.5: Service Mode Model
 

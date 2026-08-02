@@ -330,6 +330,20 @@ Completed jobs expose bounded strict `courseware-manifest.v1`, `learning-map.v1`
 
 The generated quality report traverses typed blocks and citation runs directly. Unknown source, evidence, or citation identities are validation errors; unused evidence, weak-evidence sections, and failed sections remain explicit issues. Markdown is not parsed to calculate v2 quality.
 
+The approved resumability boundary is section-scoped and content-addressed.
+Each generated section will receive a `GenerationFingerprint` derived from
+source SHA, Learning Unit/block identities, Soul and Snippet versions, provider
+protocol/model, prompt version, and package schema. A successful section can be
+reused only when that fingerprint matches exactly. Theme and renderer settings
+belong to a separate `ExportFingerprint`; changing visual style must never
+trigger another model generation.
+
+Deterministic quality gates run before optional model review. Schema,
+source/evidence/citation identity, manifest/map/coverage coordination, required
+assets, unsafe content, renderer structural parity, and fingerprint compatibility
+are code-checked contracts. LLM review may assist with semantic ambiguity but
+cannot replace or silently override these gates.
+
 Task 0008 did not add the organizer UI/API, an HTML renderer, remove Markdown,
 introduce a database migration, or deploy the service. Existing disposable
 pilot databases require reset because the source table gained display metadata.

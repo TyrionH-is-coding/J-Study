@@ -155,7 +155,60 @@ HTML 和 Markdown 都支持独立的 PDF 视觉：
 2. 真实使用证明需要一键稳定下载、批量导出或统一分页后，再增加服务器 PDF Renderer；
 3. 服务器 PDF 必须继续消费 `material-package.v2`，不得以已经导出的 HTML 或 Markdown 作为新的内容源。
 
-## 9. 当前实现状态
+## 9. 章节续传与缓存兼容
+
+每个学习单元必须拥有可复算的生成指纹。成功章节只有在指纹完全一致时才可以复用；指纹变化时不得静默使用旧内容。
+
+`GenerationFingerprint` 至少包含：
+
+- 课件 source SHA；
+- Learning Unit identity 和 block identities；
+- Soul Profile id 与版本；
+- 实际使用的 Knowledge Snippet ids 与版本；
+- 模型、协议和 Prompt 版本；
+- Material Package schema 版本。
+
+以下内容不进入生成指纹：
+
+- HTML theme；
+- Markdown 排版；
+- PDF 打印样式；
+- 只影响视觉、不影响内容的 renderer token。
+
+导出使用独立的 `ExportFingerprint`：
+
+- Material Package artifact SHA；
+- renderer contract 与版本；
+- theme id 与版本；
+- 导出格式或打印 profile。
+
+产品行为：
+
+- 相同生成指纹的成功章节可以跳过模型调用；
+- 失败章节可以单独重做；
+- 指纹不匹配必须创建新章节结果，不能覆盖并伪装成同一版本；
+- 缓存拒绝原因必须可诊断，但不得泄露课件正文、Prompt、Token 或 API Key。
+
+## 10. 确定性质量门禁
+
+能通过代码确定的问题优先使用规则检查，LLM 只作为可选的语义复核层。
+
+发布前的确定性检查至少包括：
+
+- Material Package schema 和 section identity；
+- `source_id`、page、block、Evidence 和 Citation 交叉引用；
+- Courseware Manifest、Learning Map 和 Coverage Ledger 协调关系；
+- 图片、公式和表格所需资源是否存在；
+- raw HTML、脚本、危险 URL 和未转义文本；
+- HTML 与 Markdown 是否保留相同章节、Citation 和质量状态；
+- 两种打印视图是否包含全部可导出章节；
+- Generation Fingerprint 与 Export Fingerprint 是否匹配当前输入。
+
+阻断发布的问题包括未知身份、缺失必需资源、危险内容、正文遗漏和缓存不兼容。弱证据、局部失败和非阻断布局问题应保留为明确警告。
+
+LLM 复核不得替代确定性检查，也不得自动修改原资料后不留下记录。
+
+## 11. 当前实现状态
 
 已经实现：
 
@@ -171,4 +224,6 @@ HTML 和 Markdown 都支持独立的 PDF 视觉：
 - HTML 与 Markdown 两种打印视图；
 - 浏览器 PDF 验收；
 - 局部失败汇总和失败章节定向重试；
+- Generation Fingerprint 与 Export Fingerprint；
+- 多格式确定性质量门禁；
 - 通用模式的可选 block、补充理解和内容核对合同。

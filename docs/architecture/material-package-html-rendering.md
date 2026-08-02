@@ -22,8 +22,10 @@ flowchart LR
     Validation --> Web["网页 HTML Reader"]
     Validation --> HtmlExport["独立 HTML 导出"]
     Validation --> MdExport["确定性 Markdown 导出"]
-    HtmlExport --> HtmlPdf["HTML 风格 PDF"]
-    MdExport --> MdPdf["Markdown 风格 PDF"]
+    HtmlExport --> HtmlPrint["主题化打印 Profile"]
+    MdExport --> MdPrint["极简文档打印 Profile"]
+    HtmlPrint --> PdfEngine["同一 PDF 技术引擎"]
+    MdPrint --> PdfEngine
     Theme["版本化视觉主题"] --> Web
     Theme --> HtmlExport
 ```
@@ -210,9 +212,15 @@ Markdown 导出由独立的确定性 renderer 从同一个 Package 生成：
 - 保留章节、表格、公式、Citation 标签和质量状态；
 - 对失败章节和弱证据章节生成明确提示。
 
-HTML 与 Markdown 使用不同打印视图。第一版调用浏览器打印能力生成
-各自风格的 PDF；不在生产服务器部署 Chromium。只有真实使用证明需要
-一键稳定下载、批量导出或统一分页时，才增加服务器 PDF Renderer。
+HTML 与 Markdown 使用不同打印 Profile，但共用同一个 PDF 技术引擎。
+“Markdown 风格 PDF”从 Material Package 直接生成极简 HTML 打印视图，
+不得先输出 Markdown 再重新解析。第一版调用浏览器打印能力；不在生产
+服务器部署 Chromium。只有真实使用证明需要一键稳定下载、批量导出或
+统一分页时，才增加服务器 PDF Renderer。
+
+每次导出计算独立 `ExportFingerprint`，至少包含 Package artifact SHA、
+renderer contract/version、theme id/version 和 export/print profile。导出
+缓存不得使用 Generation Fingerprint，也不得因为切换主题重新生成正文。
 
 第一版不要求后端持久化渲染后的 HTML。后端保存 Material Package JSON，避免内容与导出副本漂移。只有在未来出现服务端分享、邮件发送或批量归档需求时，才评估服务端 HTML artifact。
 
