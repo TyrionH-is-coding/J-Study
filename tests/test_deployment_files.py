@@ -7,6 +7,14 @@ import re
 
 
 ROOT = Path(__file__).resolve().parents[1]
+STAGING_ENV_NAMES = (
+    "JSTUDY_IMAGE_NAME",
+    "JSTUDY_API_CONTAINER_NAME",
+    "JSTUDY_WORKER_CONTAINER_NAME",
+    "JSTUDY_POSTGRES_CONTAINER_NAME",
+    "JSTUDY_API_BIND_ADDRESS",
+    "JSTUDY_API_PORT",
+)
 
 
 def compose_service_names(compose_text: str) -> list[str]:
@@ -28,6 +36,32 @@ def compose_service_block(compose_text: str, service_name: str) -> str:
     if service_match is None:
         return ""
     return service_match.group("body")
+
+
+def resolved_compose(overrides: dict[str, str] | None = None) -> dict:
+    environment = os.environ.copy()
+    for name in STAGING_ENV_NAMES:
+        environment.pop(name, None)
+    environment.update(overrides or {})
+    completed = subprocess.run(
+        [
+            "docker",
+            "compose",
+            "-f",
+            str(ROOT / "deploy" / "docker-compose" / "api.compose.yml"),
+            "config",
+            "--format",
+            "json",
+        ],
+        cwd=ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        raise AssertionError(completed.stdout + completed.stderr)
+    return json.loads(completed.stdout)
 
 
 class DeploymentFilesTest(unittest.TestCase):
@@ -81,7 +115,12 @@ class DeploymentFilesTest(unittest.TestCase):
             {"postgres", "jstudy-api", "jstudy-worker"},
         )
         self.assertEqual(compose_text.count("dockerfile: apps/api/Dockerfile"), 2)
-        self.assertEqual(compose_text.count("image: jstudy-backend:pilot"), 2)
+        self.assertEqual(
+            compose_text.count(
+                "image: ${JSTUDY_IMAGE_NAME:-jstudy-backend:pilot}"
+            ),
+            2,
+        )
         self.assertIn("command: [\"python\", \"-m\", \"apps.worker.main\"]", compose_text)
         self.assertRegex(
             compose_text,
@@ -90,6 +129,86 @@ class DeploymentFilesTest(unittest.TestCase):
         )
         worker_block = compose_service_block(compose_text, "jstudy-worker")
         self.assertNotIn("ports:", worker_block)
+
+    def test_compose_defaults_preserve_existing_container_contract(self):
+        services = resolved_compose()["services"]
+
+        self.assertEqual(
+            set(services),
+            {"postgres", "jstudy-api", "jstudy-worker"},
+        )
+        self.assertEqual(services["jstudy-api"]["image"], "jstudy-backend:pilot")
+        self.assertEqual(services["jstudy-worker"]["image"], "jstudy-backend:pilot")
+        self.assertEqual(services["jstudy-api"]["container_name"], "jstudy-api")
+        self.assertEqual(
+            services["jstudy-worker"]["container_name"],
+            "jstudy-worker",
+        )
+        self.assertEqual(
+            services["postgres"]["container_name"],
+            "jstudy-postgres",
+        )
+        self.assertEqual(
+            services["jstudy-api"]["ports"],
+            [
+                {
+                    "mode": "ingress",
+                    "target": 8765,
+                    "published": "8765",
+                    "protocol": "tcp",
+                    "host_ip": "0.0.0.0",
+                }
+            ],
+        )
+
+    def test_compose_staging_values_isolate_image_containers_and_port(self):
+        services = resolved_compose(
+            {
+                "JSTUDY_IMAGE_NAME": "jstudy-backend:staging-test",
+                "JSTUDY_API_CONTAINER_NAME": "jstudy-staging-api",
+                "JSTUDY_WORKER_CONTAINER_NAME": "jstudy-staging-worker",
+                "JSTUDY_POSTGRES_CONTAINER_NAME": "jstudy-staging-postgres",
+                "JSTUDY_API_BIND_ADDRESS": "127.0.0.1",
+                "JSTUDY_API_PORT": "8766",
+            }
+        )["services"]
+
+        self.assertEqual(
+            set(services),
+            {"postgres", "jstudy-api", "jstudy-worker"},
+        )
+        self.assertEqual(
+            services["jstudy-api"]["image"],
+            "jstudy-backend:staging-test",
+        )
+        self.assertEqual(
+            services["jstudy-worker"]["image"],
+            "jstudy-backend:staging-test",
+        )
+        self.assertEqual(
+            services["jstudy-api"]["container_name"],
+            "jstudy-staging-api",
+        )
+        self.assertEqual(
+            services["jstudy-worker"]["container_name"],
+            "jstudy-staging-worker",
+        )
+        self.assertEqual(
+            services["postgres"]["container_name"],
+            "jstudy-staging-postgres",
+        )
+        self.assertEqual(
+            services["jstudy-api"]["ports"],
+            [
+                {
+                    "mode": "ingress",
+                    "target": 8765,
+                    "published": "8766",
+                    "protocol": "tcp",
+                    "host_ip": "127.0.0.1",
+                }
+            ],
+        )
 
     def test_api_and_worker_share_database_jobs_and_runtime_environment(self):
         compose_file = ROOT / "deploy" / "docker-compose" / "api.compose.yml"

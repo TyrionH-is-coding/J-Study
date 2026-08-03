@@ -3,8 +3,8 @@ services:
     build:
       context: ../..
       dockerfile: apps/api/Dockerfile
-    image: jstudy-backend:pilot
-    container_name: jstudy-api
+    image: ${JSTUDY_IMAGE_NAME:-jstudy-backend:pilot}
+    container_name: ${JSTUDY_API_CONTAINER_NAME:-jstudy-api}
     restart: unless-stopped
     depends_on:
       postgres:
@@ -42,7 +42,7 @@ services:
       JSTUDY_COOKIE_SECURE: ${JSTUDY_COOKIE_SECURE:-false}
       JSTUDY_SESSION_COOKIE_NAME: ${JSTUDY_SESSION_COOKIE_NAME:-jstudy_session}
     ports:
-      - "${JSTUDY_API_PORT:-8765}:8765"
+      - "${JSTUDY_API_BIND_ADDRESS:-0.0.0.0}:${JSTUDY_API_PORT:-8765}:8765"
     volumes:
       - ../../data/jobs:/app/data/jobs
       - ../../data/settings:/app/data/settings
@@ -63,8 +63,8 @@ services:
     build:
       context: ../..
       dockerfile: apps/api/Dockerfile
-    image: jstudy-backend:pilot
-    container_name: jstudy-worker
+    image: ${JSTUDY_IMAGE_NAME:-jstudy-backend:pilot}
+    container_name: ${JSTUDY_WORKER_CONTAINER_NAME:-jstudy-worker}
     restart: unless-stopped
     command: ["python", "-m", "apps.worker.main"]
     depends_on:
@@ -106,7 +106,7 @@ services:
 
   postgres:
     image: postgres:16-alpine
-    container_name: jstudy-postgres
+    container_name: ${JSTUDY_POSTGRES_CONTAINER_NAME:-jstudy-postgres}
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-jstudy}
