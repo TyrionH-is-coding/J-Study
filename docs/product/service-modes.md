@@ -1,7 +1,7 @@
 # J-Study 学科模式与资料工作流
 
 状态：模式合同已确认；跨课件关联算法待实验
-最后更新：2026-08-01
+最后更新：2026-08-03
 
 本文档是 J-Study 模式体系的产品事实来源。后端字段、前端入口和路线图应与本文保持一致。
 
@@ -41,7 +41,7 @@ flowchart TD
 |---|---|---|
 | `single_courseware` | 恰好 1 份 PDF，不接受大纲 | 按一份课件的教学顺序生成同步资料 |
 | `course_outline` | 恰好 1 份大纲，至少 1 份 PDF | 使用大纲匹配、命名和组织一门课程的课件 |
-| `multi_courseware` | 至少 2 份 PDF，不接受大纲 | 按同一门课程的课件顺序生成，并主动发现跨课件知识关联 |
+| `multi_courseware` | 至少 2 份 PDF，不接受大纲 | 按同一门课程的课件顺序生成；跨课件关联待实验选型 |
 
 三个工作流互斥：
 
@@ -59,7 +59,7 @@ flowchart TD
 1. 每份课件内部按页码和 MinerU block 顺序推进；
 2. 课件之间按用户确认的 `display_order` 推进；
 3. 主学习资料保持 sequence-first；
-4. AI 主动发现不同课件间有助于巩固理解的知识关联。
+4. 在实验选定可靠算法后，再增加跨课件知识关联。
 
 `source_id` 在上传后保持稳定。自动排序、用户拖动或重命名只能改变 `display_order` 和 `display_title`，不能重新分配来源身份。
 
@@ -117,21 +117,22 @@ flowchart LR
 
 已经实现：
 
-- `single_courseware` 与 `course_outline` 后端路径；
+- `single_courseware`、`course_outline` 与 `multi_courseware` 严格互斥的
+  multipart admission 和后端生成路径；
 - Worker 强制使用 MinerU 进行产品文本和结构提取；
 - `courseware-manifest.v1`、`learning-map.v1`、`coverage-ledger.v1`；
 - sequence-first `material-package.v2` 生成；
 - 稳定 `source_id`、来源预览和 owner-scoped artifact API。
+- 多课件在一个 Job 中按 admission-time `display_order` 批量解析并顺序生成，
+  不拆成多个单课件 Job。
 
 尚未实现：
 
 - `general-default` 的真实通用 Soul Profile 和默认切换；
-- `multi_courseware` admission、关联实验基线和正式生成路径；
+- 跨课件关联发现、评分、生成、关系图和相关 UI 合同；
 - 三个工作流的正式前端入口；
 - Courseware Organizer 的自动排序、差异展示、拖动、改名和 Manifest 确认；
 - 正式 Reader 的跨课件自然语言关联展示。
-
-当前 API 对单课件 optional outline 的兼容行为与目标产品合同不一致。后续实现任务应先增加新合同和迁移测试，再删除旧兼容行为。
 
 ## 7. 轻量化原则
 

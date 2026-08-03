@@ -38,7 +38,7 @@ The first backend reorganization steps are implemented. Further steps should spl
 Current sequence-first implementation:
 
 ```text
-Upload single PDF or course outline + multiple PDFs + optional scenario
+Upload one strict service-mode input shape + optional scenario
 -> scenario and soul profile resolution
 -> stable source identity and display-order snapshot
 -> one batched MinerU Precision Extract request per Job
@@ -87,13 +87,14 @@ The approved target contracts are:
 The modes are mutually exclusive and do not convert after submission. The
 complete product rules live in `docs/product/service-modes.md`.
 
-The backend currently implements `single_courseware` and `course_outline`.
-`single_courseware` still has bounded optional-outline compatibility that must be
-removed through a tested migration. `multi_courseware` admission and
-cross-courseware association generation remain pending. The formal `apps/web`
-business workflows remain foundation placeholders.
+The backend implements all three strict admission and generation paths.
+`multi_courseware` uses one Job, one batched MinerU parse, stable source
+identity/display order, and the same sequence-first coordination and package
+contracts. Cross-courseware association generation remains unimplemented while
+candidate algorithms are evaluated. The formal `apps/web` business workflows
+remain foundation placeholders.
 
-The two currently implemented service modes use the same v2 package-output contract:
+The three implemented service modes use the same v2 package-output contract:
 
 ```text
 material-package.v2
@@ -105,11 +106,11 @@ material-package.v2
 -> deterministic compatibility Markdown assembled from sections
 ```
 
-The difference is planning. Multi Courseware Mode follows the user-confirmed
-courseware order and adds only evidence-validated, non-interactive
-cross-courseware relationships. Course Outline Mode uses the uploaded outline
-for matching, naming, and grouping while preserving the confirmed source and
-page order; weak evidence remains visible instead of being silently invented.
+The difference is planning. Multi Courseware Mode currently follows the
+admission-time courseware order without adding cross-courseware relationships.
+Course Outline Mode uses the uploaded outline for matching, naming, and grouping
+while preserving the confirmed source and page order; weak evidence remains
+visible instead of being silently invented.
 
 ## Platform Layer
 
@@ -135,7 +136,7 @@ The platform should expose stable routing hooks for vertical assets. A new subje
 ## Document Parser Boundary
 
 The approved target uses MinerU for all product text and structure extraction.
-Users do not select a parser or parser tier. The Worker now routes both
+Users do not select a parser or parser tier. The Worker routes all three
 implemented service modes through MinerU; empty, `fast`, and `quality` remain
 request aliases only and do not change parser execution.
 
@@ -301,7 +302,7 @@ The MVP hook should collect raw feedback into an admin-visible candidate pool on
 
 The admin surface is available at `GET /admin/settings`, backed by `GET/PUT /api/admin/settings` and `POST /api/admin/settings/test/{llm|embedding|search}`. Set `JSTUDY_ADMIN_TOKEN` in server deployments so only operators can read or write model keys and runtime settings.
 
-The backend exposes `GET /api/health` for reverse proxy and container liveness checks. `GET /api/readiness` reports whether runtime paths, prompt files, API key configuration, and PDF upload limits are ready for job execution. `GET /api/readiness?probe_provider=true` also performs a live SiliconFlow chat and embedding probe for deployment verification. `GET /api/options` returns public scenarios without parser profiles. `POST /api/generate` accepts empty or `single_courseware` `service_mode` with `pdf=<one PDF>`, and accepts `service_mode=course_outline` with required `outline=<.md/.txt/.pdf>` plus repeated `pdfs=<PDF>` uploads. New clients omit `parser_profile_id`; empty, `fast`, and `quality` are bounded migration aliases, unknown values are rejected, and the Worker always uses MinerU. The metadata-only `mode` remains separate from service mode and subject scenario.
+The backend exposes `GET /api/health` for reverse proxy and container liveness checks. `GET /api/readiness` reports whether runtime paths, prompt files, API key configuration, and PDF upload limits are ready for job execution. `GET /api/readiness?probe_provider=true` also performs a live SiliconFlow chat and embedding probe for deployment verification. `GET /api/options` returns public scenarios without parser profiles and exposes the three enabled service modes. `POST /api/generate` accepts empty or `single_courseware` `service_mode` with exactly one singular `pdf=<PDF>`; `course_outline` with one required `outline=<.md/.txt/.pdf>` plus at least one repeated `pdfs=<PDF>`; and `multi_courseware` with at least two repeated `pdfs=<PDF>`. The three multipart families are mutually exclusive. New clients omit `parser_profile_id`; empty, `fast`, and `quality` are bounded migration aliases, unknown values are rejected, and the Worker always uses MinerU. The metadata-only `mode` remains separate from service mode and subject scenario.
 
 Dynamic API responses that drive polling and runtime state use `Cache-Control: no-store`. Uploaded/generated job artifacts such as markdown output, evidence JSON, material-package JSON, retrieval trace, PDF metadata, original PDF, Markdown export, and rendered PDF page PNGs use `Cache-Control: private, max-age=0, must-revalidate` so browsers can revalidate private previews without serving stale job state.
 

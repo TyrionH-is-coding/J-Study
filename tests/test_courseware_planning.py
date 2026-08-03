@@ -187,7 +187,7 @@ class CoursewarePlanningTest(unittest.TestCase):
     def test_planner_is_continuous_ordered_and_covers_every_block_once(self):
         manifest = build_courseware_manifest(
             job_id="job-1",
-            service_mode="course_outline",
+            service_mode="multi_courseware",
             sources=self.sources(),
             outline_filename=None,
             outline_sha256=None,

@@ -21,8 +21,8 @@ delivery evidence rather than product truth.
 
 ## Approved Refactor Direction
 
-Task 0008 implements the first backend slice of the approved 2026-07-28
-parser and sequence-first architecture:
+Task 0008 与 0009 已实现 2026-07-28 解析器和 sequence-first 架构的首批
+后端切片：
 
 - MinerU Precision Extract cloud API for all product text/structure extraction
 - no user-facing parser selection
@@ -39,9 +39,12 @@ The controlling design and migration gates are in:
 
 The current backend can:
 
-- accept one courseware PDF and an optional outline as a bounded compatibility
-  path; the target Single Courseware contract rejects outlines
-- accept `service_mode=course_outline` with a required outline and one or more repeated `pdfs` uploads
+- `service_mode=single_courseware` 只接受一个 singular `pdf`，不接受
+  outline 或 repeated `pdfs`
+- `service_mode=course_outline` 接受一个必需 outline 和至少一个 repeated
+  `pdfs`
+- `service_mode=multi_courseware` 接受至少两个 repeated `pdfs`，不接受
+  outline 或 singular `pdf`
 - expose public subject scenarios without exposing parser choices
 - batch-parse all Job sources through MinerU Precision Extract and normalize them to versioned `ParsedDocument` contracts
 - retain PyMuPDF only for PDF validation, page count, metadata, and source preview rendering
@@ -53,7 +56,8 @@ The current backend can:
 - plan ordered continuous units in `learning-map.v1` and record every normalized block in `coverage-ledger.v1`
 - generate complete materials in learning-map order; embedding/BM25 relevance does not control the primary sequence
 - retrieve related knowledge snippets from the current legacy `mnemonics.md` prompt-rendered seed file
-- generate strictly validated `material-package.v2` sections for both current service modes using the selected scenario's soul profile
+- 三种 service mode 均使用所选 scenario 的 Soul Profile 生成严格校验的
+  `material-package.v2` sections
 - derive compatibility Markdown and its evidence links deterministically from the validated package instead of generating an independent Markdown response
 - emit evidence links so the UI can jump from evidence ids to the correct source PDF page
 
@@ -168,9 +172,20 @@ Use `/api/readiness?probe_provider=true` during deployment to run a live Silicon
 `parser_profile_id`; empty, `fast`, and `quality` remain bounded migration
 aliases, while unknown values are rejected and no alias changes the
 Worker-owned MinerU parser.
-`POST /api/generate` accepts optional `scenario_id`, legacy `parser_profile_id`, `mode`, and `service_mode` form fields. Empty `service_mode` or `single_courseware` keeps the existing `pdf=<one PDF>` path. `service_mode=course_outline` requires `outline=<.md/.txt/.pdf>` and at least one repeated `pdfs=<PDF>` upload. `mode` remains generation metadata. `scenario_id` resolves `content_pack_id`, `prompt_profile`, and the matching `soul_profile`.
+`POST /api/generate` 接受可选 `scenario_id`、legacy
+`parser_profile_id`、仅作为 metadata 的 `mode` 和 `service_mode`。
+空 `service_mode` 或 `single_courseware` 要求恰好一个 singular
+`pdf=<PDF>`；`course_outline` 要求一个
+`outline=<.md/.txt/.pdf>` 和至少一个 repeated `pdfs=<PDF>`；
+`multi_courseware` 要求至少两个 repeated `pdfs=<PDF>`。三种 multipart
+shape 互斥，非法组合不会创建 Job。`scenario_id` 解析
+`content_pack_id`、`prompt_profile` 和对应 `soul_profile`。
 Job、source、section、artifact 和 transition 已由 SQLModel 持久化到 PostgreSQL；独立 `jstudy-worker` 通过 lease 认领并执行 queued Job，API 只负责 durable submission 和 owner-scoped read。旧 `jobs.json` 代码仍保留为 compatibility boundary，但 production API/worker 不 import 或写入它。
 Completed jobs expose owner-scoped, bounded, strictly validated synchronization artifacts at `/api/jobs/{job_id}/manifest`, `/api/jobs/{job_id}/learning-map`, and `/api/jobs/{job_id}/coverage`, plus retrieval diagnostics at `/api/jobs/{job_id}/trace`, `material-package.v2` at `/api/jobs/{job_id}/package`, and deterministic compatibility Markdown at `/api/jobs/{job_id}/export`. Source lists include `source_id`, `original_filename`, `display_title`, and `display_order`. Source previews remain available through the legacy first-source aliases and source-specific `/api/jobs/{job_id}/pdfs/{source_id}/...` endpoints.
+
+Multi Courseware 当前按稳定 `display_order` 复用同一 sequence-first 路径，
+不会拆成多个独立单 PDF Job。跨课件关联发现、评分、生成和 UI 仍处于实验
+决策阶段，当前未实现。
 
 User auth:
 

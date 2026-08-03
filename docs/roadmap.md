@@ -115,7 +115,7 @@ Task 0008 delivered the first backend slice:
 
 Completed acceptance:
 
-- both implemented service modes use the same Worker-owned MinerU document service
+- all three implemented service modes use the same Worker-owned MinerU document service
 - stable source identity remains independent from display title and order
 - every normalized block receives one coverage disposition
 - complete-material section order follows the deterministic learning map, not embedding relevance
@@ -130,6 +130,19 @@ Task 0008 does not include:
 - Multi Courseware Mode
 - Alembic or production deployment
 - question generation, BYOK, quota, or billing
+
+Task 0009 subsequently delivered:
+
+- mutually exclusive multipart admission contracts for `single_courseware`,
+  `course_outline`, and `multi_courseware`
+- strict Manifest and Package v2 service-mode shapes
+- one-Job, one-batch MinerU Worker dispatch for ordered multi-courseware sources
+- sequence-first multi-courseware Manifest, Learning Map, Coverage Ledger,
+  Package v2, deterministic Markdown, evidence, quality, and trace artifacts
+
+Task 0009 deliberately does not include cross-courseware association discovery,
+scoring, generation, graph contracts, or UI. That algorithm remains an
+experimental decision.
 
 Later phases add the editable courseware draft/organizer, synchronized Reader,
 HTML rendering, and production-like deployment after the backend contracts pass.
@@ -258,21 +271,20 @@ infrastructure.
 Deliverables:
 
 - explicit `single_courseware`, `course_outline`, and `multi_courseware`
-  service modes - backend paths currently exist for `single_courseware` and
-  `course_outline`; strict input cleanup and `multi_courseware` remain pending
+  service modes - strict backend admission and generation paths are done
 - frontend upload entry points that explain the three modes without mixing them
   with subject scenario or internal parser infrastructure
 - backend request contract that records service mode separately from
-  `scenario_id` - currently done for `course_outline`; legacy
+  `scenario_id` - done for all three service modes; legacy
   `parser_profile_id` is no longer advertised and remains only as bounded
   empty/`fast`/`quality` request compatibility
-- package-output contract for multi-section material - strict v2 backend contract done for `single_courseware` and `course_outline`
-- section-level blocks, structural citations, source/evidence identities, and direct quality status - backend v2 done for both implemented modes
+- package-output contract for multi-section material - strict v2 backend contract done for all three service modes
+- section-level blocks, structural citations, source/evidence identities, and direct quality status - backend v2 done for all three service modes
 - full-export contract that can assemble all sections into HTML or deterministic
   Markdown from the same `material-package.v2`
 - Multi Courseware association discovery that proposes cross-source candidates,
   validates both sides, and adds bounded non-interactive knowledge connections
-  without changing the main Learning Map
+  without changing the main Learning Map - pending experimental selection
 
 Acceptance:
 
@@ -310,16 +322,18 @@ Acceptance:
 ## Phase 5.25: Multi Courseware Mode
 
 Goal: let users upload at least two ordered PDFs from the same course and receive
-one sequence-first material package with bounded cross-courseware knowledge
-connections.
+one sequence-first material package. Bounded cross-courseware knowledge
+connections remain pending experimental selection.
 
 Deliverables:
 
-- strict `multi_courseware` admission with at least two PDFs and no outline
+- strict `multi_courseware` admission with at least two PDFs and no outline -
+  backend done
 - frontend entry point that distinguishes Multi Courseware from Course Outline
 - user-confirmed source title and order before generation
 - source-file metadata in chunks, evidence, and citation links - done
-- sequence-first section planning from the confirmed source/page/block order
+- sequence-first section planning from the admission-time source/page/block
+  order - backend done
 - an offline evaluation fixture using the same representative courseware across
   pre-generation, post-generation, and separate association-layer approaches
 - comparison metrics for accuracy, evidence validity, learning value,
@@ -328,7 +342,8 @@ Deliverables:
 - bounded relationships that never reorder the main Learning Map
 - non-interactive natural-language relationship rendering in the Reader
 - package reader with section navigation and source preview
-- full-document export assembled from package sections
+- deterministic Markdown full-document export assembled from package sections -
+  backend done
 
 Acceptance:
 
