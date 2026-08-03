@@ -157,6 +157,82 @@ class WebMvpTest(unittest.TestCase):
         )
         return paths
 
+    def multi_v2_runner(self, **kwargs):
+        paths = self.v2_runner(**kwargs)
+        source_files = kwargs["source_files"]
+        evidence = []
+        sections = []
+        for index, source in enumerate(source_files, start=1):
+            evidence_id = f"E{index:03d}"
+            source_id = source["source_id"]
+            evidence.append(
+                {
+                    "id": evidence_id,
+                    "source_id": source_id,
+                    "source_file": source["file_name"],
+                    "page": 1,
+                    "chunk_id": f"{source_id}-C001",
+                    "excerpt": f"Fact {index}",
+                }
+            )
+            sections.append(
+                {
+                    "id": f"section-{index:03d}",
+                    "order": index,
+                    "title": f"课件 {index}",
+                    "status": "generated",
+                    "quality": {
+                        "evidence_status": "sufficient",
+                        "evidence_count": 1,
+                        "cited_evidence_count": 1,
+                        "citation_coverage": 1.0,
+                    },
+                    "source_ids": [source_id],
+                    "evidence_ids": [evidence_id],
+                    "blocks": [
+                        {
+                            "id": f"paragraph-{index:03d}",
+                            "type": "paragraph",
+                            "runs": [
+                                {"type": "text", "text": f"Fact {index} "},
+                                {
+                                    "type": "citation",
+                                    "evidence_id": evidence_id,
+                                },
+                            ],
+                        }
+                    ],
+                }
+            )
+        paths["evidence"].write_text(
+            json.dumps(evidence),
+            encoding="utf-8",
+        )
+        paths["package"].write_text(
+            json.dumps(
+                {
+                    "schema_version": "material-package.v2",
+                    "package_id": kwargs["package_id"],
+                    "service_mode": "multi_courseware",
+                    "title": "多课件学习资料",
+                    "subject": "medicine",
+                    "language": "zh-CN",
+                    "source_ids": [
+                        source["source_id"] for source in source_files
+                    ],
+                    "sections": sections,
+                    "rendering": {
+                        "default_theme": {
+                            "theme_id": "clinical-standard",
+                            "theme_version": "1.0.0",
+                        }
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        return paths
+
     def ready_settings(
         self,
         root: Path,
@@ -232,6 +308,8 @@ class WebMvpTest(unittest.TestCase):
         client: TestClient,
         settings: RuntimeSettings,
         runner,
+        *,
+        service_mode: str = "single_courseware",
     ) -> None:
         def staged_runner(**kwargs):
             callback = kwargs["progress_callback"]
@@ -257,12 +335,17 @@ class WebMvpTest(unittest.TestCase):
                 }
             return runner(**forwarded)
 
+        worker_kwargs = {
+            "single_runner": staged_runner,
+            "outline_runner": staged_runner,
+            "document_service": FakeDocumentService(),
+        }
+        if service_mode == "multi_courseware":
+            worker_kwargs["multi_runner"] = staged_runner
         worker = JobWorker(
             client.app.state.job_repository,
             settings,
-            single_runner=staged_runner,
-            outline_runner=staged_runner,
-            document_service=FakeDocumentService(),
+            **worker_kwargs,
         )
         self.assertTrue(worker.run_once())
 
@@ -1114,6 +1197,66 @@ class WebMvpTest(unittest.TestCase):
                 ("S002", "first.pdf", 2),
             ],
         )
+
+    def test_multi_courseware_reaches_completed_existing_result_contracts(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            settings = self.ready_settings(root)
+            client = TestClient(create_app(settings=settings))
+            self.register_user(client)
+            response = client.post(
+                "/api/generate",
+                files=[
+                    (
+                        "pdfs",
+                        (
+                            "lecture-one.pdf",
+                            self.make_pdf_bytes(),
+                            "application/pdf",
+                        ),
+                    ),
+                    (
+                        "pdfs",
+                        (
+                            "lecture-two.pdf",
+                            self.make_pdf_bytes(),
+                            "application/pdf",
+                        ),
+                    ),
+                ],
+                data={"service_mode": "multi_courseware"},
+            )
+            self.assertEqual(response.status_code, 200)
+            job_id = response.json()["job_id"]
+
+            self.run_next_job(
+                client,
+                settings,
+                self.multi_v2_runner,
+                service_mode="multi_courseware",
+            )
+
+            status = client.get(f"/api/jobs/{job_id}")
+            package = client.get(f"/api/jobs/{job_id}/package")
+            manifest = client.get(f"/api/jobs/{job_id}/manifest")
+            learning_map = client.get(f"/api/jobs/{job_id}/learning-map")
+            coverage = client.get(f"/api/jobs/{job_id}/coverage")
+            source_pdf = client.get(f"/api/jobs/{job_id}/pdfs/S002/pdf")
+            export = client.get(f"/api/jobs/{job_id}/export")
+
+        self.assertEqual(status.status_code, 200)
+        self.assertEqual(status.json()["status"], "completed")
+        self.assertEqual(package.status_code, 200)
+        self.assertEqual(package.json()["service_mode"], "multi_courseware")
+        self.assertEqual(manifest.status_code, 200)
+        self.assertEqual(
+            [source["source_id"] for source in manifest.json()["sources"]],
+            ["S001", "S002"],
+        )
+        self.assertEqual(learning_map.status_code, 200)
+        self.assertEqual(coverage.status_code, 200)
+        self.assertEqual(source_pdf.status_code, 200)
+        self.assertEqual(export.status_code, 200)
 
     def test_course_outline_requires_outline_and_pdfs(self):
         with tempfile.TemporaryDirectory() as tmp:

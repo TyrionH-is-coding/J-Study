@@ -209,7 +209,11 @@ class JobWorkerTest(unittest.TestCase):
         inputs = job_dir / "inputs"
         inputs.mkdir(parents=True)
         source = inputs / "S001.pdf"
-        source.write_bytes(b"%PDF-1.4\nsource")
+        source.write_bytes(b"%PDF-1.4\nsource-one")
+        source_two = None
+        if service_mode == "multi_courseware":
+            source_two = inputs / "S002.pdf"
+            source_two.write_bytes(b"%PDF-1.4\nsource-two")
         outline_relative_path = None
         outline_original_filename = None
         outline_sha256 = None
@@ -245,6 +249,26 @@ class JobWorkerTest(unittest.TestCase):
                         mime_type="application/pdf",
                         byte_size=source.stat().st_size,
                         sha256=hashlib.sha256(source.read_bytes()).hexdigest(),
+                        display_title="Lecture One",
+                        display_order=1,
+                    ),
+                    *(
+                        (
+                            JobSourceInput(
+                                source_id="S002",
+                                original_filename="lecture-two.pdf",
+                                relative_path=f"{job_id}/inputs/S002.pdf",
+                                mime_type="application/pdf",
+                                byte_size=source_two.stat().st_size,
+                                sha256=hashlib.sha256(
+                                    source_two.read_bytes()
+                                ).hexdigest(),
+                                display_title="Lecture Two",
+                                display_order=2,
+                            ),
+                        )
+                        if source_two is not None
+                        else ()
                     ),
                 ),
             )
@@ -351,57 +375,65 @@ class JobWorkerTest(unittest.TestCase):
 
         def runner(**kwargs):
             outputs = legacy_runner(**kwargs)
+            source_files = kwargs["source_files"]
             evidence = [
                 {
-                    "id": "E001",
-                    "source_id": "S001",
-                    "source_file": "lecture.pdf",
+                    "id": f"E{index:03d}",
+                    "source_id": source["source_id"],
+                    "source_file": source["file_name"],
                     "page": 1,
-                    "chunk_id": "S001-C001",
-                    "excerpt": "Fact",
+                    "chunk_id": f"{source['source_id']}-C001",
+                    "excerpt": f"Fact {index}",
                 }
+                for index, source in enumerate(source_files, start=1)
             ]
             outputs["evidence"].write_text(
                 json.dumps(evidence),
                 encoding="utf-8",
             )
-            sections = [
-                {
-                    "id": (
-                        "full-material"
-                        if expected_mode == "single_courseware"
-                        else "section-001"
-                    ),
-                    "order": 1,
-                    "title": (
-                        "完整资料"
-                        if expected_mode == "single_courseware"
-                        else "Unit One"
-                    ),
-                    "status": "generated",
-                    "quality": {
-                        "evidence_status": "sufficient",
-                        "evidence_count": 1,
-                        "cited_evidence_count": 1,
-                        "citation_coverage": 1.0,
-                    },
-                    "source_ids": ["S001"],
-                    "evidence_ids": ["E001"],
-                    "blocks": [
-                        {
-                            "id": "paragraph-001",
-                            "type": "paragraph",
-                            "runs": [
-                                {"type": "text", "text": "Fact "},
-                                {
-                                    "type": "citation",
-                                    "evidence_id": "E001",
-                                },
-                            ],
-                        }
-                    ],
-                }
-            ]
+            sections = []
+            for index, source in enumerate(source_files, start=1):
+                evidence_id = f"E{index:03d}"
+                sections.append(
+                    {
+                        "id": (
+                            "full-material"
+                            if expected_mode == "single_courseware"
+                            else f"section-{index:03d}"
+                        ),
+                        "order": index,
+                        "title": (
+                            "完整资料"
+                            if expected_mode == "single_courseware"
+                            else f"Unit {index}"
+                        ),
+                        "status": "generated",
+                        "quality": {
+                            "evidence_status": "sufficient",
+                            "evidence_count": 1,
+                            "cited_evidence_count": 1,
+                            "citation_coverage": 1.0,
+                        },
+                        "source_ids": [source["source_id"]],
+                        "evidence_ids": [evidence_id],
+                        "blocks": [
+                            {
+                                "id": f"paragraph-{index:03d}",
+                                "type": "paragraph",
+                                "runs": [
+                                    {
+                                        "type": "text",
+                                        "text": f"Fact {index} ",
+                                    },
+                                    {
+                                        "type": "citation",
+                                        "evidence_id": evidence_id,
+                                    },
+                                ],
+                            }
+                        ],
+                    }
+                )
             outputs["package"].write_text(
                 json.dumps(
                     {
@@ -411,7 +443,9 @@ class JobWorkerTest(unittest.TestCase):
                         "title": "学习资料",
                         "subject": "medicine",
                         "language": "zh-CN",
-                        "source_ids": ["S001"],
+                        "source_ids": [
+                            source["source_id"] for source in source_files
+                        ],
                         "sections": sections,
                         "rendering": {
                             "default_theme": {
@@ -568,6 +602,129 @@ class JobWorkerTest(unittest.TestCase):
             }
             <= artifact_kinds
         )
+
+    def test_multi_worker_batches_sources_and_uses_dedicated_runner(self):
+        self.create_job(service_mode="multi_courseware")
+        document_service = FakeDocumentService()
+        calls = []
+        runner = self.v2_output_runner(calls, "multi_courseware")
+        claim_settings = replace(
+            self.settings,
+            chat_model="multi-claim-chat",
+        )
+        worker = JobWorker(
+            self.repository,
+            self.settings,
+            worker_id="worker-multi",
+            single_runner=lambda **kwargs: self.fail("wrong single runner"),
+            outline_runner=lambda **kwargs: self.fail("wrong outline runner"),
+            multi_runner=runner,
+            settings_provider=lambda: claim_settings,
+            document_service=document_service,
+        )
+
+        self.assertTrue(worker.run_once())
+
+        job = self.repository.get("job-1")
+        self.assertEqual(job.state, JobState.COMPLETED)
+        self.assertEqual(len(document_service.calls), 1)
+        self.assertEqual(
+            [item.source_id for item in document_service.calls[0][0]],
+            ["S001", "S002"],
+        )
+        self.assertEqual(
+            [item.source_id for item in calls[0]["parsed_documents"]],
+            ["S001", "S002"],
+        )
+        self.assertEqual(calls[0]["chat_model"], "multi-claim-chat")
+        self.assertEqual(
+            [
+                (item.source_id, item.display_order)
+                for item in calls[0]["courseware_manifest"].ordered_sources()
+            ],
+            [("S001", 1), ("S002", 2)],
+        )
+        artifact_kinds = {
+            artifact.kind
+            for artifact in self.repository.list_artifacts("job-1")
+        }
+        self.assertTrue(
+            {
+                ArtifactKind.MANIFEST,
+                ArtifactKind.LEARNING_MAP,
+                ArtifactKind.COVERAGE,
+                ArtifactKind.PACKAGE,
+                ArtifactKind.MARKDOWN,
+                ArtifactKind.EVIDENCE,
+                ArtifactKind.EVIDENCE_LINKS,
+                ArtifactKind.QUALITY,
+                ArtifactKind.TRACE,
+            }
+            <= artifact_kinds
+        )
+        self.assertEqual(
+            [
+                section.position
+                for section in self.repository.list_sections("job-1")
+            ],
+            [1, 2],
+        )
+
+    def test_multi_worker_rejects_package_service_mode_mismatch(self):
+        self.create_job(service_mode="multi_courseware")
+        base_runner = self.v2_output_runner([], "multi_courseware")
+
+        def mismatched_runner(**kwargs):
+            outputs = base_runner(**kwargs)
+            payload = json.loads(
+                outputs["package"].read_text(encoding="utf-8")
+            )
+            payload["service_mode"] = "single_courseware"
+            outputs["package"].write_text(
+                json.dumps(payload),
+                encoding="utf-8",
+            )
+            return outputs
+
+        worker = JobWorker(
+            self.repository,
+            self.settings,
+            worker_id="worker-multi-mismatch",
+            multi_runner=mismatched_runner,
+        )
+
+        self.assertTrue(worker.run_once())
+        job = self.repository.get("job-1")
+        self.assertEqual(job.state, JobState.FAILED)
+        self.assertEqual(job.error_code, "invalid_job_output")
+        self.assertEqual(self.repository.list_artifacts("job-1"), [])
+        self.assertEqual(self.repository.list_sections("job-1"), [])
+
+    def test_multi_worker_rejects_coordination_mutation(self):
+        self.create_job(service_mode="multi_courseware")
+        base_runner = self.v2_output_runner([], "multi_courseware")
+
+        def tampered_runner(**kwargs):
+            outputs = base_runner(**kwargs)
+            path = kwargs["output_dir"] / "result-learning-map.json"
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            payload["units"][0]["material_section_id"] = "tampered-section"
+            path.write_text(json.dumps(payload), encoding="utf-8")
+            return outputs
+
+        worker = JobWorker(
+            self.repository,
+            self.settings,
+            worker_id="worker-multi-tampered",
+            multi_runner=tampered_runner,
+        )
+
+        self.assertTrue(worker.run_once())
+        job = self.repository.get("job-1")
+        self.assertEqual(job.state, JobState.FAILED)
+        self.assertEqual(job.error_code, "invalid_job_output")
+        self.assertEqual(self.repository.list_artifacts("job-1"), [])
+        self.assertEqual(self.repository.list_sections("job-1"), [])
 
     def test_worker_rejects_manifest_that_does_not_match_persisted_sources(self):
         self.create_job()

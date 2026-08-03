@@ -25,7 +25,11 @@ from packages.core.jstudy_core.job_system.repository import (
     resolve_job_path,
 )
 from packages.core.jstudy_core.job_system.states import JobState
-from packages.core.jstudy_core.pipeline import run_course_outline, run_mvp
+from packages.core.jstudy_core.pipeline import (
+    run_course_outline,
+    run_multi_courseware,
+    run_mvp,
+)
 from packages.core.jstudy_core.courseware import (
     CoursewareManifestV1,
     CoverageLedgerV1,
@@ -175,6 +179,7 @@ class JobWorker:
         worker_id: str | None = None,
         single_runner: Runner = run_mvp,
         outline_runner: Runner = run_course_outline,
+        multi_runner: Runner = run_multi_courseware,
         settings_provider: RuntimeSettingsProvider | None = None,
         document_service: Any | None = None,
     ):
@@ -184,6 +189,7 @@ class JobWorker:
         self.worker_id = worker_id or f"worker-{uuid4().hex}"
         self.single_runner = single_runner
         self.outline_runner = outline_runner
+        self.multi_runner = multi_runner
         self.document_service = document_service
 
     def run_once(self) -> bool:
@@ -197,6 +203,7 @@ class JobWorker:
             worker_id=self.worker_id,
             single_runner=self.single_runner,
             outline_runner=self.outline_runner,
+            multi_runner=self.multi_runner,
             document_service=self.document_service,
         )
         return scoped_worker._run_once_with_snapshot()
@@ -362,6 +369,8 @@ class JobWorker:
             runner = self.outline_runner
         elif job.service_mode == "single_courseware":
             runner = self.single_runner
+        elif job.service_mode == "multi_courseware":
+            runner = self.multi_runner
         else:
             raise PermanentJobError(
                 "unsupported_service_mode",
