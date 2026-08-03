@@ -30,7 +30,9 @@ from packages.core.jstudy_core.settings import (
 
 
 UPLOAD_CHUNK_BYTES = 64 * 1024
-SUPPORTED_SERVICE_MODES = frozenset({"single_courseware", "course_outline"})
+SUPPORTED_SERVICE_MODES = frozenset(
+    {"single_courseware", "course_outline", "multi_courseware"}
+)
 SUPPORTED_OUTLINE_SUFFIXES = frozenset({".md", ".txt", ".pdf"})
 SUPPORTED_PDF_CONTENT_TYPES = frozenset(
     {"", "application/octet-stream", "application/pdf", "application/x-pdf"}
@@ -279,27 +281,38 @@ class JobService:
                 "too_many_pdfs",
                 "The submission contains too many PDF files.",
             )
-        if pdf_count < 1:
-            raise AdmissionError(
-                "invalid_pdf",
-                "At least one valid PDF is required.",
-            )
 
         if request.service_mode == "single_courseware":
             if pdf_count != 1:
                 raise AdmissionError(
                     "invalid_pdf",
-                    "Single courseware requires exactly one PDF.",
+                    "Single courseware requires exactly one singular PDF.",
                 )
             if request.outline is not None:
-                suffix = Path(request.outline.filename or "").suffix.lower()
-                if suffix not in SUPPORTED_OUTLINE_SUFFIXES:
-                    raise AdmissionError(
-                        "invalid_outline",
-                        "The outline must be a .md, .txt, or .pdf file.",
-                    )
+                raise AdmissionError(
+                    "invalid_outline",
+                    "Single courseware does not accept an outline.",
+                )
             return
 
+        if request.service_mode == "multi_courseware":
+            if pdf_count < 2:
+                raise AdmissionError(
+                    "invalid_pdf",
+                    "Multi courseware requires at least two PDFs.",
+                )
+            if request.outline is not None:
+                raise AdmissionError(
+                    "invalid_outline",
+                    "Multi courseware does not accept an outline.",
+                )
+            return
+
+        if pdf_count < 1:
+            raise AdmissionError(
+                "invalid_pdf",
+                "Course outline mode requires at least one PDF.",
+            )
         if request.outline is None:
             raise AdmissionError(
                 "invalid_outline",

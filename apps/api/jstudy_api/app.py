@@ -692,6 +692,24 @@ def create_app(
         return {
             "default_scenario_id": runtime.default_scenario_id,
             "scenarios": scenarios,
+            "default_service_mode": "single_courseware",
+            "service_modes": [
+                {
+                    "id": "single_courseware",
+                    "display_name": "单课件",
+                    "enabled": True,
+                },
+                {
+                    "id": "course_outline",
+                    "display_name": "课程大纲",
+                    "enabled": True,
+                },
+                {
+                    "id": "multi_courseware",
+                    "display_name": "多课件",
+                    "enabled": True,
+                },
+            ],
         }
 
     @app.post("/api/generate")
@@ -729,19 +747,58 @@ def create_app(
             )
 
         selected_content_paths(scenario)
-        if resolved_service_mode == "course_outline":
-            uploads = tuple(
-                item
-                for item in (pdfs or [])
-                if item is not None and item.filename
-            )
-        else:
-            uploads = (pdf,) if pdf is not None and pdf.filename else ()
+        single_pdf = pdf if pdf is not None and pdf.filename else None
+        repeated_pdfs = tuple(
+            item
+            for item in (pdfs or [])
+            if item is not None and item.filename
+        )
         submitted_outline = (
             outline
             if outline is not None and outline.filename
             else None
         )
+        if resolved_service_mode == "single_courseware":
+            if repeated_pdfs:
+                raise HTTPException(
+                    status_code=400,
+                    detail={
+                        "code": "invalid_pdf",
+                        "message": "Single courseware accepts only the singular pdf field.",
+                    },
+                )
+            if submitted_outline is not None:
+                raise HTTPException(
+                    status_code=400,
+                    detail={
+                        "code": "invalid_outline",
+                        "message": "Single courseware does not accept an outline.",
+                    },
+                )
+            uploads = (single_pdf,) if single_pdf is not None else ()
+        elif resolved_service_mode in {"course_outline", "multi_courseware"}:
+            if single_pdf is not None:
+                raise HTTPException(
+                    status_code=400,
+                    detail={
+                        "code": "invalid_pdf",
+                        "message": "This service mode accepts only repeated pdfs fields.",
+                    },
+                )
+            if (
+                resolved_service_mode == "multi_courseware"
+                and submitted_outline is not None
+            ):
+                raise HTTPException(
+                    status_code=400,
+                    detail={
+                        "code": "invalid_outline",
+                        "message": "Multi courseware does not accept an outline.",
+                    },
+                )
+            uploads = repeated_pdfs
+        else:
+            uploads = ()
         try:
             submission = await durable_service.submit(
                 JobAdmissionRequest(

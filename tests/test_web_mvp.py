@@ -497,6 +497,18 @@ class WebMvpTest(unittest.TestCase):
         payload = response.json()
         self.assertEqual(payload["default_scenario_id"], "medicine-default")
         self.assertIn("medicine-default", {item["id"] for item in payload["scenarios"]})
+        self.assertEqual(payload["default_service_mode"], "single_courseware")
+        self.assertEqual(
+            [
+                (item["id"], item["enabled"])
+                for item in payload["service_modes"]
+            ],
+            [
+                ("single_courseware", True),
+                ("course_outline", True),
+                ("multi_courseware", True),
+            ],
+        )
         self.assertNotIn("default_parser_profile_id", payload)
         self.assertNotIn("parser_profiles", payload)
 
@@ -980,6 +992,129 @@ class WebMvpTest(unittest.TestCase):
             "unsupported_service_mode",
         )
 
+    def test_generate_rejects_mixed_or_forbidden_multipart_families(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            settings = self.ready_settings(root)
+            client = TestClient(create_app(settings=settings))
+            self.register_user(client)
+            pdf_bytes = self.make_pdf_bytes()
+            cases = (
+                (
+                    "single-mixed-pdfs",
+                    "single_courseware",
+                    [
+                        ("pdf", ("one.pdf", pdf_bytes, "application/pdf")),
+                        ("pdfs", ("two.pdf", pdf_bytes, "application/pdf")),
+                    ],
+                    "invalid_pdf",
+                ),
+                (
+                    "single-outline",
+                    "single_courseware",
+                    [
+                        ("pdf", ("one.pdf", pdf_bytes, "application/pdf")),
+                        ("outline", ("outline.md", b"# Outline", "text/markdown")),
+                    ],
+                    "invalid_outline",
+                ),
+                (
+                    "outline-mixed-pdf",
+                    "course_outline",
+                    [
+                        ("pdf", ("one.pdf", pdf_bytes, "application/pdf")),
+                        ("pdfs", ("two.pdf", pdf_bytes, "application/pdf")),
+                        ("outline", ("outline.md", b"# Outline", "text/markdown")),
+                    ],
+                    "invalid_pdf",
+                ),
+                (
+                    "multi-mixed-pdf",
+                    "multi_courseware",
+                    [
+                        ("pdf", ("one.pdf", pdf_bytes, "application/pdf")),
+                        ("pdfs", ("two.pdf", pdf_bytes, "application/pdf")),
+                        ("pdfs", ("three.pdf", pdf_bytes, "application/pdf")),
+                    ],
+                    "invalid_pdf",
+                ),
+                (
+                    "multi-outline",
+                    "multi_courseware",
+                    [
+                        ("pdfs", ("one.pdf", pdf_bytes, "application/pdf")),
+                        ("pdfs", ("two.pdf", pdf_bytes, "application/pdf")),
+                        ("outline", ("outline.md", b"# Outline", "text/markdown")),
+                    ],
+                    "invalid_outline",
+                ),
+                (
+                    "multi-one-pdf",
+                    "multi_courseware",
+                    [("pdfs", ("one.pdf", pdf_bytes, "application/pdf"))],
+                    "invalid_pdf",
+                ),
+            )
+            responses = []
+            for name, service_mode, files, expected_code in cases:
+                with self.subTest(name=name):
+                    response = client.post(
+                        "/api/generate",
+                        files=files,
+                        data={"service_mode": service_mode},
+                        headers={"Idempotency-Key": name},
+                    )
+                    responses.append((response, expected_code))
+
+            repository = client.app.state.job_repository
+            queued_count = repository.count_queued()
+            input_directories = list(settings.jobs_root.glob("*/inputs"))
+            idempotency_rows = [
+                repository.find_by_owner_idempotency_key(
+                    client.get("/api/auth/me").json()["id"],
+                    name,
+                )
+                for name, *_ in cases
+            ]
+
+        for response, expected_code in responses:
+            self.assertEqual(response.status_code, 400)
+            self.assertEqual(response.json()["detail"]["code"], expected_code)
+        self.assertEqual(queued_count, 0)
+        self.assertEqual(input_directories, [])
+        self.assertEqual(idempotency_rows, [None] * len(cases))
+
+    def test_multi_courseware_accepts_repeated_pdfs_in_upload_order(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            settings = self.ready_settings(root)
+            client = TestClient(create_app(settings=settings))
+            self.register_user(client)
+
+            response = client.post(
+                "/api/generate",
+                files=[
+                    ("pdfs", ("second.pdf", self.make_pdf_bytes(), "application/pdf")),
+                    ("pdfs", ("first.pdf", self.make_pdf_bytes(), "application/pdf")),
+                ],
+                data={"service_mode": "multi_courseware"},
+            )
+            job_id = response.json().get("job_id")
+            repository = client.app.state.job_repository
+            sources = repository.list_sources(job_id) if job_id else []
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            [
+                (source.source_id, source.original_filename, source.display_order)
+                for source in sources
+            ],
+            [
+                ("S001", "second.pdf", 1),
+                ("S002", "first.pdf", 2),
+            ],
+        )
+
     def test_course_outline_requires_outline_and_pdfs(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1453,7 +1588,6 @@ class WebMvpTest(unittest.TestCase):
                 "/api/generate",
                 files={
                     "pdf": ("lecture.pdf", self.make_pdf_bytes(), "application/pdf"),
-                    "outline": ("outline.md", b"# outline\n", "text/markdown"),
                 },
                 data={"mode": "exam-quick"},
             )

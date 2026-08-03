@@ -164,30 +164,72 @@ class JobServiceTest(unittest.TestCase):
                 self.assert_error("invalid_outline", request)
                 self.assert_jobs_root_empty()
 
-    def test_single_courseware_requires_one_pdf_and_accepts_optional_outline(self):
-        accepted = replace(
+    def test_single_and_multi_courseware_enforce_strict_shapes(self):
+        single = replace(
             self.request(service_mode="single_courseware"),
             outline=None,
         )
-        result = self.submit(accepted)
-        self.assertTrue(result.created)
+        self.assertTrue(self.submit(single).created)
 
-        with_outline = self.submit(
-            self.request(
-                service_mode="single_courseware",
-                outline=AsyncUpload("notes.md", b"# Notes"),
-            )
+        single_with_outline = self.request(
+            owner="owner-2",
+            service_mode="single_courseware",
+            outline=AsyncUpload("notes.md", b"# Notes"),
         )
-        self.assertTrue(with_outline.created)
-        self.assertIsNotNone(with_outline.job.outline_relative_path)
+        self.assert_error("invalid_outline", single_with_outline)
 
-        rejected = replace(
-            self.request(service_mode="single_courseware"),
+        single_with_two_pdfs = replace(
+            self.request(owner="owner-2", service_mode="single_courseware"),
             outline=None,
-            pdfs=(),
+            pdfs=(
+                AsyncUpload("one.pdf", make_pdf("one")),
+                AsyncUpload("two.pdf", make_pdf("two")),
+            ),
         )
-        self.assert_error("invalid_pdf", rejected)
+        self.assert_error("invalid_pdf", single_with_two_pdfs)
 
+        multi = replace(
+            self.request(owner="owner-2", service_mode="multi_courseware"),
+            outline=None,
+            pdfs=(
+                AsyncUpload("one.pdf", make_pdf("one")),
+                AsyncUpload("two.pdf", make_pdf("two")),
+            ),
+        )
+        self.assertTrue(self.submit(multi).created)
+
+        multi_with_one_pdf = replace(
+            self.request(owner="owner-3", service_mode="multi_courseware"),
+            outline=None,
+        )
+        self.assert_error("invalid_pdf", multi_with_one_pdf)
+
+        multi_with_outline = self.request(
+            owner="owner-3",
+            service_mode="multi_courseware",
+            outline=AsyncUpload("outline.md", b"# Outline"),
+            pdfs=(
+                AsyncUpload("one.pdf", make_pdf("one")),
+                AsyncUpload("two.pdf", make_pdf("two")),
+            ),
+        )
+        self.assert_error("invalid_outline", multi_with_outline)
+
+    def test_invalid_shape_does_not_consume_idempotency_or_create_inputs(self):
+        key = "strict-shape-key"
+        invalid = self.request(
+            service_mode="single_courseware",
+            outline=AsyncUpload("outline.md", b"# Forbidden"),
+            idempotency_key=key,
+        )
+
+        self.assert_error("invalid_outline", invalid)
+
+        self.assertEqual(self.repository.count_queued(), 0)
+        self.assertIsNone(
+            self.repository.find_by_owner_idempotency_key("owner-1", key)
+        )
+        self.assert_jobs_root_empty()
     def test_outline_size_is_limited_while_streaming_and_cleans_up(self):
         settings = replace(self.settings, max_outline_bytes=8)
         upload = AsyncUpload("outline.md", b"012345678")
