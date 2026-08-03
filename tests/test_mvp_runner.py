@@ -359,6 +359,11 @@ class MvpRunnerTest(unittest.TestCase):
                 ],
             }
         )
+        def parsed_text(source_id: str, page: int) -> str:
+            if source_id == "S002" and page == 1:
+                return "table-start " + ("x" * 600) + " table-tail"
+            return f"{source_id} page {page}"
+
         documents = []
         for source_id, sha in (("S001", "a"), ("S002", "b")):
             documents.append(
@@ -374,16 +379,16 @@ class MvpRunnerTest(unittest.TestCase):
                     pages=[
                         ParsedPage(
                             page_number=page,
-                            text=f"{source_id} page {page}",
-                            markdown=f"{source_id} page {page}",
+                            text=parsed_text(source_id, page),
+                            markdown=parsed_text(source_id, page),
                             blocks=[
                                 ParsedBlock(
                                     block_id=(
                                         f"{source_id}-P{page:03d}-B001"
                                     ),
                                     kind="text",
-                                    text=f"{source_id} page {page}",
-                                    markdown=f"{source_id} page {page}",
+                                    text=parsed_text(source_id, page),
+                                    markdown=parsed_text(source_id, page),
                                 )
                             ],
                         )
@@ -570,6 +575,9 @@ class MvpRunnerTest(unittest.TestCase):
         self.assertTrue(
             all(item["relation"] == "primary" for item in evidence)
         )
+        self.assertLessEqual(len(evidence[0]["excerpt"]), 500)
+        self.assertNotIn("table-tail", evidence[0]["excerpt"])
+        self.assertIn("table-tail", captured[0]["evidence"][0]["content"])
 
     def test_chunk_pages_keeps_page_numbers_and_stable_ids(self):
         pages = [

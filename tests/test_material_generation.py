@@ -457,6 +457,79 @@ class StructuredGenerationTest(unittest.TestCase):
             {"type": "json_object"},
         )
 
+    @patch("packages.core.jstudy_core.providers.siliconflow_post")
+    def test_json_provider_disables_thinking_for_official_deepseek(self, post):
+        post.return_value = {
+            "choices": [{"message": {"content": '{"answer": "ok"}'}}]
+        }
+
+        generate_json_object(
+            [{"role": "user", "content": "return json"}],
+            api_key="test-key",
+            model="deepseek-v4-flash",
+            base_url="https://api.deepseek.com",
+        )
+
+        request_payload = post.call_args.args[1]
+        self.assertEqual(
+            request_payload["thinking"],
+            {"type": "disabled"},
+        )
+
+    @patch(
+        "packages.core.jstudy_core.materials.generation.providers.generate_json_object"
+    )
+    def test_blocks_only_payload_uses_server_owned_section_metadata(self, provider):
+        provider.return_value = {
+            "blocks": generated_section_payload()["blocks"],
+        }
+        evidence = evidence_items()[:1]
+        evidence[0]["content"] = "full-table-content"
+
+        section = generate_material_section(
+            section_id="section-001",
+            order=1,
+            title="绪论",
+            soul="teaching rules",
+            evidence=evidence,
+            source_ids=["S001"],
+            api_key="test-key",
+            model="test-model",
+        )
+
+        self.assertEqual(section.status, "generated")
+        self.assertEqual(section.id, "section-001")
+        self.assertEqual(section.order, 1)
+        self.assertEqual(section.title, "绪论")
+        self.assertEqual(section.source_ids, ["S001"])
+        self.assertEqual(section.evidence_ids, ["E001"])
+        self.assertEqual(section.quality.citation_coverage, 1.0)
+        provider.assert_called_once()
+
+        system_prompt = provider.call_args.args[0][0]["content"]
+        self.assertIn("only the key blocks", system_prompt)
+        self.assertIn("Example JSON", system_prompt)
+        self.assertIn('"type": "heading"', system_prompt)
+        self.assertIn('"type": "table"', system_prompt)
+        self.assertIn('"runs"', system_prompt)
+        self.assertIn('"evidence_id"', system_prompt)
+        self.assertNotIn('"section_id":', system_prompt)
+        self.assertIn(
+            "Preserve every source table row and workflow step",
+            system_prompt,
+        )
+        self.assertIn(
+            "Do not include visual label prefixes",
+            system_prompt,
+        )
+        self.assertIn(
+            "Every source-derived table must include at least one citation run",
+            system_prompt,
+        )
+        user_prompt = provider.call_args.args[0][1]["content"]
+        self.assertIn("full-table-content", user_prompt)
+        self.assertNotIn('"excerpt"', user_prompt)
+
     @patch(
         "packages.core.jstudy_core.materials.generation.providers.generate_json_object"
     )
@@ -482,7 +555,7 @@ class StructuredGenerationTest(unittest.TestCase):
         provider.assert_called_once()
         messages = provider.call_args.args[0]
         self.assertIn("Mandatory output format", messages[0]["content"])
-        self.assertIn("MaterialSection", messages[0]["content"])
+        self.assertIn("only the key blocks", messages[0]["content"])
 
     @patch(
         "packages.core.jstudy_core.materials.generation.providers.generate_json_object"
@@ -540,7 +613,7 @@ class StructuredGenerationTest(unittest.TestCase):
     )
     def test_type_coercion_failure_uses_single_repair_call(self, provider):
         invalid = generated_section_payload()
-        invalid["order"] = True
+        invalid["blocks"][0]["id"] = True
         provider.side_effect = [invalid, generated_section_payload()]
 
         section = generate_material_section(
@@ -557,7 +630,7 @@ class StructuredGenerationTest(unittest.TestCase):
         self.assertEqual(section.status, "generated")
         self.assertEqual(provider.call_count, 2)
         repair_messages = provider.call_args_list[1].args[0]
-        self.assertIn("int_type", repair_messages[-1]["content"])
+        self.assertIn("string_type", repair_messages[-1]["content"])
 
     @patch(
         "packages.core.jstudy_core.materials.generation.providers.generate_json_object"

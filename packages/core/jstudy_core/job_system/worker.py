@@ -871,6 +871,8 @@ class JobWorker:
             expected_sequence[0],
             expected_sequence[1],
         )
+        if all(section.status == "failed" for section in package.sections):
+            raise ValueError("all material sections failed")
         markdown_filename = next(iter(markdown_filenames))
         return [
             SectionInput(

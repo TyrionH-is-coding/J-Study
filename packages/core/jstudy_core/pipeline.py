@@ -71,6 +71,7 @@ build_evidence_links = citations.build_evidence_links
 
 
 OUTLINE_SECTION_LIMIT = 12
+GENERATION_EVIDENCE_MAX_LENGTH = 4000
 ProgressCallback = Callable[[JobState], None]
 SectionGenerator = Callable[..., MaterialSection]
 
@@ -175,21 +176,28 @@ def _run_sequence_first(
             document, page, block = block_index[block_id]
             if document.source_id != unit.primary_source_id:
                 raise ValueError("learning unit block source is invalid")
+            raw_content = block.text or block.markdown
             item = {
                 "id": f"E{len(evidence) + 1:03d}",
                 "source_id": document.source_id,
                 "source_file": source_filenames[document.source_id],
                 "page": page.page_number,
                 "chunk_id": block.block_id,
-                "excerpt": citations.clean_quote(
-                    block.text or block.markdown
-                ),
+                "excerpt": citations.clean_quote(raw_content),
                 "relation": "primary",
                 "navigation_policy": "interactive",
                 "learning_unit_id": unit.id,
             }
             evidence.append(item)
-            unit_evidence.append(item)
+            unit_evidence.append(
+                {
+                    **item,
+                    "content": citations.clean_quote(
+                        raw_content,
+                        max_length=GENERATION_EVIDENCE_MAX_LENGTH,
+                    ),
+                }
+            )
         evidence_by_unit[unit.id] = unit_evidence
 
     resolved_api_key = api_key or read_api_key(api_key_path)

@@ -1411,6 +1411,45 @@ class JobWorkerTest(unittest.TestCase):
         self.assertEqual(self.repository.list_artifacts("job-1"), [])
         self.assertEqual(self.repository.list_sections("job-1"), [])
 
+    def test_v2_package_with_all_failed_sections_fails_job(self):
+        self.create_job(max_attempts=1)
+        base_runner = self.v2_output_runner([], "single_courseware")
+
+        def all_failed_runner(**kwargs):
+            outputs = base_runner(**kwargs)
+            package = json.loads(
+                outputs["package"].read_text(encoding="utf-8")
+            )
+            for section in package["sections"]:
+                section["status"] = "failed"
+                section["quality"] = {
+                    "evidence_status": "failed",
+                    "evidence_count": len(section["evidence_ids"]),
+                    "cited_evidence_count": 0,
+                    "citation_coverage": 0.0,
+                }
+                section["blocks"] = []
+            outputs["package"].write_text(
+                json.dumps(package),
+                encoding="utf-8",
+            )
+            return outputs
+
+        worker = JobWorker(
+            self.repository,
+            self.settings,
+            worker_id="worker-all-failed",
+            single_runner=all_failed_runner,
+        )
+
+        self.assertTrue(worker.run_once())
+
+        job = self.repository.get("job-1")
+        self.assertEqual(job.state, JobState.FAILED)
+        self.assertEqual(job.error_code, "invalid_job_output")
+        self.assertEqual(self.repository.list_artifacts("job-1"), [])
+        self.assertEqual(self.repository.list_sections("job-1"), [])
+
     def test_v2_package_completes_atomically_and_uses_job_package_id(self):
         self.create_job()
         calls = []

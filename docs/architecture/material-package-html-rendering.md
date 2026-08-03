@@ -156,14 +156,18 @@ flowchart LR
 
 要求：
 
-1. 使用 provider 支持的 JSON Schema 或等价 structured-output 能力。
-2. 每个 section 独立验证，避免一个章节格式错误破坏整个课程。
-3. Block id 在 section 内唯一且稳定。
-4. Citation run 引用的 evidence id 必须属于当前 job，并出现在 section 的 `evidence_ids` 中。
-5. 表格必须限制列数、行数和单元格长度。
-6. heading level、callout variant 和 formula 字段使用枚举校验。
-7. 最多允许一次受控格式修复；仍不合法时将 section 标记为 `failed`，不得回退为不受控 HTML。
-8. 模型原始响应可作为私有诊断 artifact 保存，不进入用户 API。
+1. 模型只生成 `{"blocks": [...]}`；section id、顺序、标题、状态、质量、source ids 和 evidence ids 均由服务端根据冻结计划确定性填写。
+2. JSON mode 只保证 JSON 语法，不保证业务 schema。Prompt 必须提供完整 block/run 形状和严格合法示例，不能只列类型名称。
+3. DeepSeek 官方 JSON 请求使用 non-thinking mode，避免默认思考模式占用输出预算并提高格式不稳定性；其他 provider 不自动继承该参数。
+4. 用户可见引用摘要保持 500 字符边界；模型生成使用独立的内部 evidence content，单 block 最多 4,000 字符，避免表格在中间截断。
+5. 每个 section 独立验证，避免一个章节格式错误破坏整个课程。
+6. Block id 在 section 内唯一且稳定。
+7. Citation run 引用的 evidence id 必须属于当前 job，并出现在 section 的 `evidence_ids` 中。
+8. 表格必须限制列数、行数和单元格长度。
+9. heading level、callout variant 和 formula 字段使用枚举校验。
+10. 最多允许一次受控格式修复；仍不合法时将 section 标记为 `failed`，不得回退为不受控 HTML。
+11. 所有 section 均为 `failed` 时，Worker 必须将 Job 标记为 `failed / invalid_job_output`，不得发布普通 `completed`。
+12. 模型原始响应可作为私有诊断 artifact 保存，不进入用户 API。
 
 质量检查直接遍历 blocks 和 citation runs，计算章节引用覆盖率，不再解析 Markdown 标题或 HTML 注释。
 

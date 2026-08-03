@@ -4,11 +4,12 @@ import json
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from pydantic import ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from packages.core.jstudy_core import providers
 
 from .models import (
+    MaterialBlock,
     MaterialPackageV2,
     MaterialSection,
     SectionQuality,
@@ -18,6 +19,12 @@ from .validation import (
     citation_ids_for_section,
     validate_material_package,
 )
+
+
+class _GeneratedSectionContent(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    blocks: list[MaterialBlock] = Field(min_length=1, max_length=120)
 
 
 def _messages(
@@ -30,38 +37,125 @@ def _messages(
     source_ids: Sequence[str],
     validation_summary: str | None = None,
 ) -> list[dict[str, str]]:
-    format_contract = {
-        "section_id": section_id,
-        "order": order,
-        "title": title,
-        "allowed_source_ids": list(source_ids),
-        "allowed_evidence_ids": [
-            str(item["id"]) for item in evidence if item.get("id") is not None
-        ],
-        "block_types": [
-            "heading",
-            "paragraph",
-            "list",
-            "table",
-            "callout",
-            "formula",
-        ],
-        "inline_run_types": [
-            "text",
-            "strong",
-            "emphasis",
-            "inline_code",
-            "inline_formula",
-            "citation",
-        ],
+    allowed_evidence_ids = [
+        str(item["id"]) for item in evidence if item.get("id") is not None
+    ]
+    prompt_evidence = [
+        {
+            "id": str(item.get("id") or ""),
+            "source_id": str(item.get("source_id") or ""),
+            "source_file": str(item.get("source_file") or ""),
+            "page": item.get("page"),
+            "chunk_id": str(item.get("chunk_id") or ""),
+            "content": str(
+                item.get("content")
+                or item.get("excerpt")
+                or ""
+            ),
+        }
+        for item in evidence
+    ]
+    first_evidence_id = allowed_evidence_ids[0]
+    example = {
+        "blocks": [
+            {
+                "id": "heading-001",
+                "type": "heading",
+                "level": 3,
+                "runs": [{"type": "text", "text": "知识标题"}],
+            },
+            {
+                "id": "paragraph-001",
+                "type": "paragraph",
+                "runs": [
+                    {"type": "text", "text": "有证据支持的知识陈述。"},
+                    {
+                        "type": "citation",
+                        "evidence_id": first_evidence_id,
+                    },
+                ],
+            },
+            {
+                "id": "list-001",
+                "type": "list",
+                "ordered": False,
+                "items": [
+                    [
+                        {"type": "text", "text": "列表知识点"},
+                        {
+                            "type": "citation",
+                            "evidence_id": first_evidence_id,
+                        },
+                    ]
+                ],
+            },
+            {
+                "id": "callout-001",
+                "type": "callout",
+                "variant": "key_point",
+                "runs": [
+                    {"type": "text", "text": "需要记忆的结论。"},
+                    {
+                        "type": "citation",
+                        "evidence_id": first_evidence_id,
+                    },
+                ],
+            },
+            {
+                "id": "table-001",
+                "type": "table",
+                "headers": [
+                    [{"type": "text", "text": "项目"}],
+                    [{"type": "text", "text": "结论"}],
+                ],
+                "rows": [
+                    [
+                        [{"type": "text", "text": "示例"}],
+                        [
+                            {"type": "text", "text": "有依据的内容"},
+                            {
+                                "type": "citation",
+                                "evidence_id": first_evidence_id,
+                            },
+                        ],
+                    ]
+                ],
+            },
+        ]
     }
     format_instruction = (
-        "Return one JSON object matching the MaterialSection contract. "
-        "Use the exact section identity and only the allowed source and evidence ids. "
-        "Do not return Markdown, HTML, CSS, URLs, scripts, or wrapper text.\n"
-        f"Contract: {json.dumps(format_contract, ensure_ascii=False)}"
+        "Return exactly one JSON object with only the key blocks. "
+        "Server metadata is added by the application; do not output "
+        "id/order/title/status/quality/source_ids/evidence_ids at the top level. "
+        "Prefer 4 to 12 concise learning blocks. Every block needs a unique id. "
+        "Use runs for all prose. Cite each evidence-backed claim immediately with "
+        "a citation run and only an allowed evidence_id. "
+        "Preserve every source table row and workflow step unless it is an exact "
+        "duplicate; do not silently omit entries. "
+        "Every source-derived table must include at least one citation run in a "
+        "relevant cell. "
+        "Do not include visual label prefixes such as 注意、重点、警告 in callout "
+        "runs because the renderer adds them. "
+        "Allowed block shapes: "
+        "heading={id,type:'heading',level:3|4,runs}; "
+        "paragraph={id,type:'paragraph',runs}; "
+        "list={id,type:'list',ordered:boolean,items:[runs]}; "
+        "table={id,type:'table',headers:[runs],rows:[[runs]]}; "
+        "callout={id,type:'callout',variant:'key_point'|'note'|'warning',runs}; "
+        "formula={id,type:'formula',latex}. "
+        "Allowed run shapes: "
+        "{type:'text'|'strong'|'emphasis'|'inline_code',text}; "
+        "{type:'inline_formula',latex}; "
+        "{type:'citation',evidence_id}. "
+        "Do not return Markdown, HTML, CSS, URLs, scripts, comments, or wrapper text.\n"
+        f"Example JSON: {json.dumps(example, ensure_ascii=False)}"
     )
-    prompt = f"Evidence: {json.dumps(list(evidence), ensure_ascii=False)}"
+    prompt = (
+        f"Section title: {title}\n"
+        f"Allowed source ids: {json.dumps(list(source_ids), ensure_ascii=False)}\n"
+        f"Allowed evidence ids: {json.dumps(allowed_evidence_ids, ensure_ascii=False)}\n"
+        f"Evidence: {json.dumps(prompt_evidence, ensure_ascii=False)}"
+    )
     if validation_summary:
         prompt += (
             "\nThe previous result was invalid. Generate a new complete object. "
@@ -99,16 +193,27 @@ def _validate_generated_section(
     evidence: Sequence[Mapping[str, Any]],
     source_ids: Sequence[str],
 ) -> MaterialSection:
-    section = MaterialSection.model_validate(payload)
-    if (
-        section.id != section_id
-        or section.order != order
-        or section.title != title
-    ):
-        raise MaterialValidationError(
-            "invalid_section_identity",
-            "generated section identity does not match the planned section",
-        )
+    generated = _GeneratedSectionContent.model_validate(
+        {"blocks": payload.get("blocks")}
+    )
+    evidence_ids = [
+        str(item["id"]) for item in evidence if item.get("id") is not None
+    ]
+    section = MaterialSection(
+        id=section_id,
+        order=order,
+        title=title,
+        status="generated",
+        quality=SectionQuality(
+            evidence_status="weak",
+            evidence_count=len(evidence_ids),
+            cited_evidence_count=0,
+            citation_coverage=0.0,
+        ),
+        source_ids=list(source_ids),
+        evidence_ids=evidence_ids,
+        blocks=generated.blocks,
+    )
     evidence_count = len(section.evidence_ids)
     cited_count = len(set(citation_ids_for_section(section)))
     coverage = cited_count / evidence_count if evidence_count else 0.0

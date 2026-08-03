@@ -47,7 +47,8 @@ Upload one strict service-mode input shape + optional scenario
 -> continuous learning-map.v1 units in source/page/block order
 -> coverage-ledger.v1 for every normalized block
 -> unit-local primary evidence
--> structured section generation with at most one format repair
+-> model-generated blocks with at most one format repair
+-> server-owned section identity, evidence metadata, status, and quality
 -> validated material-package.v2 blocks and citation runs
 -> direct package quality audit
 -> deterministic compatibility Markdown + evidence links

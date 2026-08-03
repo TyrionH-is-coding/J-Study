@@ -7,6 +7,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 
 DEFAULT_CHAT_MODEL = "deepseek-ai/DeepSeek-V4-Pro"
@@ -192,15 +193,21 @@ def generate_json_object(
     model: str = DEFAULT_CHAT_MODEL,
     base_url: str = SILICONFLOW_BASE_URL,
 ) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "model": model,
+        "messages": messages,
+        "temperature": 0.15,
+        "max_tokens": 6000,
+        "response_format": {"type": "json_object"},
+    }
+    if (
+        urlsplit(base_url).hostname == "api.deepseek.com"
+        and model in {"deepseek-v4-flash", "deepseek-v4-pro"}
+    ):
+        payload["thinking"] = {"type": "disabled"}
     response = siliconflow_post(
         "chat/completions",
-        {
-            "model": model,
-            "messages": messages,
-            "temperature": 0.15,
-            "max_tokens": 6000,
-            "response_format": {"type": "json_object"},
-        },
+        payload,
         api_key,
         timeout=240,
         retries=1,
