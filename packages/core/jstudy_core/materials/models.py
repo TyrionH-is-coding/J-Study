@@ -171,7 +171,11 @@ class RenderingPreferences(StrictModel):
 class MaterialPackageV2(StrictModel):
     schema_version: Literal["material-package.v2"]
     package_id: str = Field(min_length=1)
-    service_mode: Literal["single_courseware", "course_outline"]
+    service_mode: Literal[
+        "single_courseware",
+        "course_outline",
+        "multi_courseware",
+    ]
     title: str = Field(min_length=1)
     subject: str = Field(min_length=1)
     language: str = Field(

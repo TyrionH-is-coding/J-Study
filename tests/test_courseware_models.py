@@ -16,7 +16,17 @@ def manifest_payload():
         "manifest_id": "job-1",
         "job_id": "job-1",
         "service_mode": "course_outline",
-        "outline": None,
+        "outline": {
+            "original_filename": "outline.md",
+            "sha256": "c" * 64,
+            "sections": [
+                {
+                    "id": "outline-001",
+                    "order": 1,
+                    "title": "绪论",
+                }
+            ],
+        },
         "sources": [
             {
                 "source_id": "S001",
@@ -92,6 +102,53 @@ def coverage_payload():
 
 
 class CoursewareModelsTest(unittest.TestCase):
+    def test_manifest_enforces_service_mode_input_shapes(self):
+        valid_multi = manifest_payload()
+        valid_multi["service_mode"] = "multi_courseware"
+        valid_multi["outline"] = None
+        manifest = CoursewareManifestV1.model_validate(valid_multi)
+        self.assertEqual(manifest.service_mode, "multi_courseware")
+
+        invalid_cases = []
+
+        single_with_outline = manifest_payload()
+        single_with_outline["service_mode"] = "single_courseware"
+        single_with_outline["sources"] = single_with_outline["sources"][:1]
+        invalid_cases.append(single_with_outline)
+
+        single_without_source = manifest_payload()
+        single_without_source["service_mode"] = "single_courseware"
+        single_without_source["outline"] = None
+        single_without_source["sources"] = []
+        invalid_cases.append(single_without_source)
+
+        single_with_two_sources = manifest_payload()
+        single_with_two_sources["service_mode"] = "single_courseware"
+        single_with_two_sources["outline"] = None
+        invalid_cases.append(single_with_two_sources)
+
+        outline_without_outline = manifest_payload()
+        outline_without_outline["outline"] = None
+        invalid_cases.append(outline_without_outline)
+
+        multi_with_outline = manifest_payload()
+        multi_with_outline["service_mode"] = "multi_courseware"
+        invalid_cases.append(multi_with_outline)
+
+        multi_with_one_source = manifest_payload()
+        multi_with_one_source["service_mode"] = "multi_courseware"
+        multi_with_one_source["outline"] = None
+        multi_with_one_source["sources"] = multi_with_one_source["sources"][:1]
+        invalid_cases.append(multi_with_one_source)
+
+        for payload in invalid_cases:
+            with self.subTest(
+                service_mode=payload["service_mode"],
+                source_count=len(payload["sources"]),
+                has_outline=payload["outline"] is not None,
+            ):
+                with self.assertRaises(ValidationError):
+                    CoursewareManifestV1.model_validate(payload)
     def test_manifest_keeps_identity_separate_from_display_order(self):
         manifest = CoursewareManifestV1.model_validate(manifest_payload())
 

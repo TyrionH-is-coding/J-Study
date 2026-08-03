@@ -126,6 +126,19 @@ def valid_legacy_package_payload() -> dict:
 
 
 class MaterialModelsTest(unittest.TestCase):
+    def test_v2_accepts_multi_courseware_without_broadening_legacy_v1(self):
+        payload = valid_package_payload()
+        payload["service_mode"] = "multi_courseware"
+        payload["source_ids"] = ["S001", "S002"]
+        payload["sections"][0]["source_ids"] = ["S001"]
+
+        package = MaterialPackageV2.model_validate(payload)
+        self.assertEqual(package.service_mode, "multi_courseware")
+
+        legacy = valid_legacy_package_payload()
+        legacy["service_mode"] = "multi_courseware"
+        with self.assertRaises(ValidationError):
+            LegacyMaterialPackageV1.model_validate(legacy)
     def test_valid_package_supports_all_initial_blocks_and_runs(self):
         package = MaterialPackageV2.model_validate(valid_package_payload())
 

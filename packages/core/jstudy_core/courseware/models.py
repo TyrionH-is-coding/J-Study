@@ -56,7 +56,11 @@ class CoursewareManifestV1(StrictModel):
     schema_version: Literal["courseware-manifest.v1"]
     manifest_id: str = Field(min_length=1, max_length=128)
     job_id: str = Field(min_length=1, max_length=128)
-    service_mode: Literal["single_courseware", "course_outline"]
+    service_mode: Literal[
+        "single_courseware",
+        "course_outline",
+        "multi_courseware",
+    ]
     outline: ManifestOutline | None
     sources: list[ManifestSource] = Field(min_length=1, max_length=120)
 
@@ -68,6 +72,18 @@ class CoursewareManifestV1(StrictModel):
             raise ValueError("manifest source ids must be unique")
         if len(display_orders) != len(set(display_orders)):
             raise ValueError("manifest display orders must be unique")
+        if self.service_mode == "single_courseware":
+            if self.outline is not None or len(self.sources) != 1:
+                raise ValueError(
+                    "single courseware requires one source and no outline"
+                )
+        elif self.service_mode == "course_outline":
+            if self.outline is None:
+                raise ValueError("course outline mode requires an outline")
+        elif self.outline is not None or len(self.sources) < 2:
+            raise ValueError(
+                "multi courseware requires at least two sources and no outline"
+            )
         outline_ids = (
             {item.id for item in self.outline.sections}
             if self.outline is not None
