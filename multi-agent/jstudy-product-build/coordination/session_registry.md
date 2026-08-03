@@ -10,8 +10,8 @@
 ## Current State
 
 - Workflow status: framework initialized.
-- Current code task: not assigned.
-- Latest Supervisor verdict: none.
+- Current code task: Task 0009 assigned to Code Agent.
+- Latest Supervisor verdict: Task 0008 `PASS`.
 
 ## Update Rule
 
