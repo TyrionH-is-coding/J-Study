@@ -2,7 +2,7 @@
 
 日期：2026-08-03
 
-当前结论：**修复后本地复测 92/100，内容质量通过；上线状态为 `PASS_WITH_LIMITATIONS`。**
+当前结论：**修复后本地复测 92/100，腾讯云 staging 纵向复测 91/100，内容质量通过；上线状态为 `PASS_WITH_LIMITATIONS`。**
 
 初次 staging 结果为 2/100。该分数记录修复前的真实故障，不再代表当前本地代码。
 
@@ -270,7 +270,95 @@ DeepSeek V4 Flash 的模型能力可以满足本样本。修复后的本地生�
 
 当前仍为 `PASS_WITH_LIMITATIONS`，原因是：
 
-1. 修复代码尚未部署到 staging 做真实 API/Worker/MinerU 纵向复测。
+1. LLM 与 Embedding 运行时仍共用一套有效凭据。官方 DeepSeek Chat 与 SiliconFlow Embedding 不能长期配置为不同 Key，因此 staging 验收后已恢复原 SiliconFlow V4 Pro 配置。
 2. 全局 citation coverage 仍把标题和图片块计入分母，指标语义需要单独修正。
-3. 少数 callout 正文仍自行添加“注意”“关键鉴别点”等前缀，与 Markdown renderer 的固定标签形成重复；不影响事实正确性，但需要后续确定性归一化。
+3. 少数 callout 或流程内容存在重复表达；不影响事实正确性，但需要后续确定性归一化或去重。
 4. 本次按要求未测试 HTML。
+
+## 14. 腾讯云 Staging 纵向复测
+
+### 14.1 部署基线
+
+| 项目 | 值 |
+|---|---|
+| Git SHA | `01dc49e0141736d3a1654718d1d740114ea521a5` |
+| Image | `jstudy-backend:staging-01dc49e` |
+| Image ID | `sha256:86667c6461da563562b7f36236c4ee255932a6942521a8178e68299402667300` |
+| URL | `https://staging.jstudy.online` |
+| Parser | MinerU |
+| Chat provider | DeepSeek official API |
+| Chat model | `deepseek-v4-flash` |
+
+部署前备份：
+
+`/opt/jstudy-staging/backups/pre-01dc49e-20260803-150245`
+
+备份包含 `.env`、settings、PostgreSQL dump、原 Git SHA、原镜像信息和 SHA-256 清单，全部校验通过。
+
+### 14.2 配置优先级故障记录
+
+首个复测 Job：
+
+`17cb913d2998459fb9429511e65b753f`
+
+该 Job 在 `generating` 阶段两次收到 401，最终正确进入 `failed / worker_error`，没有发布 artifact。原因不是 DeepSeek Key 失效，而是重建容器的 Bash 进程此前 source 了旧 `.env`；父进程中的旧 SiliconFlow Key 和 V4 Pro 模型覆盖了刚写入的 `--env-file`。
+
+从干净 shell 重建后：
+
+- Worker Key 指纹与本地授权 Key 一致；
+- Worker 读取 `deepseek-v4-flash`；
+- Worker 容器内最小 JSON 探针通过。
+
+### 14.3 成功 Job
+
+成功 Job：
+
+`ad08a441b88741acb01f26379f17604c`
+
+状态变化：
+
+```text
+queued -> parsing -> retrieving -> generating -> packaging -> completed
+```
+
+结果：
+
+| 指标 | 结果 |
+|---|---:|
+| attempt | 1 |
+| Job completed | 57.1 秒 |
+| 客户端完成全部 artifact 下载 | 62.1 秒 |
+| sections | 6/6 generated |
+| material blocks | 52 |
+| citation runs | 74 |
+| unique referenced evidence | 53/71 |
+| coverage ledger | 71/71 used |
+| Markdown artifact | 8,876 bytes |
+| Worker quality | pass |
+
+18 条未引用 evidence 由 12 个结构标题和 6 个流程图图片块组成；事实文本和表格 evidence 均已引用。第 2 页鉴别表完整保留 5 个菌种、A 群/PYR、B 群/CAMP 和 `E013` 引用。
+
+Package、Markdown、Evidence、Evidence Links、Trace、Manifest、Learning Map 和 Coverage 等公开 endpoint 全部返回 200。数据库登记的 10 个 artifact 文件大小和 SHA-256 为 `10/10` 一致，公开下载产物未发现 Key、Token、Authorization header、签名 URL 或服务器绝对路径。
+
+### 14.4 Staging 人工评分
+
+| 维度 | 权重 | 得分 | 判断 |
+|---|---:|---:|---|
+| 事实准确性 | 30 | 29 | 未发现关键医学错误或无依据治疗建议 |
+| 课件覆盖 | 20 | 19 | 表格、毒力、流程、耐药、病例和易错点均保留 |
+| 证据与引用 | 20 | 17 | 事实证据完整可追溯；全局 raw 分母仍包含结构块 |
+| 学习设计 | 15 | 13 | 有矩阵、流程、病例和警示，但部分内容重复 |
+| 结构与可读性 | 10 | 8 | 整体清晰；第 4 页七步流程同时用段落、列表、表格表达 |
+| 考试实用性 | 5 | 5 | 高频鉴别点和考试陷阱明确 |
+| **总分** | **100** | **91** | **通过** |
+
+### 14.5 验收后状态
+
+验收完成后：
+
+- staging 保留新代码镜像 `staging-01dc49e`；
+- API、Worker、PostgreSQL 健康；
+- 原 SiliconFlow V4 Pro 配置已从备份恢复；
+- `/api/readiness?probe_provider=true` 返回 ready；
+- 官方 DeepSeek 临时 Key 文件已删除；
+- 成功和失败 Job 均保留作验收证据。

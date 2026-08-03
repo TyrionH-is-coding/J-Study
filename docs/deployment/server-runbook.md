@@ -260,6 +260,12 @@ docker compose -p jstudy-staging --env-file .env -f deploy/docker-compose/api.co
 docker compose -p jstudy-staging --env-file .env -f deploy/docker-compose/api.compose.yml logs --tail 200 jstudy-api jstudy-worker
 ```
 
+Run Compose from a clean shell after changing `.env`. Do not source the old
+`.env` and then overwrite the file in the same shell: exported parent-process
+variables take precedence over `--env-file` and can silently recreate
+containers with stale credentials or model values. Before a recreate, verify
+that no unexpected runtime overrides remain in the parent environment.
+
 Never reuse the 旧数据库目录. Do not commit `.env`, Token, 上传文件, or
 生成产物. Do not run `down -v` against staging or the old deployment, and do
 not operate the 旧 `jstudy` containers from staging commands.
