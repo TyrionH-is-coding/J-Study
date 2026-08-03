@@ -333,6 +333,10 @@ class DeploymentFilesTest(unittest.TestCase):
 
         self.assertIn("JSTUDY_DATABASE_URL", compose_text)
         self.assertIn("JSTUDY_SESSION_SECRET", compose_text)
+        self.assertIn(
+            "JSTUDY_INVITE_REQUIRED: ${JSTUDY_INVITE_REQUIRED:-true}",
+            compose_text,
+        )
 
     def test_runbook_documents_durable_three_service_operations(self):
         runbook = (ROOT / "deploy" / "docker-compose" / "README.md").read_text(
