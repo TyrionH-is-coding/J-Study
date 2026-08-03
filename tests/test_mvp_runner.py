@@ -31,6 +31,7 @@ from packages.core.jstudy_core.pipeline import (  # noqa: E402
     read_api_key,
     retrieve_mnemonics,
     run_course_outline,
+    run_multi_courseware,
     run_mvp,
     select_evidence_chunks,
     siliconflow_post,
@@ -117,6 +118,211 @@ class FakeHttpResponse:
 
 
 class MvpRunnerTest(unittest.TestCase):
+    def test_multi_courseware_runner_is_sequence_only_and_source_scoped(self):
+        manifest = CoursewareManifestV1.model_validate(
+            {
+                "schema_version": "courseware-manifest.v1",
+                "manifest_id": "job-multi",
+                "job_id": "job-multi",
+                "service_mode": "multi_courseware",
+                "outline": None,
+                "sources": [
+                    {
+                        "source_id": "S001",
+                        "original_filename": "late.pdf",
+                        "sha256": "a" * 64,
+                        "display_title": "Late",
+                        "display_order": 2,
+                        "primary_outline_section_id": None,
+                        "title_origin": "upload",
+                        "order_origin": "upload",
+                    },
+                    {
+                        "source_id": "S002",
+                        "original_filename": "early.pdf",
+                        "sha256": "b" * 64,
+                        "display_title": "Early",
+                        "display_order": 1,
+                        "primary_outline_section_id": None,
+                        "title_origin": "upload",
+                        "order_origin": "upload",
+                    },
+                ],
+            }
+        )
+        documents = [
+            ParsedDocument(
+                contract_version="1",
+                source_id=source_id,
+                source_file=filename,
+                source_sha256=sha * 64,
+                parser_name="mineru",
+                parser_version="v4",
+                parser_model="vlm",
+                page_count=1,
+                pages=[
+                    ParsedPage(
+                        page_number=1,
+                        text=f"{source_id} fact",
+                        markdown=f"{source_id} fact",
+                        blocks=[
+                            ParsedBlock(
+                                block_id=f"{source_id}-P001-B001",
+                                kind="text",
+                                text=f"{source_id} fact",
+                                markdown=f"{source_id} fact",
+                            )
+                        ],
+                    )
+                ],
+                warnings=[],
+                provider_trace_id=f"trace-{source_id}",
+            )
+            for source_id, filename, sha in (
+                ("S001", "late.pdf", "a"),
+                ("S002", "early.pdf", "b"),
+            )
+        ]
+        learning_map = LearningMapV1.model_validate(
+            {
+                "schema_version": "learning-map.v1",
+                "manifest_id": "job-multi",
+                "units": [
+                    {
+                        "id": "unit-001",
+                        "order": 1,
+                        "outline_section_id": None,
+                        "primary_source_id": "S002",
+                        "page_start": 1,
+                        "page_end": 1,
+                        "block_ids": ["S002-P001-B001"],
+                        "material_section_id": "unit-001",
+                    },
+                    {
+                        "id": "unit-002",
+                        "order": 2,
+                        "outline_section_id": None,
+                        "primary_source_id": "S001",
+                        "page_start": 1,
+                        "page_end": 1,
+                        "block_ids": ["S001-P001-B001"],
+                        "material_section_id": "unit-002",
+                    },
+                ],
+            }
+        )
+        coverage = CoverageLedgerV1.model_validate(
+            {
+                "schema_version": "coverage-ledger.v1",
+                "manifest_id": "job-multi",
+                "entries": [
+                    {
+                        "block_id": f"{source_id}-P001-B001",
+                        "source_id": source_id,
+                        "page_number": 1,
+                        "disposition": "used",
+                        "reason": "learning_unit",
+                        "learning_unit_id": unit_id,
+                    }
+                    for source_id, unit_id in (
+                        ("S002", "unit-001"),
+                        ("S001", "unit-002"),
+                    )
+                ],
+                "metrics": {
+                    "usable_block_count": 2,
+                    "used_block_count": 2,
+                    "ignored_block_count": 0,
+                    "duplicate_block_count": 0,
+                    "unsupported_block_count": 0,
+                    "coverage_rate": 1.0,
+                    "ignored_reason_counts": {},
+                    "primary_backward_jump_count": 0,
+                    "large_jump_count": 0,
+                    "remote_reference_ratio": 0.0,
+                    "page_distance_p90": 0.0,
+                },
+            }
+        )
+        generated = []
+
+        def generator(**kwargs):
+            generated.append(kwargs)
+            return fake_section_generator(**kwargs)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            soul = root / "soul.md"
+            mnemonics = root / "mnemonics.md"
+            soul.write_text("soul", encoding="utf-8")
+            mnemonics.write_text("", encoding="utf-8")
+            with (
+                patch(
+                    "packages.core.jstudy_core.pipeline.extract_pdf_pages",
+                    side_effect=AssertionError("must not parse"),
+                ),
+                patch(
+                    "packages.core.jstudy_core.pipeline.extract_pdf_pages_with_mineru",
+                    side_effect=AssertionError("must not parse"),
+                ),
+                patch(
+                    "packages.core.jstudy_core.providers.embed_texts_cached",
+                    side_effect=AssertionError("must not embed"),
+                ),
+                patch(
+                    "packages.core.jstudy_core.pipeline.select_evidence_chunks",
+                    side_effect=AssertionError("must not rank"),
+                ),
+                patch(
+                    "packages.core.jstudy_core.pipeline.reciprocal_rank_fusion",
+                    side_effect=AssertionError("must not fuse"),
+                ),
+            ):
+                outputs = run_multi_courseware(
+                    soul_path=soul,
+                    mnemonics_path=mnemonics,
+                    api_key_path=root / "missing-key",
+                    output_dir=root / "output",
+                    chat_model="chat",
+                    embed_model="embed",
+                    parsed_documents=documents,
+                    courseware_manifest=manifest,
+                    learning_map=learning_map,
+                    coverage_ledger=coverage,
+                    api_key="test-key",
+                    package_id="job-multi",
+                    section_generator=generator,
+                )
+            package = json.loads(outputs["package"].read_text(encoding="utf-8"))
+            trace = json.loads(outputs["trace"].read_text(encoding="utf-8"))
+
+        self.assertEqual(package["service_mode"], "multi_courseware")
+        self.assertEqual(package["title"], "多课件学习资料")
+        self.assertEqual(package["source_ids"], ["S002", "S001"])
+        self.assertEqual(
+            [section["id"] for section in package["sections"]],
+            ["unit-001", "unit-002"],
+        )
+        self.assertEqual(
+            [call["source_ids"] for call in generated],
+            [["S002"], ["S001"]],
+        )
+        self.assertTrue(
+            {
+                "markdown",
+                "evidence",
+                "evidence_links",
+                "quality",
+                "trace",
+                "package",
+                "manifest",
+                "learning_map",
+                "coverage",
+            }.issubset(outputs)
+        )
+        self.assertEqual(trace["generation_strategy"], "sequence-first")
+        self.assertNotIn("association", json.dumps(package).lower())
+        self.assertNotIn("association", json.dumps(trace).lower())
     def test_sequence_generation_uses_learning_map_not_parsing_or_scores(self):
         manifest = CoursewareManifestV1.model_validate(
             {
@@ -124,7 +330,11 @@ class MvpRunnerTest(unittest.TestCase):
                 "manifest_id": "job-1",
                 "job_id": "job-1",
                 "service_mode": "course_outline",
-                "outline": None,
+                "outline": {
+                    "original_filename": "outline.md",
+                    "sha256": "c" * 64,
+                    "sections": [],
+                },
                 "sources": [
                     {
                         "source_id": "S001",

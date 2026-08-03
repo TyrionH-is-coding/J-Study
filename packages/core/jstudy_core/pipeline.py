@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import asdict, replace
 import re
 from pathlib import Path
@@ -123,7 +124,7 @@ def _material_package(
 def _run_sequence_first(
     *,
     service_mode: str,
-    parsed_documents: list[ParsedDocument],
+    parsed_documents: Sequence[ParsedDocument],
     courseware_manifest: CoursewareManifestV1,
     learning_map: LearningMapV1,
     coverage_ledger: CoverageLedgerV1,
@@ -250,11 +251,11 @@ def _run_sequence_first(
     package = _material_package(
         package_id=package_id or output_prefix,
         service_mode=service_mode,
-        title=(
-            "课程学习资料"
-            if service_mode == "course_outline"
-            else "完整学习资料"
-        ),
+        title={
+            "single_courseware": "完整学习资料",
+            "course_outline": "课程学习资料",
+            "multi_courseware": "多课件学习资料",
+        }[service_mode],
         subject=_package_subject(routing_metadata),
         source_ids=source_ids,
         sections=sections,
@@ -401,6 +402,48 @@ def retrieve_chunks(
         for index, (chunk, embedding) in enumerate(zip(chunks, chunk_embeddings))
     ]
     return sorted(scored, key=lambda chunk: chunk.score, reverse=True)[:top_k]
+
+
+def run_multi_courseware(
+    soul_path: Path,
+    mnemonics_path: Path,
+    api_key_path: Path,
+    output_dir: Path,
+    chat_model: str,
+    embed_model: str,
+    parsed_documents: Sequence[ParsedDocument],
+    courseware_manifest: CoursewareManifestV1,
+    learning_map: LearningMapV1,
+    coverage_ledger: CoverageLedgerV1,
+    output_prefix: str = "mvp",
+    rag_config: RagConfig | None = None,
+    api_key: str | None = None,
+    chat_base_url: str = SILICONFLOW_BASE_URL,
+    routing_metadata: dict[str, Any] | None = None,
+    progress_callback: ProgressCallback | None = None,
+    package_id: str | None = None,
+    section_generator: SectionGenerator | None = None,
+) -> dict[str, Path]:
+    return _run_sequence_first(
+        service_mode="multi_courseware",
+        parsed_documents=parsed_documents,
+        courseware_manifest=courseware_manifest,
+        learning_map=learning_map,
+        coverage_ledger=coverage_ledger,
+        soul_path=soul_path,
+        mnemonics_path=mnemonics_path,
+        api_key_path=api_key_path,
+        output_dir=output_dir,
+        chat_model=chat_model,
+        output_prefix=output_prefix,
+        api_key=api_key,
+        chat_base_url=chat_base_url,
+        routing_metadata=routing_metadata,
+        progress_callback=progress_callback,
+        package_id=package_id,
+        section_generator=section_generator,
+        rag_config=rag_config or RagConfig(),
+    )
 
 
 def run_mvp(
