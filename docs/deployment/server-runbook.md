@@ -228,6 +228,83 @@ and `/api/readiness` pass.
 The first Tencent Cloud backend-only trial record is tracked in
 [`tencent-cloud-trial-2026-06-15.md`](tencent-cloud-trial-2026-06-15.md).
 
+## Isolated Tencent Staging Scaffold
+
+Task 0010 only prepares the local deployment scaffold. Remote checkout, Nginx,
+DNS, TLS, and provider smoke tests remain Supervisor-operated steps after code
+review.
+
+Use a checkout at `/opt/jstudy-staging/app`. Its `.env`, `data/jobs`,
+`data/settings`, and `data/postgres` must be independent from the old deployment.
+Set these non-secret topology values in the staging `.env`:
+
+```dotenv
+JSTUDY_IMAGE_NAME=jstudy-backend:staging-test
+JSTUDY_API_CONTAINER_NAME=jstudy-staging-api
+JSTUDY_WORKER_CONTAINER_NAME=jstudy-staging-worker
+JSTUDY_POSTGRES_CONTAINER_NAME=jstudy-staging-postgres
+JSTUDY_API_BIND_ADDRESS=127.0.0.1
+JSTUDY_API_PORT=8766
+```
+
+The published API is therefore limited to `127.0.0.1:8766`; container traffic
+continues to use port `8765` and database hostname `postgres`.
+
+### Startup, Status, And Logs
+
+From the staging checkout:
+
+```powershell
+docker compose -p jstudy-staging --env-file .env -f deploy/docker-compose/api.compose.yml up -d --build
+docker compose -p jstudy-staging --env-file .env -f deploy/docker-compose/api.compose.yml ps
+docker compose -p jstudy-staging --env-file .env -f deploy/docker-compose/api.compose.yml logs --tail 200 jstudy-api jstudy-worker
+```
+
+Never reuse the 旧数据库目录. Do not commit `.env`, Token, 上传文件, or
+生成产物. Do not run `down -v` against staging or the old deployment, and do
+not operate the 旧 `jstudy` containers from staging commands.
+
+### Acceptance
+
+The remote deployment is not accepted until the Supervisor verifies:
+
+1. `/api/health`, `/api/readiness`, and
+   `/api/readiness?probe_provider=true`.
+2. Registration, login, authenticated Cookie behavior, HTTPS, and Secure Cookie.
+3. One synthetic PDF Job leaves `queued` and reaches `completed`, or reaches
+   `failed` with a safe and understood terminal reason.
+4. Worker processing and authenticated reads of Manifest, Learning Map,
+   Coverage, and Package v2.
+5. The API is published only through the intended loopback and proxy path.
+
+### Staging Backup
+
+Before an update, create a staging-only `backup` of:
+
+- the staging `.env`, stored outside Git;
+- `data/settings`;
+- the staging PostgreSQL database;
+- `data/jobs` only when the acceptance artifacts must be retained.
+
+Record the reviewed Git SHA and image name with the backup. Never copy staging
+credentials or data into the old deployment directories.
+
+### Staging Rollback
+
+Application `rollback` stops only the `jstudy-staging` Compose project, restores
+the prior reviewed staging checkout/image and staging Nginx configuration, then
+starts the same project again:
+
+```powershell
+docker compose -p jstudy-staging --env-file .env -f deploy/docker-compose/api.compose.yml down
+docker compose -p jstudy-staging --env-file .env -f deploy/docker-compose/api.compose.yml up -d
+```
+
+Do not use `down -v`. Do not stop, recreate, or change the old `jstudy`
+containers, database, data directories, domain, or certificates. Database
+restore is a separate Supervisor-controlled action and requires a verified
+staging backup.
+
 ## First Full Deployment After Frontend
 
 Before the first full deployment, run the smaller production-like exercise in

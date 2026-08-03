@@ -373,6 +373,64 @@ class DeploymentFilesTest(unittest.TestCase):
             server_runbook,
         )
 
+    def test_staging_environment_and_runbooks_cover_safe_operations(self):
+        env_example = (ROOT / ".env.example").read_text(encoding="utf-8")
+        compose_readme = (
+            ROOT / "deploy" / "docker-compose" / "README.md"
+        ).read_text(encoding="utf-8")
+        server_runbook = (
+            ROOT / "docs" / "deployment" / "server-runbook.md"
+        ).read_text(encoding="utf-8")
+
+        for entry in (
+            "JSTUDY_IMAGE_NAME=jstudy-backend:pilot",
+            "JSTUDY_API_CONTAINER_NAME=jstudy-api",
+            "JSTUDY_WORKER_CONTAINER_NAME=jstudy-worker",
+            "JSTUDY_POSTGRES_CONTAINER_NAME=jstudy-postgres",
+            "JSTUDY_API_BIND_ADDRESS=0.0.0.0",
+            "JSTUDY_API_PORT=8765",
+        ):
+            self.assertIn(entry, env_example)
+
+        staging_commands = (
+            "docker compose -p jstudy-staging --env-file .env "
+            "-f deploy/docker-compose/api.compose.yml up -d --build",
+            "docker compose -p jstudy-staging --env-file .env "
+            "-f deploy/docker-compose/api.compose.yml ps",
+            "docker compose -p jstudy-staging --env-file .env "
+            "-f deploy/docker-compose/api.compose.yml logs --tail 200 "
+            "jstudy-api jstudy-worker",
+        )
+        for command in staging_commands:
+            self.assertIn(command, compose_readme)
+            self.assertIn(command, server_runbook)
+
+        for text in (
+            "/opt/jstudy-staging/app",
+            "127.0.0.1:8766",
+            "/api/health",
+            "/api/readiness",
+            "/api/readiness?probe_provider=true",
+            "Secure Cookie",
+            "Manifest",
+            "Learning Map",
+            "Coverage",
+            "Package v2",
+            "queued",
+            "completed",
+            "failed",
+            "backup",
+            "rollback",
+            "down -v",
+            "旧数据库目录",
+            "旧 `jstudy`",
+        ):
+            self.assertIn(text, server_runbook)
+
+        for text in (".env", "Token", "上传文件", "生成产物"):
+            self.assertIn(text, compose_readme)
+            self.assertIn(text, server_runbook)
+
     def test_architecture_and_roadmap_describe_durable_worker_boundary(self):
         architecture = (ROOT / "docs" / "architecture" / "overview.md").read_text(
             encoding="utf-8"

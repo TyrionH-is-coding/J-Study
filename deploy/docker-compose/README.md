@@ -103,3 +103,34 @@ worker 没有 HTTP liveness endpoint，也没有 `ports` 映射；其运行状�
 当前 API 和 worker 会通过 SQLModel `create_all()` 建表。这只适用于数据可丢弃的 disposable pilot。开始保存持久用户数据前，必须先引入 versioned migrations，并编写迁移、回滚、备份与恢复 runbook；不能把 `create_all()` 当作生产 schema migration。
 
 当前 pipeline 继续输出 Markdown 和 `material_package` v1，也继续使用既有 parser 默认行为。本 Compose 变更不实施 HTML，也不切换 MinerU pipeline。
+
+## 隔离 staging
+
+staging 必须使用独立 checkout、独立 `.env`、独立 Compose project 和独立
+`data/` 目录。建议 checkout 位于 `/opt/jstudy-staging/app`，并使用以下非敏感
+拓扑变量：
+
+```dotenv
+JSTUDY_IMAGE_NAME=jstudy-backend:staging-test
+JSTUDY_API_CONTAINER_NAME=jstudy-staging-api
+JSTUDY_WORKER_CONTAINER_NAME=jstudy-staging-worker
+JSTUDY_POSTGRES_CONTAINER_NAME=jstudy-staging-postgres
+JSTUDY_API_BIND_ADDRESS=127.0.0.1
+JSTUDY_API_PORT=8766
+```
+
+在 staging checkout 根目录执行：
+
+```powershell
+docker compose -p jstudy-staging --env-file .env -f deploy/docker-compose/api.compose.yml up -d --build
+docker compose -p jstudy-staging --env-file .env -f deploy/docker-compose/api.compose.yml ps
+docker compose -p jstudy-staging --env-file .env -f deploy/docker-compose/api.compose.yml logs --tail 200 jstudy-api jstudy-worker
+```
+
+不得复用旧数据库目录，不得对旧部署或有保留价值的数据执行 `down -v`。
+`.env`、Token、上传文件和生成产物不得提交 Git。停止 staging 时必须保留
+volume，并显式使用同一个 project name：
+
+```powershell
+docker compose -p jstudy-staging --env-file .env -f deploy/docker-compose/api.compose.yml down
+```
