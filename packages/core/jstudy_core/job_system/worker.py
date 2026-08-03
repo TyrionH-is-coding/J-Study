@@ -65,6 +65,7 @@ from packages.core.jstudy_core.materials.validation import (
     MaterialValidationError,
     read_material_package_payload,
     validate_material_package,
+    validate_material_package_coordination,
 )
 from packages.core.jstudy_core.scenario_router import resolve_scenario
 from packages.core.jstudy_core.settings import (
@@ -257,6 +258,7 @@ class JobWorker:
                 job,
                 outputs,
                 markdown_filenames,
+                expected_sequence=expected_sequence,
             )
             self.repository.complete_with_artifacts(
                 job.id,
@@ -788,6 +790,12 @@ class JobWorker:
         job: JobSnapshot,
         outputs: Mapping[str, Path],
         markdown_filenames: set[str],
+        *,
+        expected_sequence: tuple[
+            CoursewareManifestV1,
+            LearningMapV1,
+            CoverageLedgerV1,
+        ],
     ) -> list[SectionInput]:
         package_path = outputs.get("package")
         if package_path is None:
@@ -803,6 +811,7 @@ class JobWorker:
                     outputs,
                     package,
                     markdown_filenames,
+                    expected_sequence=expected_sequence,
                 )
             if "schema_version" in package:
                 raise ValueError("unknown material package schema")
@@ -830,6 +839,12 @@ class JobWorker:
         outputs: Mapping[str, Path],
         payload: dict[str, Any],
         markdown_filenames: set[str],
+        *,
+        expected_sequence: tuple[
+            CoursewareManifestV1,
+            LearningMapV1,
+            CoverageLedgerV1,
+        ],
     ) -> list[SectionInput]:
         package = MaterialPackageV2.model_validate(payload)
         if len(markdown_filenames) != 1:
@@ -850,6 +865,11 @@ class JobWorker:
             allowed_source_ids,
             expected_package_id=job.id,
             expected_service_mode=job.service_mode,
+        )
+        validate_material_package_coordination(
+            package,
+            expected_sequence[0],
+            expected_sequence[1],
         )
         markdown_filename = next(iter(markdown_filenames))
         return [

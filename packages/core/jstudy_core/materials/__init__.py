@@ -10,6 +10,7 @@ from .validation import (
     MaterialValidationError,
     audit_material_package,
     validate_material_package,
+    validate_material_package_coordination,
 )
 
 __all__ = [
@@ -22,4 +23,5 @@ __all__ = [
     "generate_material_section",
     "render_compatibility_markdown",
     "validate_material_package",
+    "validate_material_package_coordination",
 ]

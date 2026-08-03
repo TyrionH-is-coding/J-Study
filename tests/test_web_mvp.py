@@ -48,14 +48,14 @@ class FakeDocumentService:
                 pages=[
                     ParsedPage(
                         page_number=1,
-                        text="Courseware fact",
-                        markdown="Courseware fact",
+                        text=f"Courseware fact {source.source_id}",
+                        markdown=f"Courseware fact {source.source_id}",
                         blocks=[
                             ParsedBlock(
                                 block_id=f"{source.source_id}-P001-B001",
                                 kind="text",
-                                text="Courseware fact",
-                                markdown="Courseware fact",
+                                text=f"Courseware fact {source.source_id}",
+                                markdown=f"Courseware fact {source.source_id}",
                             )
                         ],
                     )
@@ -78,6 +78,7 @@ class WebMvpTest(unittest.TestCase):
     def v2_runner(self, **kwargs):
         output_dir = kwargs["output_dir"]
         output_prefix = kwargs["output_prefix"]
+        unit = kwargs["learning_map"].ordered_units()[0]
         output_dir.mkdir(parents=True, exist_ok=True)
         paths = {
             "markdown": output_dir / f"{output_prefix}-output.md",
@@ -118,8 +119,8 @@ class WebMvpTest(unittest.TestCase):
                     "source_ids": ["S001"],
                     "sections": [
                         {
-                            "id": "full-material",
-                            "order": 1,
+                            "id": unit.material_section_id,
+                            "order": unit.order,
                             "title": "完整资料",
                             "status": "generated",
                             "quality": {
@@ -128,7 +129,7 @@ class WebMvpTest(unittest.TestCase):
                                 "cited_evidence_count": 1,
                                 "citation_coverage": 1.0,
                             },
-                            "source_ids": ["S001"],
+                            "source_ids": [unit.primary_source_id],
                             "evidence_ids": ["E001"],
                             "blocks": [
                                 {
@@ -160,16 +161,20 @@ class WebMvpTest(unittest.TestCase):
     def multi_v2_runner(self, **kwargs):
         paths = self.v2_runner(**kwargs)
         source_files = kwargs["source_files"]
+        source_files_by_id = {
+            source["source_id"]: source for source in source_files
+        }
+        units = kwargs["learning_map"].ordered_units()
         evidence = []
         sections = []
-        for index, source in enumerate(source_files, start=1):
+        for index, unit in enumerate(units, start=1):
             evidence_id = f"E{index:03d}"
-            source_id = source["source_id"]
+            source_id = unit.primary_source_id
             evidence.append(
                 {
                     "id": evidence_id,
                     "source_id": source_id,
-                    "source_file": source["file_name"],
+                    "source_file": source_files_by_id[source_id]["file_name"],
                     "page": 1,
                     "chunk_id": f"{source_id}-C001",
                     "excerpt": f"Fact {index}",
@@ -177,8 +182,8 @@ class WebMvpTest(unittest.TestCase):
             )
             sections.append(
                 {
-                    "id": f"section-{index:03d}",
-                    "order": index,
+                    "id": unit.material_section_id,
+                    "order": unit.order,
                     "title": f"课件 {index}",
                     "status": "generated",
                     "quality": {
@@ -218,7 +223,10 @@ class WebMvpTest(unittest.TestCase):
                     "subject": "medicine",
                     "language": "zh-CN",
                     "source_ids": [
-                        source["source_id"] for source in source_files
+                        source.source_id
+                        for source in kwargs[
+                            "courseware_manifest"
+                        ].ordered_sources()
                     ],
                     "sections": sections,
                     "rendering": {
@@ -1166,6 +1174,81 @@ class WebMvpTest(unittest.TestCase):
         self.assertEqual(queued_count, 0)
         self.assertEqual(input_directories, [])
         self.assertEqual(idempotency_rows, [None] * len(cases))
+
+    def test_single_courseware_rejects_duplicate_scalar_pdf_without_residue(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            settings = self.ready_settings(root)
+            client = TestClient(create_app(settings=settings))
+            user = self.register_user(client)
+            idempotency_key = "duplicate-single-pdf"
+            pdf_bytes = self.make_pdf_bytes()
+
+            response = client.post(
+                "/api/generate",
+                files=[
+                    ("pdf", ("one.pdf", pdf_bytes, "application/pdf")),
+                    ("pdf", ("two.pdf", pdf_bytes, "application/pdf")),
+                ],
+                data={"service_mode": "single_courseware"},
+                headers={"Idempotency-Key": idempotency_key},
+            )
+            repository = client.app.state.job_repository
+
+            self.assertEqual(response.status_code, 400)
+            self.assertEqual(
+                response.json()["detail"]["code"],
+                "invalid_pdf",
+            )
+            self.assertEqual(repository.count_queued(), 0)
+            self.assertEqual(list(settings.jobs_root.glob("*/inputs")), [])
+            self.assertIsNone(
+                repository.find_by_owner_idempotency_key(
+                    user["id"],
+                    idempotency_key,
+                )
+            )
+
+    def test_course_outline_rejects_duplicate_scalar_outline_without_residue(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            settings = self.ready_settings(root)
+            client = TestClient(create_app(settings=settings))
+            user = self.register_user(client)
+            idempotency_key = "duplicate-course-outline"
+            pdf_bytes = self.make_pdf_bytes()
+
+            response = client.post(
+                "/api/generate",
+                files=[
+                    (
+                        "outline",
+                        ("outline-one.md", b"# One", "text/markdown"),
+                    ),
+                    (
+                        "outline",
+                        ("outline-two.md", b"# Two", "text/markdown"),
+                    ),
+                    ("pdfs", ("lecture.pdf", pdf_bytes, "application/pdf")),
+                ],
+                data={"service_mode": "course_outline"},
+                headers={"Idempotency-Key": idempotency_key},
+            )
+            repository = client.app.state.job_repository
+
+            self.assertEqual(response.status_code, 400)
+            self.assertEqual(
+                response.json()["detail"]["code"],
+                "invalid_outline",
+            )
+            self.assertEqual(repository.count_queued(), 0)
+            self.assertEqual(list(settings.jobs_root.glob("*/inputs")), [])
+            self.assertIsNone(
+                repository.find_by_owner_idempotency_key(
+                    user["id"],
+                    idempotency_key,
+                )
+            )
 
     def test_multi_courseware_accepts_repeated_pdfs_in_upload_order(self):
         with tempfile.TemporaryDirectory() as tmp:

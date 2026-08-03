@@ -165,3 +165,63 @@ shape 必须拒绝，因此将 fixture 改为语义一致的 `multi_courseware`�
 
 包含本报告的最终提交 SHA 无法在提交创建前自引用，精确 final SHA 在
 Supervisor handoff 中回传。
+
+## 8. Fresh review corrective patch
+
+### 基线与范围
+
+- Task 0009 原 final：`5dc70edce9e6ec055f630061868398099ee1bbcd`。
+- corrective 开始时 HEAD：
+  `cd5a92f2d2c426afa856b18065cb067d541a46b7`。
+- `cd5a92f` 只新增 Supervisor 的认证闭环计划；corrective 未回退、改写
+  或 stage 该提交。
+- 受保护 dirty/untracked 内容保持原样。
+
+### 重复 scalar multipart
+
+- RED：
+  - single 同名 `pdf` 提交两次返回 200 并创建 Job；
+  - course outline 同名 `outline` 提交两次返回 200 并创建 Job。
+- 修复：在 route 内读取 Starlette 原始 form multi-dict，通过
+  `getlist()` 在 JobService admission 前核对 scalar cardinality。
+- GREEN：两种重复字段均返回结构化 400；repository 无 queued Job，
+  jobs root 无 input directory，owner/idempotency key 无记录。
+- repeated `pdfs` 继续保持合法多值语义。
+
+### Package 与冻结 coordination 完整性
+
+- RED：multi Package 的 source 遗漏、source 逆序、section 遗漏和
+  section 逆序均被 Worker 错误完成。
+- 修复：新增共享 `validate_material_package_coordination()`，Worker 在
+  原子完成前核对：
+  - `package.source_ids` 与 Manifest ordered source 完全相等且同序；
+  - Package sections 与 Learning Map ordered units 数量、位置一一对应；
+  - `section.id == unit.material_section_id`；
+  - `section.order == unit.order`；
+  - `section.source_ids == [unit.primary_source_id]`。
+- GREEN：四类错配均永久 `invalid_job_output`，不写 artifacts/sections；
+  合法 single、outline、multi v2 path 继续完成。
+- 测试 fake runner 改为从真实 frozen Learning Map 构造 `unit-*`
+  section identity，避免 pre-sequence fixture 绕开合同。
+
+### Corrective 验证
+
+- focused Worker/Web：`93/93`；
+- `python -m compileall -q apps packages`：通过；
+- backend full：`382/382`；
+- frontend lint、typecheck：通过；
+- Vitest：`5/5`；
+- Next.js production build：通过；
+- Playwright 首次因已有 PID 占用 3000、测试 server 改用 3001 而失败；
+  该进程随后自行退出，确认 3000 无监听后重跑：`6/6`；
+- `git diff --check`：提交前最终检查。
+
+### Corrective 精确文件
+
+- `apps/api/jstudy_api/app.py`
+- `packages/core/jstudy_core/job_system/worker.py`
+- `packages/core/jstudy_core/materials/__init__.py`
+- `packages/core/jstudy_core/materials/validation.py`
+- `tests/test_job_worker.py`
+- `tests/test_web_mvp.py`
+- `multi-agent/jstudy-product-build/reports/0009-service-mode-contracts-multi-courseware-report.md`

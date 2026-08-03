@@ -728,6 +728,29 @@ def create_app(
         current_user = current_user_or_401(request)
         refresh_runtime()
         resolved_service_mode = (service_mode or "").strip() or "single_courseware"
+        raw_form = await request.form()
+        if (
+            resolved_service_mode == "single_courseware"
+            and len(raw_form.getlist("pdf")) > 1
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "invalid_pdf",
+                    "message": "Single courseware requires exactly one pdf field.",
+                },
+            )
+        if (
+            resolved_service_mode == "course_outline"
+            and len(raw_form.getlist("outline")) > 1
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "invalid_outline",
+                    "message": "Course outline requires exactly one outline field.",
+                },
+            )
         runtime_readiness = application_readiness()
         if runtime_readiness["status"] != "ready":
             raise HTTPException(

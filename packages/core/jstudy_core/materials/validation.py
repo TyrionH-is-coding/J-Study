@@ -7,6 +7,11 @@ from pathlib import Path
 import re
 from typing import Any
 
+from packages.core.jstudy_core.courseware.models import (
+    CoursewareManifestV1,
+    LearningMapV1,
+)
+
 from .models import CitationRun, MaterialPackageV2, MaterialSection
 
 
@@ -220,6 +225,43 @@ def validate_material_package(
             raise MaterialValidationError(
                 "section_quality_mismatch",
                 "section quality does not match typed evidence and citations",
+            )
+    return package
+
+
+def validate_material_package_coordination(
+    package: MaterialPackageV2,
+    manifest: CoursewareManifestV1,
+    learning_map: LearningMapV1,
+) -> MaterialPackageV2:
+    expected_source_ids = [
+        source.source_id for source in manifest.ordered_sources()
+    ]
+    if package.source_ids != expected_source_ids:
+        raise MaterialValidationError(
+            "package_source_sequence_mismatch",
+            "package sources do not match the frozen manifest order",
+        )
+
+    ordered_units = learning_map.ordered_units()
+    if len(package.sections) != len(ordered_units):
+        raise MaterialValidationError(
+            "package_section_sequence_mismatch",
+            "package sections do not match the frozen learning map",
+        )
+    for section, unit in zip(
+        package.sections,
+        ordered_units,
+        strict=True,
+    ):
+        if (
+            section.id != unit.material_section_id
+            or section.order != unit.order
+            or section.source_ids != [unit.primary_source_id]
+        ):
+            raise MaterialValidationError(
+                "package_section_sequence_mismatch",
+                "package section order does not match the frozen learning map",
             )
     return package
 

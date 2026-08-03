@@ -110,16 +110,16 @@ class FakeDocumentService:
                 pages=[
                     ParsedPage(
                         page_number=1,
-                        text="Courseware fact",
-                        markdown="Courseware fact",
+                        text=f"Courseware fact {source.source_id}",
+                        markdown=f"Courseware fact {source.source_id}",
                         blocks=[
                             ParsedBlock(
                                 block_id=(
                                     f"{source.source_id}-P001-B001"
                                 ),
                                 kind="text",
-                                text="Courseware fact",
-                                markdown="Courseware fact",
+                                text=f"Courseware fact {source.source_id}",
+                                markdown=f"Courseware fact {source.source_id}",
                             )
                         ],
                     )
@@ -376,32 +376,34 @@ class JobWorkerTest(unittest.TestCase):
         def runner(**kwargs):
             outputs = legacy_runner(**kwargs)
             source_files = kwargs["source_files"]
+            source_files_by_id = {
+                source["source_id"]: source for source in source_files
+            }
+            units = kwargs["learning_map"].ordered_units()
             evidence = [
                 {
                     "id": f"E{index:03d}",
-                    "source_id": source["source_id"],
-                    "source_file": source["file_name"],
+                    "source_id": unit.primary_source_id,
+                    "source_file": source_files_by_id[
+                        unit.primary_source_id
+                    ]["file_name"],
                     "page": 1,
-                    "chunk_id": f"{source['source_id']}-C001",
+                    "chunk_id": f"{unit.primary_source_id}-C001",
                     "excerpt": f"Fact {index}",
                 }
-                for index, source in enumerate(source_files, start=1)
+                for index, unit in enumerate(units, start=1)
             ]
             outputs["evidence"].write_text(
                 json.dumps(evidence),
                 encoding="utf-8",
             )
             sections = []
-            for index, source in enumerate(source_files, start=1):
+            for index, unit in enumerate(units, start=1):
                 evidence_id = f"E{index:03d}"
                 sections.append(
                     {
-                        "id": (
-                            "full-material"
-                            if expected_mode == "single_courseware"
-                            else f"section-{index:03d}"
-                        ),
-                        "order": index,
+                        "id": unit.material_section_id,
+                        "order": unit.order,
                         "title": (
                             "完整资料"
                             if expected_mode == "single_courseware"
@@ -414,7 +416,7 @@ class JobWorkerTest(unittest.TestCase):
                             "cited_evidence_count": 1,
                             "citation_coverage": 1.0,
                         },
-                        "source_ids": [source["source_id"]],
+                        "source_ids": [unit.primary_source_id],
                         "evidence_ids": [evidence_id],
                         "blocks": [
                             {
@@ -444,7 +446,10 @@ class JobWorkerTest(unittest.TestCase):
                         "subject": "medicine",
                         "language": "zh-CN",
                         "source_ids": [
-                            source["source_id"] for source in source_files
+                            source.source_id
+                            for source in kwargs[
+                                "courseware_manifest"
+                            ].ordered_sources()
                         ],
                         "sections": sections,
                         "rendering": {
@@ -699,6 +704,78 @@ class JobWorkerTest(unittest.TestCase):
         self.assertEqual(job.error_code, "invalid_job_output")
         self.assertEqual(self.repository.list_artifacts("job-1"), [])
         self.assertEqual(self.repository.list_sections("job-1"), [])
+
+    def test_multi_worker_rejects_package_coordination_mismatches(self):
+        def omit_source(payload, evidence):
+            payload["source_ids"].pop()
+            payload["sections"].pop()
+            evidence.pop()
+
+        def reverse_sources(payload, evidence):
+            payload["source_ids"].reverse()
+
+        def omit_section(payload, evidence):
+            payload["sections"].pop()
+
+        def reverse_sections(payload, evidence):
+            payload["sections"].reverse()
+
+        cases = {
+            "source-omitted": omit_source,
+            "source-reversed": reverse_sources,
+            "section-omitted": omit_section,
+            "section-reversed": reverse_sections,
+        }
+        for name, mutate in cases.items():
+            with self.subTest(name=name):
+                job_id = f"job-{name}"
+                self.create_job(
+                    job_id=job_id,
+                    service_mode="multi_courseware",
+                )
+                base_runner = self.v2_output_runner(
+                    [],
+                    "multi_courseware",
+                )
+
+                def invalid_runner(**kwargs):
+                    outputs = base_runner(**kwargs)
+                    package = json.loads(
+                        outputs["package"].read_text(encoding="utf-8")
+                    )
+                    evidence = json.loads(
+                        outputs["evidence"].read_text(encoding="utf-8")
+                    )
+                    mutate(package, evidence)
+                    outputs["package"].write_text(
+                        json.dumps(package),
+                        encoding="utf-8",
+                    )
+                    outputs["evidence"].write_text(
+                        json.dumps(evidence),
+                        encoding="utf-8",
+                    )
+                    return outputs
+
+                worker = JobWorker(
+                    self.repository,
+                    self.settings,
+                    worker_id=f"worker-{name}",
+                    multi_runner=invalid_runner,
+                )
+
+                self.assertTrue(worker.run_once())
+                job = self.repository.get(job_id)
+                self.assertEqual(job.state, JobState.FAILED)
+                self.assertEqual(job.error_code, "invalid_job_output")
+                self.assertEqual(
+                    self.repository.list_artifacts(job_id),
+                    [],
+                )
+                self.assertEqual(
+                    self.repository.list_sections(job_id),
+                    [],
+                )
 
     def test_multi_worker_rejects_coordination_mutation(self):
         self.create_job(service_mode="multi_courseware")
@@ -1367,7 +1444,7 @@ class JobWorkerTest(unittest.TestCase):
             ],
             [
                 (
-                    "full-material",
+                    "unit-001",
                     1,
                     "generated",
                     {
