@@ -148,3 +148,128 @@
 
 包含本报告的最终提交 SHA 无法在提交创建前自引用，精确 final SHA 在
 Supervisor handoff 中回传。
+
+## 8. Live staging REVISE corrective
+
+### 8.1 Corrective baseline
+
+- 委派要求先执行
+  `git fetch origin feature/backend-frontend-mvp`，已执行。
+- 委派文本中的短标识 `ab1e8469d8b` 无法由 Git 解析。
+- fetch 后本地 HEAD 与
+  `origin/feature/backend-frontend-mvp` 均为唯一匹配 Task 0011 验收报告的
+  提交：
+  `ab1e846b4f7ae6aa7acde225721440dfad8f445f`
+  （`文档：记录 V4 Flash 并发生成验收`）。
+- corrective start SHA 因此记录为上述完整 SHA；本地与远端分叉计数为
+  `0/0`。
+- 开始时既有受保护 modified/untracked 内容与原报告一致，corrective
+  未覆盖、stage、提交、移动或清理这些内容。
+
+### 8.2 Supervisor live 证据
+
+- 三次 server created-to-finished 为 `34.701s`、`36.046s`、`25.892s`；
+  中位数 `34.701s`，最大值 `36.046s`，未通过 `25s/35s` 门禁。
+- Run 1 只有 `5/6` sections，quality fail，人工 `79/100`；其余两次为
+  `6/6`、`92/100` 与 `90/100`。
+- `30/30` artifact hashes 匹配，trace 证明并发 `3` 已生效。
+- Run 1 `unit-003` 两次结构/语义验证后进入空 failed section，旧 trace
+  没有最终安全 validation code。
+- 成功结果仍出现同一七步流程的完整列表/表格重复，证明 prompt-only
+  规则不足。
+
+### 8.3 安全诊断与局部恢复
+
+- RED：
+  - generation 无 diagnostic outcome；
+  - scheduler timing 只有 id/order/status/duration；
+  - trace 没有 Provider 调用硬上限；
+  - 两次验证失败后立即产生 failed section。
+- GREEN：
+  - 每节 trace timing 新增 `attempt_count`、`failure_category` 和
+    `failure_code`；
+  - code 只允许最多 64 个小写字母、数字或下划线，非法值归一化为固定
+    fallback；
+  - 不记录 prompt、正文、evidence、Provider 原始响应、URL、key 或异常
+    正文；
+  - 前两次格式/结构验证均失败后，只对当前失败节进行一次第三次定向恢复；
+  - 成功节不重复调用；运行时 Provider 异常仍立即上抛并走既有 Worker
+    retry/permanent 语义；
+  - 单节 Provider 调用硬上限为 `3`，包含正常调用、一次格式修复和一次
+    定向恢复；N 个 Learning Unit 的 Job 上限为 `3 * N`；
+  - 局部仍失败时保留原位置的空 failed section；trace 同时记录
+    `non_failed_section_count` 与 `failed_section_count`，不把 section 总数
+    伪装为成功数；
+  - Worker 并发异常回归继续证明：取消未启动工作，等待已启动调用收敛，
+    不写 artifacts、sections 或 completed transition。
+- 提交：
+  - `9365cf7 修复：增加章节定向恢复与安全诊断`
+  - `89ca5af 修复：明确章节局部失败计数`
+
+### 8.4 默认并发调整
+
+- RED：四并发调度已经可用，但 RuntimeSettings、Compose、`.env.example`
+  和文档默认仍为 `3`。
+- GREEN：
+  - 默认值改为 `4`，合法范围继续为 `1..4`；
+  - `Event` 确定性测试证明六个任务恰好有四个同时活动，未创建无界线程；
+  - 显式值 `3` 的并发/顺序测试继续保留；
+  - 值 `1` 继续提供串行回滚；
+  - 一个 Worker 最多有该值个活动 section calls；多个 Worker 的 Provider
+    活动调用上限为该值乘以 Worker 副本数。
+- 未增加额外 Worker、无界线程或 speculative Provider calls。
+- 提交：`a1927b0 性能：将章节并发默认上限调整为四`。
+
+### 8.5 确定性重复规整
+
+- RED：相同两步 workflow、相同逐条 citation 的完整列表与完整表格均被
+  保留。
+- GREEN：
+  - 只在同一 section 内比较 list items 与 table rows；
+  - 去除 citation 后的规范化文本必须逐项完全相同；
+  - 每项/每行的 citation 对应关系必须完全相同且整体非空；
+  - 满足上述条件时保留 table、移除 list；
+  - 表格增加新信息或逐行 citation 归属变化时，两种表达均保留。
+- 这不是模糊匹配或通用语义去重系统。
+- 提交：
+  - `a67648f 修复：规整列表与表格完全重复表达`
+  - `9a23bcc 修复：收紧重复表达的证据对应`
+
+### 8.6 Corrective focused verification
+
+- scheduler、generation、pipeline、settings、Worker、deployment：
+  `147/147`。
+- 原 Task 0011 full backend/frontend/Compose 门禁将在 corrective 最终提交后
+  重新完整执行。
+
+### 8.7 Corrective 精确文件
+
+- `.env.example`
+- `README.md`
+- `deploy/docker-compose/api.compose.yml`
+- `docs/architecture/overview.md`
+- `docs/deployment/server-runbook.md`
+- `docs/roadmap.md`
+- `packages/core/jstudy_core/materials/__init__.py`
+- `packages/core/jstudy_core/materials/generation.py`
+- `packages/core/jstudy_core/materials/scheduling.py`
+- `packages/core/jstudy_core/pipeline.py`
+- `packages/core/jstudy_core/settings.py`
+- `tests/test_deployment_files.py`
+- `tests/test_material_generation.py`
+- `tests/test_material_scheduling.py`
+- `tests/test_mvp_runner.py`
+- `tests/test_settings.py`
+- `multi-agent/jstudy-product-build/reports/0011-generation-latency-reliability-report.md`
+
+### 8.8 Corrective residual risks
+
+- 本轮未访问 staging、SSH、Cloudflare、Nginx、DNS、真实 Provider 或凭据，
+  也未提交 live Job。
+- 默认并发 `4` 与第三次定向恢复可能增加瞬时 Provider 压力；硬上限和
+  Worker 副本乘数已明确，但仍需按真实 Provider rate limit 验证。
+- 精确重复规整有意保守，不处理措辞不同但语义重复的内容。
+- 不能从 deterministic tests 宣称真实延迟、6/6 完整性或人工质量门禁
+  已通过。
+- corrective 完成后仍只请求 `PASS_WITH_LIMITATIONS`；Supervisor 必须
+  重新运行三次相同 live staging 样本后再判断真实性能门禁。
