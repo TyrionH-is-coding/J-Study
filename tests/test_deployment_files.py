@@ -333,6 +333,10 @@ class DeploymentFilesTest(unittest.TestCase):
 
         self.assertIn("JSTUDY_DATABASE_URL", compose_text)
         self.assertIn("JSTUDY_SESSION_SECRET", compose_text)
+        self.assertIn(
+            "JSTUDY_INVITE_REQUIRED: ${JSTUDY_INVITE_REQUIRED:-true}",
+            compose_text,
+        )
 
     def test_worker_generation_concurrency_environment_contract(self):
         compose_text = (
@@ -350,10 +354,27 @@ class DeploymentFilesTest(unittest.TestCase):
             "JSTUDY_GENERATION_MAX_CONCURRENCY=3",
             env_example,
         )
-        self.assertIn(
-            "JSTUDY_INVITE_REQUIRED: ${JSTUDY_INVITE_REQUIRED:-true}",
-            compose_text,
-        )
+
+    def test_generation_concurrency_operations_are_documented(self):
+        documents = [
+            (ROOT / "README.md").read_text(encoding="utf-8"),
+            (ROOT / "docs" / "architecture" / "overview.md").read_text(
+                encoding="utf-8"
+            ),
+            (ROOT / "docs" / "deployment" / "server-runbook.md").read_text(
+                encoding="utf-8"
+            ),
+            (ROOT / "docs" / "roadmap.md").read_text(encoding="utf-8"),
+        ]
+        for content in documents:
+            self.assertIn("JSTUDY_GENERATION_MAX_CONCURRENCY", content)
+            self.assertIn("1..4", content)
+            self.assertIn("默认值 `3`", content)
+            self.assertIn("串行回滚", content)
+            self.assertIn("Worker 副本", content)
+            self.assertIn("Supervisor", content)
+            self.assertIn("25 秒", content)
+            self.assertIn("35 秒", content)
 
     def test_runbook_documents_durable_three_service_operations(self):
         runbook = (ROOT / "deploy" / "docker-compose" / "README.md").read_text(

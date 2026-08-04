@@ -149,6 +149,11 @@ to admin settings; nonempty environment values remain explicit process
 overrides.
 The API snapshots current settings for each new submission, and the worker snapshots them for each new claim; a running claim is not mutated midway. `JSTUDY_SOUL_PATH` is the compatibility fallback for the default active pack, while selected scenarios should normally resolve their own soul profile path from `content_pack.json`. `JSTUDY_MNEMONICS_PATH` remains the compatibility name for the prompt-rendered knowledge snippet file.
 The application retention default is `0`, which disables cleanup. Public pilot `.env` files must keep `JSTUDY_JOB_RETENTION_HOURS=72` or another deliberate nonzero override so uploaded PDFs and generated artifacts do not accumulate indefinitely. Durable Job retention 由独立 worker 执行，API 不负责清理。
+`JSTUDY_GENERATION_MAX_CONCURRENCY` 控制单个 Job 的独立章节模型调用上限，
+合法范围为 `1..4`，默认值 `3`；设为 `1` 是不改内容合同的串行回滚方式。
+总活动调用数会随 Worker 副本数量相乘，扩容前必须核算 Provider 限流。
+确定性测试只证明调度合同；仍须由 Supervisor 对真实 6 页样本复验中位数
+不超过 25 秒、任一单次不超过 35 秒，才能通过产品延迟门禁。
 `JSTUDY_DATABASE_URL` controls Job and auth persistence and takes precedence over the legacy-compatible `DATABASE_URL`. It defaults to a local SQLite file in development; Docker Compose uses PostgreSQL.
 Set `JSTUDY_SESSION_SECRET` before deployment. Use `JSTUDY_COOKIE_SECURE=true` when serving over HTTPS.
 `JSTUDY_INVITE_REQUIRED` defaults to `true`. For small private tests only, set `JSTUDY_INVITE_REQUIRED=false` to allow registration without an invite code; set it back to `true` before broader public access.

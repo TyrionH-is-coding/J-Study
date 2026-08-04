@@ -270,6 +270,16 @@ boundary 迁移到 Tencent COS。
 
 Runtime settings are centralized in `packages/core/jstudy_core/settings.py`. `JSTUDY_DATABASE_URL`, `JSTUDY_JOBS_DIR`, and `JSTUDY_SETTINGS_DIR` are fixed process/topology settings. Provider credentials, models, MinerU settings, Soul/content paths, upload limits, and retention are admin-managed unless a corresponding nonempty process environment variable explicitly overrides them. An empty environment value falls back to shared `data/settings`; Compose therefore leaves model defaults empty. `JSTUDY_MNEMONICS_PATH` is the current compatibility name for the prompt-rendered knowledge snippet file used by the MVP pipeline.
 
+Sequence-first generation dispatches one existing model call per Learning Unit
+through a bounded, order-preserving scheduler. `JSTUDY_GENERATION_MAX_CONCURRENCY`
+has legal range `1..4` and 默认值 `3`; value `1` is the supported 串行回滚.
+The immutable Worker claim snapshot fixes the value for the running Job, and
+completion order cannot change `MaterialSection.order`. Total provider
+concurrency multiplies by Worker 副本 count, so replica changes require a fresh
+rate-limit calculation. Deterministic tests verify this architecture, while the
+Supervisor must still run the real six-page staging gate: median at most 25 秒
+and every run at most 35 秒.
+
 Operator-editable settings are persisted under `JSTUDY_SETTINGS_DIR`, defaulting to `data/settings`. The current files are `model_catalog.json` for LLM, embedding, and web-search profiles; `runtime.json` for RAG, parser, parser profiles, upload, and cleanup settings; `content_pack.json` for subject-pack paths, scenarios, and soul profiles; and `mnemonics.json` as the compatibility filename for structured knowledge snippet items. The API takes a fresh snapshot for every submission, while the worker takes one for every claim; a claim already in progress keeps that snapshot. Nonempty environment overrides require a process restart to change and intentionally take precedence over the admin catalog.
 
 ## Soul Profile Library

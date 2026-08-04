@@ -144,6 +144,15 @@ Task 0009 deliberately does not include cross-courseware association discovery,
 scoring, generation, graph contracts, or UI. That algorithm remains an
 experimental decision.
 
+Task 0011 adds bounded, order-preserving section generation without changing
+Manifest, Learning Map, Coverage Ledger, Package v2 or public API contracts.
+`JSTUDY_GENERATION_MAX_CONCURRENCY` has range `1..4`, 默认值 `3`, and value
+`1` is the supported 串行回滚. The cap applies per Job, so total Provider
+concurrency grows with Worker 副本 count. Deterministic tests cover the cap,
+ordering, failure atomicity and safe trace metrics; the performance milestone
+remains incomplete until the Supervisor reruns the real six-page staging sample
+and confirms median no more than 25 秒 and every run no more than 35 秒.
+
 Later phases add the editable courseware draft/organizer, synchronized Reader,
 HTML rendering, and production-like deployment after the backend contracts pass.
 
