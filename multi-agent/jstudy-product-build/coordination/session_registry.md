@@ -10,8 +10,9 @@
 ## Current State
 
 - Workflow status: framework initialized.
-- Current code task: Task 0009 assigned to Code Agent.
-- Latest Supervisor verdict: Task 0008 `PASS`.
+- Current code task: Task 0011 assigned to Code Agent.
+- Latest completed implementation checkpoint: Task 0010 plus the
+  DeepSeek V4 Flash staging contract repair at `01dc49e`.
 
 ## Update Rule
 
