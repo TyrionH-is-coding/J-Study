@@ -1,0 +1,8 @@
+fastapi
+uvicorn
+python-multipart
+PyMuPDF
+httpx
+sqlmodel
+pwdlib[argon2]
+psycopg[binary]

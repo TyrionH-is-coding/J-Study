@@ -2,7 +2,7 @@
 
 ## 仓库边界
 
-本仓库根目录是 `J study`，用于当前 MVP 后端以及后续前端接入、部署脚本。上一级目录中的 `DeepTutor` 已经是独立 Git 仓库，不纳入本仓库。
+本仓库根目录是 `J-Study`，用于当前 MVP 后端以及后续前端接入、部署脚本。上一级目录中的 `DeepTutor` 已经是独立 Git 仓库，不纳入本仓库。
 
 ## 分支
 
@@ -20,7 +20,7 @@
 - 后端代码改动提交前运行：
 
 ```powershell
-python -m py_compile web_mvp.py
+python -m py_compile web_mvp.py mvp_runner.py apps/api/jstudy_api/app.py apps/api/jstudy_api/ui.py packages/core/jstudy_core/pipeline.py packages/core/jstudy_core/cli.py
 python -m unittest discover -s tests -v
 ```
 

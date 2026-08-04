@@ -1,0 +1,124 @@
+services:
+  jstudy-api:
+    build:
+      context: ../..
+      dockerfile: apps/api/Dockerfile
+    image: ${JSTUDY_IMAGE_NAME:-jstudy-backend:pilot}
+    container_name: ${JSTUDY_API_CONTAINER_NAME:-jstudy-api}
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      SILICONFLOW_API_KEY: ${SILICONFLOW_API_KEY:-}
+      SILICONFLOW_API_KEY_FILE: ${SILICONFLOW_API_KEY_FILE:-}
+      SILICONFLOW_CHAT_MODEL: ${SILICONFLOW_CHAT_MODEL:-}
+      SILICONFLOW_EMBED_MODEL: ${SILICONFLOW_EMBED_MODEL:-}
+      MINERU_API_BASE_URL: ${MINERU_API_BASE_URL:-}
+      MINERU_API_TOKEN: ${MINERU_API_TOKEN:-}
+      MINERU_MODEL_VERSION: ${MINERU_MODEL_VERSION:-}
+      MINERU_LANGUAGE: ${MINERU_LANGUAGE:-}
+      MINERU_POLL_INTERVAL_SECONDS: ${MINERU_POLL_INTERVAL_SECONDS:-}
+      MINERU_DEADLINE_SECONDS: ${MINERU_DEADLINE_SECONDS:-}
+      MINERU_MAX_RESULT_BYTES: ${MINERU_MAX_RESULT_BYTES:-}
+      JSTUDY_ADMIN_TOKEN: ${JSTUDY_ADMIN_TOKEN:-}
+      JSTUDY_SETTINGS_DIR: /app/data/settings
+      JSTUDY_JOBS_DIR: /app/data/jobs
+      JSTUDY_SOUL_PATH: ${JSTUDY_SOUL_PATH:-}
+      JSTUDY_MNEMONICS_PATH: ${JSTUDY_MNEMONICS_PATH:-}
+      JSTUDY_MAX_PDFS: ${JSTUDY_MAX_PDFS:-20}
+      JSTUDY_MAX_PDF_BYTES: ${JSTUDY_MAX_PDF_BYTES:-}
+      JSTUDY_MAX_TOTAL_UPLOAD_BYTES: ${JSTUDY_MAX_TOTAL_UPLOAD_BYTES:-314572800}
+      JSTUDY_MAX_OUTLINE_BYTES: ${JSTUDY_MAX_OUTLINE_BYTES:-5242880}
+      JSTUDY_QUEUE_CAPACITY: ${JSTUDY_QUEUE_CAPACITY:-100}
+      JSTUDY_USER_ACTIVE_JOB_LIMIT: ${JSTUDY_USER_ACTIVE_JOB_LIMIT:-3}
+      JSTUDY_WORKER_POLL_SECONDS: ${JSTUDY_WORKER_POLL_SECONDS:-1}
+      JSTUDY_WORKER_LEASE_SECONDS: ${JSTUDY_WORKER_LEASE_SECONDS:-300}
+      JSTUDY_WORKER_MAX_ATTEMPTS: ${JSTUDY_WORKER_MAX_ATTEMPTS:-2}
+      JSTUDY_JOB_RETENTION_HOURS: ${JSTUDY_JOB_RETENTION_HOURS:-}
+      JSTUDY_DATABASE_URL: ${JSTUDY_DATABASE_URL:-}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://jstudy:jstudy-dev-password@postgres:5432/jstudy}
+      JSTUDY_SESSION_SECRET: ${JSTUDY_SESSION_SECRET:-dev-session-secret-change-me}
+      JSTUDY_COOKIE_SECURE: ${JSTUDY_COOKIE_SECURE:-false}
+      JSTUDY_SESSION_COOKIE_NAME: ${JSTUDY_SESSION_COOKIE_NAME:-jstudy_session}
+      JSTUDY_INVITE_REQUIRED: ${JSTUDY_INVITE_REQUIRED:-true}
+    ports:
+      - "${JSTUDY_API_BIND_ADDRESS:-0.0.0.0}:${JSTUDY_API_PORT:-8765}:8765"
+    volumes:
+      - ../../data/jobs:/app/data/jobs
+      - ../../data/settings:/app/data/settings
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/api/health', timeout=5).close()",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  jstudy-worker:
+    build:
+      context: ../..
+      dockerfile: apps/api/Dockerfile
+    image: ${JSTUDY_IMAGE_NAME:-jstudy-backend:pilot}
+    container_name: ${JSTUDY_WORKER_CONTAINER_NAME:-jstudy-worker}
+    restart: unless-stopped
+    command: ["python", "-m", "apps.worker.main"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      SILICONFLOW_API_KEY: ${SILICONFLOW_API_KEY:-}
+      SILICONFLOW_API_KEY_FILE: ${SILICONFLOW_API_KEY_FILE:-}
+      SILICONFLOW_CHAT_MODEL: ${SILICONFLOW_CHAT_MODEL:-}
+      SILICONFLOW_EMBED_MODEL: ${SILICONFLOW_EMBED_MODEL:-}
+      MINERU_API_BASE_URL: ${MINERU_API_BASE_URL:-}
+      MINERU_API_TOKEN: ${MINERU_API_TOKEN:-}
+      MINERU_MODEL_VERSION: ${MINERU_MODEL_VERSION:-}
+      MINERU_LANGUAGE: ${MINERU_LANGUAGE:-}
+      MINERU_POLL_INTERVAL_SECONDS: ${MINERU_POLL_INTERVAL_SECONDS:-}
+      MINERU_DEADLINE_SECONDS: ${MINERU_DEADLINE_SECONDS:-}
+      MINERU_MAX_RESULT_BYTES: ${MINERU_MAX_RESULT_BYTES:-}
+      JSTUDY_SETTINGS_DIR: /app/data/settings
+      JSTUDY_JOBS_DIR: /app/data/jobs
+      JSTUDY_SOUL_PATH: ${JSTUDY_SOUL_PATH:-}
+      JSTUDY_MNEMONICS_PATH: ${JSTUDY_MNEMONICS_PATH:-}
+      JSTUDY_MAX_PDFS: ${JSTUDY_MAX_PDFS:-20}
+      JSTUDY_MAX_PDF_BYTES: ${JSTUDY_MAX_PDF_BYTES:-}
+      JSTUDY_MAX_TOTAL_UPLOAD_BYTES: ${JSTUDY_MAX_TOTAL_UPLOAD_BYTES:-314572800}
+      JSTUDY_MAX_OUTLINE_BYTES: ${JSTUDY_MAX_OUTLINE_BYTES:-5242880}
+      JSTUDY_QUEUE_CAPACITY: ${JSTUDY_QUEUE_CAPACITY:-100}
+      JSTUDY_USER_ACTIVE_JOB_LIMIT: ${JSTUDY_USER_ACTIVE_JOB_LIMIT:-3}
+      JSTUDY_WORKER_POLL_SECONDS: ${JSTUDY_WORKER_POLL_SECONDS:-1}
+      JSTUDY_WORKER_LEASE_SECONDS: ${JSTUDY_WORKER_LEASE_SECONDS:-300}
+      JSTUDY_WORKER_MAX_ATTEMPTS: ${JSTUDY_WORKER_MAX_ATTEMPTS:-2}
+      JSTUDY_GENERATION_MAX_CONCURRENCY: ${JSTUDY_GENERATION_MAX_CONCURRENCY:-4}
+      JSTUDY_JOB_RETENTION_HOURS: ${JSTUDY_JOB_RETENTION_HOURS:-}
+      JSTUDY_DATABASE_URL: ${JSTUDY_DATABASE_URL:-}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://jstudy:jstudy-dev-password@postgres:5432/jstudy}
+    volumes:
+      - ../../data/jobs:/app/data/jobs
+      - ../../data/settings:/app/data/settings
+    healthcheck:
+      disable: true
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: ${JSTUDY_POSTGRES_CONTAINER_NAME:-jstudy-postgres}
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-jstudy}
+      POSTGRES_USER: ${POSTGRES_USER:-jstudy}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-jstudy-dev-password}
+    volumes:
+      - ../../data/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
