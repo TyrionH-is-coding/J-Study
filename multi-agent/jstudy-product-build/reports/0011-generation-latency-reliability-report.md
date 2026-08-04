@@ -296,3 +296,59 @@ Supervisor handoff 中回传。
   已通过。
 - corrective 完成后仍只请求 `PASS_WITH_LIMITATIONS`；Supervisor 必须
   重新运行三次相同 live staging 样本后再判断真实性能门禁。
+
+## 9. 去重边界 fresh REVISE corrective
+
+### 9.1 Baseline 与范围
+
+- Exact corrective baseline：
+  `bd566721f8869bbb0bca7e5e6d97af4d8cb43063`。
+- Supervisor 已确认诊断、单节三次调用上限、定向恢复、默认并发 `4` 和
+  allowlist 均正确；本轮不修改这些合同。
+- 未访问 SSH、staging、Provider、Cloudflare、Nginx、DNS 或凭据，也未
+  提交 live Job。
+- 生产与测试修改严格限制为：
+  - `packages/core/jstudy_core/materials/generation.py`
+  - `tests/test_material_generation.py`
+- 本报告是唯一额外文档文件。
+
+### 9.2 RED
+
+- `ordered=True` list 与相同单列表格被错误去重，流程显式顺序丢失。
+- `heading A -> list -> heading B -> table` 被全 section signature set
+  跨 heading 匹配，输出留下 heading 但删除其内容。
+- list/table 中 `inline_code` 的双空格与单空格被折叠为相同。
+- list/table 中 `inline_formula` 的空白差异被折叠为相同。
+- 正向控制：局部相邻的 unordered list 与逐 run 完全相同单列表格应继续
+  只保留 table。
+
+五项定向测试首次运行结果：四个反例失败，正向控制通过，证明测试到达
+Supervisor 复现的生产缺口。
+
+### 9.3 GREEN
+
+- `ordered=True` list 的去重签名固定为不可用，永远不会因 table 被删除。
+- 删除全 section signature set；改为从左到右扫描原 block 序列，只比较
+  直接相邻且类型集合恰好为 `{list, table}` 的 pair。
+- heading、callout、paragraph 或任何其他 block 都会切断匹配，因此不会
+  跨作用域删除，也不会产生本轮去重导致的空 heading。
+- `text`、`strong`、`emphasis` 只折叠空白后比较。
+- `inline_code` 与 `inline_formula` 保留原字符串，逐字符比较。
+- citation identity、run type、run value 和 run order 继续精确比较。
+- 保持既有保守边界：只处理单列表格、非空逐 run 完全相同且含 citation
+  的相邻 unordered list/table；多列表格、新增信息、标点变化和 citation
+  归属变化继续保留。
+- generation focused：`37/37`。
+- `python -m compileall -q apps packages`：通过。
+- backend full：`413/413`。
+- `apps/web` lint、typecheck：通过。
+- Vitest：`5/5`。
+- Next.js production build：通过。
+- Playwright：`6/6`。
+- 提交：`e9d4cf8 修复：限制重复规整为相邻无序列表`。
+
+### 9.4 Residual risk
+
+- 该规整有意保守，不处理非相邻或措辞不同的语义重复。
+- 本轮不声称真实性能门禁通过，仍请求 `PASS_WITH_LIMITATIONS`，等待
+  Supervisor 重新执行 live staging。
