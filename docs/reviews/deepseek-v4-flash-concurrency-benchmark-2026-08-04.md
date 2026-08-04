@@ -2,7 +2,9 @@
 
 日期：2026-08-04
 
-结论：**Task 0011 自动化测试通过，但真实 staging 性能与可靠性门禁未通过，Supervisor verdict 为 `REVISE`。**
+当前结论：**Task 0011 corrective 已通过自动化与真实 staging 复验，Supervisor verdict 更新为 `PASS_WITH_LIMITATIONS`。**
+
+下文第 1 至 10 节保留首次验收的 `REVISE` 记录；第 11 节起记录 corrective 复验及当前结论。
 
 ## 1. 验收范围
 
@@ -176,3 +178,151 @@ PostgreSQL 中记录的 byte size 和 SHA-256 与 job-owned output root 的实�
 - PostgreSQL/API/Worker 正常；
 - active Job 数为 0；
 - API/Worker 重启后错误日志为空。
+
+## 11. Corrective 复验基线
+
+复验日期：2026-08-04
+
+| 项目 | 值 |
+|---|---|
+| Git SHA | `0befb6166079f7be8b2a989bc0644b3e3aad9392` |
+| Image | `jstudy-backend:staging-0befb61` |
+| URL | `https://staging.jstudy.online` |
+| Parser | MinerU |
+| Chat provider | DeepSeek official API |
+| Chat model | `deepseek-v4-flash` |
+| Generation concurrency | 4 |
+| 输入大小 | 20,964 bytes |
+| 输入 SHA-256 | `1efdbaaaaf90e407e695e8b1013a8d6e0fa22a50f1c388c7d724c9afacdbdeef` |
+
+部署前新建回滚点：
+
+`/opt/jstudy-staging/backups/pre-0befb61-20260804-120758`
+
+备份包含 `.env`、settings、PostgreSQL dump、Git SHA、镜像信息和 SHA-256 清单。所有校验和通过；PostgreSQL 16 容器内的 `pg_restore -l` 可读取备份目录。主机旧版 `pg_restore` 不支持 PostgreSQL 16 自定义格式，因此不作为有效校验器。
+
+Worker 内部 live probe 确认：
+
+- model：`deepseek-v4-flash`；
+- API host：`api.deepseek.com`；
+- generation concurrency：4；
+- JSON object 请求成功。
+
+DeepSeek Key 只从仓库外授权文件读取，没有写入 Git、报告或测试输出；远端临时 Key 文件已删除。
+
+## 12. Corrective 自动化复核
+
+本轮由 Supervisor 独立执行：
+
+- 两个历史误删反例直接复现通过；
+- `tests.test_material_generation`：`37/37`；
+- backend full：`413/413`；
+- `python -m compileall -q apps packages`：通过；
+- frontend lint、typecheck、production build：通过；
+- Vitest：`5/5`；
+- Playwright：`6/6`；
+- Compose services：`postgres`、`jstudy-worker`、`jstudy-api`；
+- `git diff --check`：通过。
+
+去重规则已收紧为：
+
+- ordered list 永不删除；
+- 只比较直接相邻的 unordered list 与单列表格；
+- heading、callout、paragraph 和其他 block 都会切断匹配；
+- `inline_code` 与 `inline_formula` 按原始值逐字符比较；
+- citation identity 和 run 顺序必须完全一致。
+
+## 13. Corrective 三轮真实结果
+
+| Run | Job ID | 服务端总耗时 | MinerU | 生成 | Provider 调用 | 章节 | Quality | 人工评分 | Artifact |
+|---:|---|---:|---:|---:|---:|---:|---|---:|---:|
+| 1 | `c4ee6fb95d5442bc8b45475cd9dc2202` | 19.172 s | 5.926 s | 13.108 s | 6 | 6/6 | pass | 95/100 | 10/10 |
+| 2 | `d73c3659f01846cfb790d354eae9d68f` | 23.368 s | 6.257 s | 16.644 s | 7 | 6/6 | pass | 92/100 | 10/10 |
+| 3 | `c40d36dd48444005a43f862cddb36f8b` | 18.893 s | 5.372 s | 12.843 s | 6 | 6/6 | pass | 89/100 | 10/10 |
+
+客户端 submit-to-terminal：
+
+- 20.297 秒；
+- 24.360 秒；
+- 20.000 秒。
+
+服务端 created-to-finished：
+
+- 中位数：19.172 秒；
+- 最大值：23.368 秒；
+- 相比初轮 34.701 秒的中位数缩短约 44.8%。
+
+三轮 Trace 均记录 `max_concurrency=4`、`section_count=6`、`failed_section_count=0`。Run 2 的一个章节使用了第二次结构修复调用，其余章节均一次成功；没有发生整个 Job 重试。
+
+## 14. Corrective 内容质量
+
+评分仍采用：事实准确性 30、课件覆盖 20、证据与引用 20、学习设计 15、结构与可读性 10、考试实用性 5。
+
+### Run 1：95/100
+
+- 6 页目标完整；
+- 5 种菌鉴别、A 群/PYR、B 群/CAMP、毒力因子、七步流程、MRSA、D 试验和两个病例均保留；
+- 50/71 evidence 被引用；
+- 未发现关键医学错误；
+- 仅有少量提示框与正文重复。
+
+### Run 2：92/100
+
+- 6 页目标和关键医学事实完整；
+- 52/71 evidence 被引用；
+- 未发现关键医学错误；
+- 第 4 页七步流程以列表和多列表格重复，结构略冗余。
+
+### Run 3：89/100
+
+- 核心事实、考试点和病例完整；
+- 51/71 evidence 被引用；
+- 第 4 页流程重复，第 1 页定位内容轻度重复；
+- “凝固酶保护细菌免受吞噬”的表述比课件原文更强，但未构成会改变学习结论的关键医学错误。
+
+三次均达到可交付的 85 分门槛。
+
+## 15. Corrective Artifact 与门禁
+
+PostgreSQL 记录的 30 个 Artifact byte size 和 SHA-256 已与 job-owned output root 逐项比较，`30/30` 全部一致。
+
+| 门禁 | 要求 | Corrective 结果 | 判定 |
+|---|---:|---:|---|
+| 服务端中位耗时 | <= 25 s | 19.172 s | PASS |
+| 单次最大耗时 | 每次 <= 35 s | 最大 23.368 s | PASS |
+| 章节完整性 | 每次 6/6 | 三次均 6/6 | PASS |
+| 内容质量 | 每次 >= 85 | 95、92、89 | PASS |
+| Artifact 哈希 | 全部匹配 | 30/30 | PASS |
+| 自动化回归 | 全绿 | 全绿 | PASS |
+
+## 16. 当前限制与最终 Verdict
+
+确定性去重现在优先避免误删，因此不会处理以下情况：
+
+- list 与 table 中间隔着 callout 或其他 block；
+- 多列表格与列表语义重复；
+- 措辞不同但语义接近的重复。
+
+Run 2 和 Run 3 仍出现七步流程的列表/多列表格重复，但资料完整、准确且评分高于门槛。该问题适合进入后续独立的内容质量优化，不应重新扩大本次可靠性任务的删除范围。
+
+因此 Task 0011 的 fresh Supervisor verdict 为：
+
+`PASS_WITH_LIMITATIONS`
+
+这表示性能、章节恢复、诊断、产物完整性和交付质量门禁均已通过；已知重复表达作为非阻断限制保留。
+
+## 17. Corrective 恢复结果
+
+复验结束后：
+
+- staging 运行 `jstudy-backend:staging-0befb61`；
+- Chat model 恢复为 `deepseek-ai/DeepSeek-V4-Pro`；
+- Chat base URL 恢复为 `https://api.siliconflow.cn/v1`；
+- `JSTUDY_GENERATION_MAX_CONCURRENCY=4`；
+- API healthy；
+- readiness 与 provider connectivity 均为 ready；
+- PostgreSQL/API/Worker 正常；
+- active Job 数为 0；
+- API/Worker 重启后错误日志均为 0；
+- `.env` 为 `ubuntu:ubuntu`、权限 `600`；
+- DeepSeek 临时 Key 文件不存在。
