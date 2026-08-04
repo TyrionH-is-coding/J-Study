@@ -439,6 +439,97 @@ def generated_section_payload() -> dict:
 
 
 class StructuredGenerationTest(unittest.TestCase):
+    def duplicate_list_table_payload(self) -> dict:
+        payload = generated_section_payload()
+        payload["blocks"] = [
+            {
+                "id": "workflow-list",
+                "type": "list",
+                "ordered": True,
+                "items": [
+                    [
+                        {"type": "text", "text": "步骤一：接种"},
+                        {"type": "citation", "evidence_id": "E001"},
+                    ],
+                    [
+                        {"type": "text", "text": "步骤二：培养"},
+                        {"type": "citation", "evidence_id": "E002"},
+                    ],
+                ],
+            },
+            {
+                "id": "workflow-table",
+                "type": "table",
+                "headers": [
+                    [{"type": "text", "text": "步骤"}],
+                    [{"type": "text", "text": "操作"}],
+                ],
+                "rows": [
+                    [
+                        [{"type": "text", "text": "步骤一"}],
+                        [
+                            {"type": "text", "text": "接种"},
+                            {"type": "citation", "evidence_id": "E001"},
+                        ],
+                    ],
+                    [
+                        [{"type": "text", "text": "步骤二"}],
+                        [
+                            {"type": "text", "text": "培养"},
+                            {"type": "citation", "evidence_id": "E002"},
+                        ],
+                    ],
+                ],
+            },
+        ]
+        return payload
+
+    @patch(
+        "packages.core.jstudy_core.materials.generation.providers.generate_json_object"
+    )
+    def test_exact_list_table_duplicate_with_same_evidence_keeps_table(self, provider):
+        provider.return_value = self.duplicate_list_table_payload()
+
+        section = generate_material_section(
+            section_id="section-001",
+            order=1,
+            title="绪论",
+            soul="teaching rules",
+            evidence=evidence_items(),
+            source_ids=["S001"],
+            api_key="test-key",
+            model="test-model",
+        )
+
+        self.assertEqual(
+            [block.type for block in section.blocks],
+            ["table"],
+        )
+
+    @patch(
+        "packages.core.jstudy_core.materials.generation.providers.generate_json_object"
+    )
+    def test_list_and_table_are_kept_when_table_adds_information(self, provider):
+        payload = self.duplicate_list_table_payload()
+        payload["blocks"][1]["rows"][1][1][0]["text"] = "培养并记录温度"
+        provider.return_value = payload
+
+        section = generate_material_section(
+            section_id="section-001",
+            order=1,
+            title="绪论",
+            soul="teaching rules",
+            evidence=evidence_items(),
+            source_ids=["S001"],
+            api_key="test-key",
+            model="test-model",
+        )
+
+        self.assertEqual(
+            [block.type for block in section.blocks],
+            ["list", "table"],
+        )
+
     @patch("packages.core.jstudy_core.providers.siliconflow_post")
     def test_json_provider_requests_json_object_mode(self, post):
         post.return_value = {

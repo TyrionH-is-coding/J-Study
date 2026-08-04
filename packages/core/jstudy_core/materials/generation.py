@@ -219,6 +219,68 @@ def _failure_diagnostic(exc: Exception) -> tuple[str, str]:
     return category, code
 
 
+def _runs_text(runs: Sequence[Any]) -> str:
+    text = "".join(
+        str(getattr(run, "text", "") or getattr(run, "latex", ""))
+        for run in runs
+        if getattr(run, "type", "") != "citation"
+    )
+    return "".join(re.findall(r"\w+", text.casefold()))
+
+
+def _runs_evidence_ids(runs: Sequence[Any]) -> set[str]:
+    return {
+        str(run.evidence_id)
+        for run in runs
+        if getattr(run, "type", "") == "citation"
+    }
+
+
+def _list_table_signature(block: MaterialBlock) -> tuple[Any, ...] | None:
+    if block.type == "list":
+        entries = tuple(_runs_text(item) for item in block.items)
+        evidence_ids = set().union(
+            *(_runs_evidence_ids(item) for item in block.items)
+        )
+    elif block.type == "table":
+        entries = tuple(
+            "".join(_runs_text(cell) for cell in row)
+            for row in block.rows
+        )
+        evidence_ids = set().union(
+            *(
+                _runs_evidence_ids(cell)
+                for row in block.rows
+                for cell in row
+            )
+        )
+    else:
+        return None
+    if not entries or any(not entry for entry in entries) or not evidence_ids:
+        return None
+    return entries, tuple(sorted(evidence_ids))
+
+
+def _remove_exact_list_table_duplicates(
+    blocks: Sequence[MaterialBlock],
+) -> list[MaterialBlock]:
+    table_signatures = {
+        signature
+        for block in blocks
+        if block.type == "table"
+        for signature in [_list_table_signature(block)]
+        if signature is not None
+    }
+    return [
+        block
+        for block in blocks
+        if not (
+            block.type == "list"
+            and _list_table_signature(block) in table_signatures
+        )
+    ]
+
+
 def _validate_generated_section(
     payload: dict[str, Any],
     *,
@@ -247,7 +309,7 @@ def _validate_generated_section(
         ),
         source_ids=list(source_ids),
         evidence_ids=evidence_ids,
-        blocks=generated.blocks,
+        blocks=_remove_exact_list_table_duplicates(generated.blocks),
     )
     evidence_count = len(section.evidence_ids)
     cited_count = len(set(citation_ids_for_section(section)))
