@@ -192,7 +192,14 @@ def generate_json_object(
     api_key: str,
     model: str = DEFAULT_CHAT_MODEL,
     base_url: str = SILICONFLOW_BASE_URL,
+    transport_retries: int = 1,
 ) -> dict[str, Any]:
+    if (
+        isinstance(transport_retries, bool)
+        or not isinstance(transport_retries, int)
+        or transport_retries not in {0, 1}
+    ):
+        raise ValueError("transport_retries must be 0 or 1")
     payload: dict[str, Any] = {
         "model": model,
         "messages": messages,
@@ -210,7 +217,7 @@ def generate_json_object(
         payload,
         api_key,
         timeout=240,
-        retries=1,
+        retries=transport_retries,
         base_url=base_url,
     )
     try:

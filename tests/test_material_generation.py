@@ -461,21 +461,18 @@ class StructuredGenerationTest(unittest.TestCase):
                 "id": "workflow-table",
                 "type": "table",
                 "headers": [
-                    [{"type": "text", "text": "步骤"}],
-                    [{"type": "text", "text": "操作"}],
+                    [{"type": "text", "text": "流程"}],
                 ],
                 "rows": [
                     [
-                        [{"type": "text", "text": "步骤一"}],
                         [
-                            {"type": "text", "text": "接种"},
+                            {"type": "text", "text": "步骤一：接种"},
                             {"type": "citation", "evidence_id": "E001"},
                         ],
                     ],
                     [
-                        [{"type": "text", "text": "步骤二"}],
                         [
-                            {"type": "text", "text": "培养"},
+                            {"type": "text", "text": "步骤二：培养"},
                             {"type": "citation", "evidence_id": "E002"},
                         ],
                     ],
@@ -511,7 +508,7 @@ class StructuredGenerationTest(unittest.TestCase):
     )
     def test_list_and_table_are_kept_when_table_adds_information(self, provider):
         payload = self.duplicate_list_table_payload()
-        payload["blocks"][1]["rows"][1][1][0]["text"] = "培养并记录温度"
+        payload["blocks"][1]["rows"][1][0][0]["text"] = "步骤二：培养并记录温度"
         provider.return_value = payload
 
         section = generate_material_section(
@@ -535,8 +532,60 @@ class StructuredGenerationTest(unittest.TestCase):
     )
     def test_list_and_table_are_kept_when_row_citations_differ(self, provider):
         payload = self.duplicate_list_table_payload()
-        payload["blocks"][1]["rows"][0][1][-1]["evidence_id"] = "E002"
-        payload["blocks"][1]["rows"][1][1][-1]["evidence_id"] = "E001"
+        payload["blocks"][1]["rows"][0][0][-1]["evidence_id"] = "E002"
+        payload["blocks"][1]["rows"][1][0][-1]["evidence_id"] = "E001"
+        provider.return_value = payload
+
+        section = generate_material_section(
+            section_id="section-001",
+            order=1,
+            title="绪论",
+            soul="teaching rules",
+            evidence=evidence_items(),
+            source_ids=["S001"],
+            api_key="test-key",
+            model="test-model",
+        )
+
+        self.assertEqual(
+            [block.type for block in section.blocks],
+            ["list", "table"],
+        )
+
+    @patch(
+        "packages.core.jstudy_core.materials.generation.providers.generate_json_object"
+    )
+    def test_list_and_table_are_kept_when_punctuation_changes_meaning(self, provider):
+        payload = self.duplicate_list_table_payload()
+        payload["blocks"][0]["items"][0][0]["text"] = "步骤一+A"
+        payload["blocks"][1]["rows"][0][0][0]["text"] = "步骤一-A"
+        provider.return_value = payload
+
+        section = generate_material_section(
+            section_id="section-001",
+            order=1,
+            title="绪论",
+            soul="teaching rules",
+            evidence=evidence_items(),
+            source_ids=["S001"],
+            api_key="test-key",
+            model="test-model",
+        )
+
+        self.assertEqual(
+            [block.type for block in section.blocks],
+            ["list", "table"],
+        )
+
+    @patch(
+        "packages.core.jstudy_core.materials.generation.providers.generate_json_object"
+    )
+    def test_list_and_multi_column_table_are_not_deduplicated(self, provider):
+        payload = self.duplicate_list_table_payload()
+        table = payload["blocks"][1]
+        table["headers"].append([{"type": "text", "text": "备注"}])
+        for row in table["rows"]:
+            row.append([{"type": "text", "text": "补充"}])
         provider.return_value = payload
 
         section = generate_material_section(
@@ -573,6 +622,21 @@ class StructuredGenerationTest(unittest.TestCase):
             request_payload["response_format"],
             {"type": "json_object"},
         )
+
+    @patch("packages.core.jstudy_core.providers.siliconflow_post")
+    def test_json_provider_can_disable_transport_retries(self, post):
+        post.return_value = {
+            "choices": [{"message": {"content": '{"answer": "ok"}'}}]
+        }
+
+        generate_json_object(
+            [{"role": "user", "content": "return json"}],
+            api_key="test-key",
+            model="test-model",
+            transport_retries=0,
+        )
+
+        self.assertEqual(post.call_args.kwargs["retries"], 0)
 
     @patch("packages.core.jstudy_core.providers.siliconflow_post")
     def test_json_provider_disables_thinking_for_official_deepseek(self, post):
@@ -815,6 +879,12 @@ class StructuredGenerationTest(unittest.TestCase):
         )
 
         self.assertEqual(provider.call_count, 3)
+        self.assertTrue(
+            all(
+                call.kwargs["transport_retries"] == 0
+                for call in provider.call_args_list
+            )
+        )
         self.assertEqual(outcome.section.status, "failed")
         self.assertEqual(outcome.attempt_count, 3)
         self.assertEqual(outcome.failure_category, "schema_validation")
@@ -824,6 +894,27 @@ class StructuredGenerationTest(unittest.TestCase):
         self.assertNotIn("SECOND-PRIVATE-TEXT", diagnostics)
         self.assertNotIn("THIRD-PRIVATE-TEXT", diagnostics)
         self.assertNotIn("credential-must-not-appear", diagnostics)
+
+    @patch(
+        "packages.core.jstudy_core.materials.generation.providers.generate_json_object"
+    )
+    def test_unknown_provider_code_is_replaced_by_fixed_public_code(self, provider):
+        provider.side_effect = ProviderJSONError("internal_secret_token")
+
+        outcome = generate_material_section_with_diagnostics(
+            section_id="section-001",
+            order=1,
+            title="绪论",
+            soul="teaching rules",
+            evidence=evidence_items()[:1],
+            source_ids=["S001"],
+            api_key="test-key",
+            model="test-model",
+        )
+
+        self.assertEqual(outcome.failure_category, "provider_json")
+        self.assertEqual(outcome.failure_code, "provider_json_error")
+        self.assertNotIn("internal_secret_token", str(outcome))
 
     @patch(
         "packages.core.jstudy_core.materials.generation.providers.generate_json_object"

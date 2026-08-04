@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import re
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -30,7 +29,48 @@ class _GeneratedSectionContent(BaseModel):
 
 
 SECTION_PROVIDER_CALL_LIMIT = 3
-_SAFE_FAILURE_CODE = re.compile(r"^[a-z0-9_]{1,64}$")
+_PROVIDER_FAILURE_CODES = frozenset(
+    {
+        "unexpected_response_shape",
+        "invalid_json",
+        "json_root_not_object",
+    }
+)
+_MATERIAL_FAILURE_CODES = frozenset(
+    {
+        "duplicate_evidence_id",
+        "evidence_source_not_in_job",
+        "evidence_source_not_in_package",
+        "evidence_source_not_in_section",
+        "invalid_evidence_id",
+        "invalid_evidence_source_id",
+        "section_quality_mismatch",
+        "section_status_mismatch",
+        "undeclared_section_evidence",
+        "unknown_evidence_id",
+        "unknown_source_id",
+    }
+)
+_SCHEMA_FAILURE_CODES = frozenset(
+    {
+        "bool_type",
+        "extra_forbidden",
+        "float_type",
+        "greater_than_equal",
+        "int_type",
+        "less_than_equal",
+        "list_type",
+        "literal_error",
+        "missing",
+        "string_too_long",
+        "string_too_short",
+        "string_type",
+        "too_long",
+        "too_short",
+        "union_tag_invalid",
+        "value_error",
+    }
+)
 
 
 def _messages(
@@ -204,67 +244,56 @@ def _failure_diagnostic(exc: Exception) -> tuple[str, str]:
         category = "provider_json"
         candidate = str(exc)
         fallback = "provider_json_error"
+        allowed_codes = _PROVIDER_FAILURE_CODES
     elif isinstance(exc, MaterialValidationError):
         category = "material_validation"
         candidate = exc.code
         fallback = "material_validation_error"
+        allowed_codes = _MATERIAL_FAILURE_CODES
     elif isinstance(exc, ValidationError):
         category = "schema_validation"
         errors = exc.errors(include_url=False, include_context=False)
         candidate = str(errors[0]["type"]) if errors else ""
         fallback = "schema_validation_error"
+        allowed_codes = _SCHEMA_FAILURE_CODES
     else:
         return "generation", "invalid_material_section"
-    code = candidate if _SAFE_FAILURE_CODE.fullmatch(candidate) else fallback
+    code = candidate if candidate in allowed_codes else fallback
     return category, code
 
 
-def _runs_text(runs: Sequence[Any]) -> str:
-    text = "".join(
-        str(getattr(run, "text", "") or getattr(run, "latex", ""))
-        for run in runs
-        if getattr(run, "type", "") != "citation"
-    )
-    return "".join(re.findall(r"\w+", text.casefold()))
-
-
-def _runs_evidence_ids(runs: Sequence[Any]) -> set[str]:
-    return {
-        str(run.evidence_id)
-        for run in runs
-        if getattr(run, "type", "") == "citation"
-    }
+def _runs_signature(runs: Sequence[Any]) -> tuple[tuple[str, str], ...]:
+    signature = []
+    for run in runs:
+        run_type = str(getattr(run, "type", ""))
+        if run_type == "citation":
+            value = str(run.evidence_id)
+        else:
+            raw_value = str(
+                getattr(run, "text", "") or getattr(run, "latex", "")
+            )
+            value = " ".join(raw_value.split())
+        signature.append((run_type, value))
+    return tuple(signature)
 
 
 def _list_table_signature(block: MaterialBlock) -> tuple[Any, ...] | None:
     if block.type == "list":
-        entries = tuple(
-            (
-                _runs_text(item),
-                tuple(sorted(_runs_evidence_ids(item))),
-            )
-            for item in block.items
-        )
+        entries = tuple(_runs_signature(item) for item in block.items)
     elif block.type == "table":
-        entries = tuple(
-            (
-                "".join(_runs_text(cell) for cell in row),
-                tuple(
-                    sorted(
-                        set().union(
-                            *(_runs_evidence_ids(cell) for cell in row)
-                        )
-                    )
-                ),
-            )
-            for row in block.rows
-        )
+        if len(block.headers) != 1:
+            return None
+        entries = tuple(_runs_signature(row[0]) for row in block.rows)
     else:
         return None
     if (
         not entries
-        or any(not text for text, _ in entries)
-        or not any(evidence_ids for _, evidence_ids in entries)
+        or any(not entry for entry in entries)
+        or not any(
+            run_type == "citation"
+            for entry in entries
+            for run_type, _ in entry
+        )
     ):
         return None
     return entries
@@ -462,6 +491,7 @@ def generate_material_section_with_diagnostics(
                 api_key=api_key,
                 model=model,
                 base_url=base_url,
+                transport_retries=0,
             )
             return SectionGenerationOutcome(
                 section=_validate_generated_section(
