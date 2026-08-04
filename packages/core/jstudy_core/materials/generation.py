@@ -272,13 +272,19 @@ def _runs_signature(runs: Sequence[Any]) -> tuple[tuple[str, str], ...]:
             raw_value = str(
                 getattr(run, "text", "") or getattr(run, "latex", "")
             )
-            value = " ".join(raw_value.split())
+            value = (
+                " ".join(raw_value.split())
+                if run_type in {"text", "strong", "emphasis"}
+                else raw_value
+            )
         signature.append((run_type, value))
     return tuple(signature)
 
 
 def _list_table_signature(block: MaterialBlock) -> tuple[Any, ...] | None:
     if block.type == "list":
+        if block.ordered:
+            return None
         entries = tuple(_runs_signature(item) for item in block.items)
     elif block.type == "table":
         if len(block.headers) != 1:
@@ -302,21 +308,29 @@ def _list_table_signature(block: MaterialBlock) -> tuple[Any, ...] | None:
 def _remove_exact_list_table_duplicates(
     blocks: Sequence[MaterialBlock],
 ) -> list[MaterialBlock]:
-    table_signatures = {
-        signature
-        for block in blocks
-        if block.type == "table"
-        for signature in [_list_table_signature(block)]
-        if signature is not None
-    }
-    return [
-        block
-        for block in blocks
-        if not (
-            block.type == "list"
-            and _list_table_signature(block) in table_signatures
-        )
-    ]
+    result: list[MaterialBlock] = []
+    index = 0
+    while index < len(blocks):
+        current = blocks[index]
+        following = blocks[index + 1] if index + 1 < len(blocks) else None
+        if following is not None and {
+            current.type,
+            following.type,
+        } == {"list", "table"}:
+            current_signature = _list_table_signature(current)
+            following_signature = _list_table_signature(following)
+            if (
+                current_signature is not None
+                and current_signature == following_signature
+            ):
+                result.append(
+                    current if current.type == "table" else following
+                )
+                index += 2
+                continue
+        result.append(current)
+        index += 1
+    return result
 
 
 def _validate_generated_section(

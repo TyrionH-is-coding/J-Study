@@ -445,7 +445,7 @@ class StructuredGenerationTest(unittest.TestCase):
             {
                 "id": "workflow-list",
                 "type": "list",
-                "ordered": True,
+                "ordered": False,
                 "items": [
                     [
                         {"type": "text", "text": "步骤一：接种"},
@@ -501,6 +501,131 @@ class StructuredGenerationTest(unittest.TestCase):
         self.assertEqual(
             [block.type for block in section.blocks],
             ["table"],
+        )
+
+    @patch(
+        "packages.core.jstudy_core.materials.generation.providers.generate_json_object"
+    )
+    def test_ordered_list_is_never_removed_by_exact_table(self, provider):
+        payload = self.duplicate_list_table_payload()
+        payload["blocks"][0]["ordered"] = True
+        provider.return_value = payload
+
+        section = generate_material_section(
+            section_id="section-001",
+            order=1,
+            title="绪论",
+            soul="teaching rules",
+            evidence=evidence_items(),
+            source_ids=["S001"],
+            api_key="test-key",
+            model="test-model",
+        )
+
+        self.assertEqual(
+            [block.id for block in section.blocks],
+            ["workflow-list", "workflow-table"],
+        )
+
+    @patch(
+        "packages.core.jstudy_core.materials.generation.providers.generate_json_object"
+    )
+    def test_heading_separated_list_and_table_are_both_preserved(self, provider):
+        payload = self.duplicate_list_table_payload()
+        payload["blocks"] = [
+            {
+                "id": "heading-a",
+                "type": "heading",
+                "level": 3,
+                "runs": [{"type": "text", "text": "流程 A"}],
+            },
+            payload["blocks"][0],
+            {
+                "id": "heading-b",
+                "type": "heading",
+                "level": 3,
+                "runs": [{"type": "text", "text": "流程 B"}],
+            },
+            payload["blocks"][1],
+        ]
+        provider.return_value = payload
+
+        section = generate_material_section(
+            section_id="section-001",
+            order=1,
+            title="绪论",
+            soul="teaching rules",
+            evidence=evidence_items(),
+            source_ids=["S001"],
+            api_key="test-key",
+            model="test-model",
+        )
+
+        self.assertEqual(
+            [block.id for block in section.blocks],
+            ["heading-a", "workflow-list", "heading-b", "workflow-table"],
+        )
+
+    @patch(
+        "packages.core.jstudy_core.materials.generation.providers.generate_json_object"
+    )
+    def test_inline_code_whitespace_is_compared_exactly(self, provider):
+        payload = self.duplicate_list_table_payload()
+        payload["blocks"][0]["items"][0] = [
+            {"type": "inline_code", "text": "x = 'a  b'"},
+            {"type": "citation", "evidence_id": "E001"},
+        ]
+        payload["blocks"][1]["rows"][0][0] = [
+            {"type": "inline_code", "text": "x = 'a b'"},
+            {"type": "citation", "evidence_id": "E001"},
+        ]
+        provider.return_value = payload
+
+        section = generate_material_section(
+            section_id="section-001",
+            order=1,
+            title="绪论",
+            soul="teaching rules",
+            evidence=evidence_items(),
+            source_ids=["S001"],
+            api_key="test-key",
+            model="test-model",
+        )
+
+        self.assertEqual(
+            [block.id for block in section.blocks],
+            ["workflow-list", "workflow-table"],
+        )
+
+    @patch(
+        "packages.core.jstudy_core.materials.generation.providers.generate_json_object"
+    )
+    def test_inline_formula_whitespace_is_compared_exactly(self, provider):
+        payload = self.duplicate_list_table_payload()
+        payload["blocks"][0]["items"][0] = [
+            {"type": "inline_formula", "latex": "a  + b"},
+            {"type": "citation", "evidence_id": "E001"},
+        ]
+        payload["blocks"][1]["rows"][0][0] = [
+            {"type": "inline_formula", "latex": "a + b"},
+            {"type": "citation", "evidence_id": "E001"},
+        ]
+        provider.return_value = payload
+
+        section = generate_material_section(
+            section_id="section-001",
+            order=1,
+            title="绪论",
+            soul="teaching rules",
+            evidence=evidence_items(),
+            source_ids=["S001"],
+            api_key="test-key",
+            model="test-model",
+        )
+
+        self.assertEqual(
+            [block.id for block in section.blocks],
+            ["workflow-list", "workflow-table"],
         )
 
     @patch(
