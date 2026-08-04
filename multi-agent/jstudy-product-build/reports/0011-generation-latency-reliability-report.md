@@ -188,15 +188,20 @@ Supervisor handoff 中回传。
 - GREEN：
   - 每节 trace timing 新增 `attempt_count`、`failure_category` 和
     `failure_code`；
-  - code 只允许最多 64 个小写字母、数字或下划线，非法值归一化为固定
-    fallback；
+  - Provider JSON、Material validation 和 Pydantic schema code 分别使用
+    固定 allowlist；任何未知 code 归一化为对应固定 fallback；
   - 不记录 prompt、正文、evidence、Provider 原始响应、URL、key 或异常
     正文；
   - 前两次格式/结构验证均失败后，只对当前失败节进行一次第三次定向恢复；
   - 成功节不重复调用；运行时 Provider 异常仍立即上抛并走既有 Worker
     retry/permanent 语义；
-  - 单节 Provider 调用硬上限为 `3`，包含正常调用、一次格式修复和一次
-    定向恢复；N 个 Learning Unit 的 Job 上限为 `3 * N`；
+  - 单节单次 claim 的 Provider 调用硬上限为 `3`，包含正常调用、一次格式
+    修复和一次定向恢复；N 个 Learning Unit 的单次 claim 上限为 `3 * N`；
+  - 结构化章节生成显式设置 transport retries 为 `0`，因此一次逻辑尝试
+    只产生一次 HTTP 请求，trace 上限与实际传输次数一致；
+  - 可重试 Provider 运行时故障仍可按既有 Worker Job retry 开启新 claim，
+    因此整个 Job 生命周期的理论硬上限为
+    `3 * N * worker_max_attempts`；格式/结构局部恢复不会重跑成功节；
   - 局部仍失败时保留原位置的空 failed section；trace 同时记录
     `non_failed_section_count` 与 `failed_section_count`，不把 section 总数
     伪装为成功数；
@@ -226,28 +231,31 @@ Supervisor handoff 中回传。
   保留。
 - GREEN：
   - 只在同一 section 内比较 list items 与 table rows；
-  - 去除 citation 后的规范化文本必须逐项完全相同；
-  - 每项/每行的 citation 对应关系必须完全相同且整体非空；
+  - 只规整单列表格，避免忽略多列边界中的新增信息；
+  - 每个 inline run 的 type/value/order 必须逐项完全相同，只折叠空白，
+    保留标点、公式与 citation 位置；
+  - citation 对应关系必须完全相同且整体非空；
   - 满足上述条件时保留 table、移除 list；
   - 表格增加新信息或逐行 citation 归属变化时，两种表达均保留。
 - 这不是模糊匹配或通用语义去重系统。
 - 提交：
   - `a67648f 修复：规整列表与表格完全重复表达`
   - `9a23bcc 修复：收紧重复表达的证据对应`
+  - `2c674ec 修复：收紧生成调用上限与安全规整`
 
 ### 8.6 Corrective focused verification
 
 - scheduler、generation、pipeline、settings、Worker、deployment：
-  `147/147`。
+  `151/151`。
 - `python -m compileall -q apps packages`：通过。
-- backend full：`405/405`。
+- backend full：`409/409`。
 - `apps/web` lint、typecheck：通过。
 - Vitest：`5/5`。
 - Next.js production build：通过。
 - Playwright：`6/6`。
 - Compose services：`postgres`、`jstudy-api`、`jstudy-worker`。
 - corrective range 与 worktree `git diff --check`：通过。
-- corrective range 只包含本节列出的 17 个允许文件。
+- corrective range 只包含本节列出的 18 个允许文件。
 - 最终 status 只保留 corrective 开始前已记录的受保护
   modified/untracked 内容。
 
@@ -263,6 +271,7 @@ Supervisor handoff 中回传。
 - `packages/core/jstudy_core/materials/generation.py`
 - `packages/core/jstudy_core/materials/scheduling.py`
 - `packages/core/jstudy_core/pipeline.py`
+- `packages/core/jstudy_core/providers.py`
 - `packages/core/jstudy_core/settings.py`
 - `tests/test_deployment_files.py`
 - `tests/test_material_generation.py`
@@ -278,6 +287,9 @@ Supervisor handoff 中回传。
 - 默认并发 `4` 与第三次定向恢复可能增加瞬时 Provider 压力；硬上限和
   Worker 副本乘数已明确，但仍需按真实 Provider rate limit 验证。
 - 精确重复规整有意保守，不处理措辞不同但语义重复的内容。
+- 独立只读审查首次发现 transport retry、重复签名和诊断 allowlist 三项
+  P1/P2；均补 RED 后由 `2c674ec` 修正。修正后 focused、backend full 与
+  frontend 全套重新执行。
 - 不能从 deterministic tests 宣称真实延迟、6/6 完整性或人工质量门禁
   已通过。
 - corrective 完成后仍只请求 `PASS_WITH_LIMITATIONS`；Supervisor 必须
