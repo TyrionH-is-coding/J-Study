@@ -550,6 +550,9 @@ class JobWorker:
             "courseware_manifest": manifest,
             "learning_map": learning_map,
             "coverage_ledger": coverage_ledger,
+            "generation_max_concurrency": (
+                self.settings.generation_max_concurrency
+            ),
         }
         return (
             runner,

@@ -333,6 +333,23 @@ class DeploymentFilesTest(unittest.TestCase):
 
         self.assertIn("JSTUDY_DATABASE_URL", compose_text)
         self.assertIn("JSTUDY_SESSION_SECRET", compose_text)
+
+    def test_worker_generation_concurrency_environment_contract(self):
+        compose_text = (
+            ROOT / "deploy" / "docker-compose" / "api.compose.yml"
+        ).read_text(encoding="utf-8")
+        env_example = (ROOT / ".env.example").read_text(encoding="utf-8")
+        worker_block = compose_service_block(compose_text, "jstudy-worker")
+
+        self.assertIn(
+            "JSTUDY_GENERATION_MAX_CONCURRENCY: "
+            "${JSTUDY_GENERATION_MAX_CONCURRENCY:-3}",
+            worker_block,
+        )
+        self.assertIn(
+            "JSTUDY_GENERATION_MAX_CONCURRENCY=3",
+            env_example,
+        )
         self.assertIn(
             "JSTUDY_INVITE_REQUIRED: ${JSTUDY_INVITE_REQUIRED:-true}",
             compose_text,

@@ -106,6 +106,33 @@ class SettingsTest(unittest.TestCase):
         self.assertEqual(settings.worker_poll_seconds, 1)
         self.assertEqual(settings.worker_lease_seconds, 300)
         self.assertEqual(settings.worker_max_attempts, 2)
+        self.assertEqual(settings.generation_max_concurrency, 3)
+
+    def test_generation_max_concurrency_accepts_only_one_to_four(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for value in ("1", "4"):
+                with self.subTest(value=value):
+                    with patch.dict(
+                        os.environ,
+                        {"JSTUDY_GENERATION_MAX_CONCURRENCY": value},
+                        clear=True,
+                    ):
+                        settings = RuntimeSettings.from_env(root)
+                    self.assertEqual(
+                        settings.generation_max_concurrency,
+                        int(value),
+                    )
+
+            for value in ("0", "5", "not-an-integer"):
+                with self.subTest(value=value):
+                    with patch.dict(
+                        os.environ,
+                        {"JSTUDY_GENERATION_MAX_CONCURRENCY": value},
+                        clear=True,
+                    ):
+                        with self.assertRaises(RuntimeError):
+                            RuntimeSettings.from_env(root)
 
     def test_runtime_settings_loads_job_admission_and_worker_environment(self):
         with tempfile.TemporaryDirectory() as tmp:

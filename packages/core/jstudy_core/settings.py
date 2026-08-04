@@ -37,6 +37,7 @@ USER_ACTIVE_JOB_LIMIT_ENV = "JSTUDY_USER_ACTIVE_JOB_LIMIT"
 WORKER_POLL_SECONDS_ENV = "JSTUDY_WORKER_POLL_SECONDS"
 WORKER_LEASE_SECONDS_ENV = "JSTUDY_WORKER_LEASE_SECONDS"
 WORKER_MAX_ATTEMPTS_ENV = "JSTUDY_WORKER_MAX_ATTEMPTS"
+GENERATION_MAX_CONCURRENCY_ENV = "JSTUDY_GENERATION_MAX_CONCURRENCY"
 JOB_RETENTION_HOURS_ENV = "JSTUDY_JOB_RETENTION_HOURS"
 JSTUDY_DATABASE_URL_ENV = "JSTUDY_DATABASE_URL"
 DATABASE_URL_ENV = "DATABASE_URL"
@@ -60,6 +61,7 @@ DEFAULT_USER_ACTIVE_JOB_LIMIT = 3
 DEFAULT_WORKER_POLL_SECONDS = 1
 DEFAULT_WORKER_LEASE_SECONDS = 300
 DEFAULT_WORKER_MAX_ATTEMPTS = 2
+DEFAULT_GENERATION_MAX_CONCURRENCY = 3
 ProviderProbe = Callable[[str, str, str], dict[str, Any]]
 
 
@@ -102,6 +104,29 @@ def env_nonnegative_int(name: str, default: int) -> int:
     parsed = int(value)
     if parsed < 0:
         raise RuntimeError(f"{name} must be greater than or equal to 0")
+    return parsed
+
+
+def env_bounded_int(
+    name: str,
+    default: int,
+    *,
+    minimum: int,
+    maximum: int,
+) -> int:
+    value = os.getenv(name, "").strip()
+    if not value:
+        return default
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise RuntimeError(
+            f"{name} must be an integer from {minimum} to {maximum}"
+        ) from exc
+    if not minimum <= parsed <= maximum:
+        raise RuntimeError(
+            f"{name} must be an integer from {minimum} to {maximum}"
+        )
     return parsed
 
 
@@ -149,6 +174,7 @@ class RuntimeSettings:
     worker_poll_seconds: int = DEFAULT_WORKER_POLL_SECONDS
     worker_lease_seconds: int = DEFAULT_WORKER_LEASE_SECONDS
     worker_max_attempts: int = DEFAULT_WORKER_MAX_ATTEMPTS
+    generation_max_concurrency: int = DEFAULT_GENERATION_MAX_CONCURRENCY
     job_retention_hours: int = 0
     database_url: str = ""
     session_secret: str = "dev-session-secret"
@@ -290,6 +316,12 @@ class RuntimeSettings:
             worker_max_attempts=env_int(
                 WORKER_MAX_ATTEMPTS_ENV,
                 DEFAULT_WORKER_MAX_ATTEMPTS,
+            ),
+            generation_max_concurrency=env_bounded_int(
+                GENERATION_MAX_CONCURRENCY_ENV,
+                DEFAULT_GENERATION_MAX_CONCURRENCY,
+                minimum=1,
+                maximum=4,
             ),
             job_retention_hours=env_nonnegative_int(
                 JOB_RETENTION_HOURS_ENV,

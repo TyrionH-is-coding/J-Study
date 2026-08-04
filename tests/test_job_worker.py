@@ -1121,12 +1121,17 @@ class JobWorkerTest(unittest.TestCase):
         new_mnemonics = self.root / "new-mnemonics.md"
         new_soul.write_text("new soul", encoding="utf-8")
         new_mnemonics.write_text("new mnemonics", encoding="utf-8")
-        updated = replace(
+        initial = replace(
             self.settings,
+            generation_max_concurrency=2,
+        )
+        updated = replace(
+            initial,
             chat_model="chat-new",
             embed_model="embed-new",
+            generation_max_concurrency=4,
             rag_config=replace(
-                self.settings.rag_config,
+                initial.rag_config,
                 top_k_candidates=7,
             ),
             parser_profiles_config={
@@ -1170,7 +1175,7 @@ class JobWorkerTest(unittest.TestCase):
             },
             default_scenario_id="medicine-default",
         )
-        current = [self.settings]
+        current = [initial]
         calls = []
 
         def runner(**kwargs):
@@ -1180,6 +1185,7 @@ class JobWorkerTest(unittest.TestCase):
                 self.assertEqual(kwargs["chat_model"], "chat")
                 self.assertEqual(kwargs["embed_model"], "embed")
                 self.assertEqual(kwargs["rag_config"].top_k_candidates, 14)
+                self.assertEqual(kwargs["generation_max_concurrency"], 2)
             callback = kwargs["progress_callback"]
             for state in (
                 JobState.PARSING,
@@ -1214,7 +1220,7 @@ class JobWorkerTest(unittest.TestCase):
 
         worker = JobWorker(
             self.repository,
-            self.settings,
+            initial,
             worker_id="worker-settings-test",
             single_runner=runner,
             settings_provider=lambda: current[0],
@@ -1226,6 +1232,7 @@ class JobWorkerTest(unittest.TestCase):
         self.assertEqual(calls[1]["chat_model"], "chat-new")
         self.assertEqual(calls[1]["embed_model"], "embed-new")
         self.assertEqual(calls[1]["rag_config"].top_k_candidates, 7)
+        self.assertEqual(calls[1]["generation_max_concurrency"], 4)
         self.assertEqual(calls[1]["parser_backend"], "mineru")
         self.assertEqual(
             calls[1]["routing_metadata"]["scenario"]["resolved_scenario_id"],
