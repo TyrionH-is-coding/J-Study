@@ -290,6 +290,8 @@ Supervisor handoff 中回传。
 - 独立只读审查首次发现 transport retry、重复签名和诊断 allowlist 三项
   P1/P2；均补 RED 后由 `2c674ec` 修正。修正后 focused、backend full 与
   frontend 全套重新执行。
+- 二次独立只读复核确认三项 finding 均关闭，相关离线回归 `7/7`，未发现
+  新的 P0-P2。
 - 不能从 deterministic tests 宣称真实延迟、6/6 完整性或人工质量门禁
   已通过。
 - corrective 完成后仍只请求 `PASS_WITH_LIMITATIONS`；Supervisor 必须
