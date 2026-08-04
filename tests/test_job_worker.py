@@ -55,6 +55,11 @@ from packages.core.jstudy_core.materials.validation import (
     MATERIAL_PACKAGE_MAX_BYTES,
     MaterialValidationError,
 )
+from packages.core.jstudy_core.materials.scheduling import (
+    SectionGenerationRequest,
+    generate_sections_bounded,
+)
+from packages.core.jstudy_core.materials.models import MaterialSection
 from packages.core.jstudy_core.settings import RuntimeSettings
 
 
@@ -1384,6 +1389,87 @@ class JobWorkerTest(unittest.TestCase):
         self.assertEqual(second.state, JobState.FAILED)
         self.assertEqual(second.error_code, "provider_timeout")
         self.assertEqual(second.error_message, "Provider unavailable.")
+
+    def test_concurrent_provider_exception_publishes_no_partial_results(self):
+        self.create_job(max_attempts=1)
+        first_started = threading.Event()
+        provider_failed = threading.Event()
+        release_first = threading.Event()
+
+        def generator(**kwargs):
+            if kwargs["order"] == 1:
+                first_started.set()
+                self.assertTrue(release_first.wait(timeout=2))
+                return MaterialSection(
+                    id=kwargs["section_id"],
+                    order=kwargs["order"],
+                    title=kwargs["title"],
+                    status="failed",
+                    quality={
+                        "evidence_status": "failed",
+                        "evidence_count": 0,
+                        "cited_evidence_count": 0,
+                        "citation_coverage": 0.0,
+                    },
+                    source_ids=[],
+                    evidence_ids=[],
+                    blocks=[],
+                )
+            self.assertTrue(first_started.wait(timeout=2))
+            provider_failed.set()
+            raise RuntimeError("provider unavailable")
+
+        def release_running_call():
+            self.assertTrue(provider_failed.wait(timeout=2))
+            release_first.set()
+
+        def failing_runner(**kwargs):
+            releaser = threading.Thread(target=release_running_call)
+            releaser.start()
+            try:
+                return generate_sections_bounded(
+                    (
+                        SectionGenerationRequest(
+                            section_id="unit-001",
+                            order=1,
+                            title="One",
+                            evidence=(),
+                            source_ids=("S001",),
+                        ),
+                        SectionGenerationRequest(
+                            section_id="unit-002",
+                            order=2,
+                            title="Two",
+                            evidence=(),
+                            source_ids=("S001",),
+                        ),
+                    ),
+                    generator=generator,
+                    generator_kwargs={},
+                    max_concurrency=kwargs["generation_max_concurrency"],
+                )
+            finally:
+                releaser.join(timeout=2)
+
+        worker = JobWorker(
+            self.repository,
+            replace(self.settings, generation_max_concurrency=2),
+            worker_id="worker-concurrent-provider-failure",
+            single_runner=failing_runner,
+        )
+
+        self.assertTrue(worker.run_once())
+        job = self.repository.get("job-1")
+        self.assertEqual(job.state, JobState.FAILED)
+        self.assertEqual(job.error_code, "worker_error")
+        self.assertEqual(self.repository.list_artifacts("job-1"), [])
+        self.assertEqual(self.repository.list_sections("job-1"), [])
+        self.assertFalse(
+            any(
+                item.to_state is JobState.COMPLETED
+                for item in self.transitions("job-1")
+            )
+        )
 
     def test_package_service_mode_mismatch_fails_without_sections(self):
         self.create_job(

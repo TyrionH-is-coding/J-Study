@@ -4,6 +4,7 @@ from collections.abc import Sequence
 from dataclasses import asdict, replace
 import re
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, Callable
 
 from packages.core.jstudy_core import citations
@@ -27,6 +28,10 @@ from packages.core.jstudy_core.materials.generation import (
 from packages.core.jstudy_core.materials.models import (
     MaterialPackageV2,
     MaterialSection,
+)
+from packages.core.jstudy_core.materials.scheduling import (
+    SectionGenerationRequest,
+    generate_sections_bounded,
 )
 from packages.core.jstudy_core.materials.validation import (
     audit_material_package,
@@ -142,6 +147,7 @@ def _run_sequence_first(
     package_id: str | None,
     section_generator: SectionGenerator | None,
     rag_config: RagConfig,
+    generation_max_concurrency: int,
 ) -> dict[str, Path]:
     if courseware_manifest.service_mode != service_mode:
         raise ValueError("manifest service mode does not match runner")
@@ -228,7 +234,7 @@ def _run_sequence_first(
         source.source_id: source.display_title
         for source in courseware_manifest.sources
     }
-    sections = []
+    generation_requests = []
     _report_progress(progress_callback, JobState.GENERATING)
     for unit in learning_map.ordered_units():
         title = outline_titles.get(
@@ -238,19 +244,32 @@ def _run_sequence_first(
                 f"第 {unit.page_start}-{unit.page_end} 页"
             ),
         )
-        sections.append(
-            generate_section(
+        generation_requests.append(
+            SectionGenerationRequest(
                 section_id=unit.material_section_id,
                 order=unit.order,
                 title=title,
-                soul=soul,
-                evidence=evidence_by_unit[unit.id],
-                source_ids=[unit.primary_source_id],
-                api_key=resolved_api_key,
-                model=chat_model,
-                base_url=chat_base_url,
+                evidence=tuple(
+                    MappingProxyType(dict(item))
+                    for item in evidence_by_unit[unit.id]
+                ),
+                source_ids=(unit.primary_source_id,),
             )
         )
+    generation_result = generate_sections_bounded(
+        tuple(generation_requests),
+        generator=generate_section,
+        generator_kwargs=MappingProxyType(
+            {
+                "soul": soul,
+                "api_key": resolved_api_key,
+                "model": chat_model,
+                "base_url": chat_base_url,
+            }
+        ),
+        max_concurrency=generation_max_concurrency,
+    )
+    sections = list(generation_result.sections)
 
     _report_progress(progress_callback, JobState.PACKAGING)
     source_ids = [
@@ -301,6 +320,15 @@ def _run_sequence_first(
             "learning_unit_ids": [
                 item.id for item in learning_map.ordered_units()
             ],
+            "generation_metrics": {
+                "max_concurrency": generation_result.max_concurrency,
+                "section_count": len(generation_result.sections),
+                "total_duration_ms": generation_result.total_duration_ms,
+                "sections": [
+                    asdict(timing)
+                    for timing in generation_result.timings
+                ],
+            },
             "source_files": [
                 {
                     "source_id": source.source_id,
@@ -431,6 +459,7 @@ def run_multi_courseware(
     progress_callback: ProgressCallback | None = None,
     package_id: str | None = None,
     section_generator: SectionGenerator | None = None,
+    generation_max_concurrency: int = 3,
 ) -> dict[str, Path]:
     return _run_sequence_first(
         service_mode="multi_courseware",
@@ -451,6 +480,7 @@ def run_multi_courseware(
         package_id=package_id,
         section_generator=section_generator,
         rag_config=rag_config or RagConfig(),
+        generation_max_concurrency=generation_max_concurrency,
     )
 
 
@@ -476,6 +506,7 @@ def run_mvp(
     progress_callback: ProgressCallback | None = None,
     package_id: str | None = None,
     section_generator: SectionGenerator | None = None,
+    generation_max_concurrency: int = 3,
     parsed_documents: list[ParsedDocument] | None = None,
     courseware_manifest: CoursewareManifestV1 | None = None,
     learning_map: LearningMapV1 | None = None,
@@ -507,6 +538,7 @@ def run_mvp(
             package_id=package_id,
             section_generator=section_generator,
             rag_config=rag_config or RagConfig(),
+            generation_max_concurrency=generation_max_concurrency,
         )
     if any(item is not None for item in sequence_inputs):
         raise ValueError("sequence-first inputs must be provided together")
@@ -661,6 +693,7 @@ def run_course_outline(
     progress_callback: ProgressCallback | None = None,
     package_id: str | None = None,
     section_generator: SectionGenerator | None = None,
+    generation_max_concurrency: int = 3,
     parsed_documents: list[ParsedDocument] | None = None,
     courseware_manifest: CoursewareManifestV1 | None = None,
     learning_map: LearningMapV1 | None = None,
@@ -692,6 +725,7 @@ def run_course_outline(
             package_id=package_id,
             section_generator=section_generator,
             rag_config=rag_config or RagConfig(),
+            generation_max_concurrency=generation_max_concurrency,
         )
     if any(item is not None for item in sequence_inputs):
         raise ValueError("sequence-first inputs must be provided together")

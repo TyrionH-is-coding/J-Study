@@ -1,6 +1,7 @@
 import json
 import os
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -118,6 +119,197 @@ class FakeHttpResponse:
 
 
 class MvpRunnerTest(unittest.TestCase):
+    def test_sequence_pipeline_runs_three_sections_and_writes_safe_metrics(self):
+        manifest = CoursewareManifestV1.model_validate(
+            {
+                "schema_version": "courseware-manifest.v1",
+                "manifest_id": "job-concurrent",
+                "job_id": "job-concurrent",
+                "service_mode": "single_courseware",
+                "outline": None,
+                "sources": [
+                    {
+                        "source_id": "S001",
+                        "original_filename": "source.pdf",
+                        "sha256": "a" * 64,
+                        "display_title": "Source",
+                        "display_order": 1,
+                        "primary_outline_section_id": None,
+                        "title_origin": "upload",
+                        "order_origin": "upload",
+                    }
+                ],
+            }
+        )
+        document = ParsedDocument(
+            contract_version="1",
+            source_id="S001",
+            source_file="source.pdf",
+            source_sha256="a" * 64,
+            parser_name="mineru",
+            parser_version="v4",
+            parser_model="vlm",
+            page_count=6,
+            pages=[
+                ParsedPage(
+                    page_number=order,
+                    text=f"private courseware text {order}",
+                    markdown=f"private courseware text {order}",
+                    blocks=[
+                        ParsedBlock(
+                            block_id=f"S001-P{order:03d}-B001",
+                            kind="text",
+                            text=f"private courseware text {order}",
+                            markdown=f"private courseware text {order}",
+                        )
+                    ],
+                )
+                for order in range(1, 7)
+            ],
+            warnings=[],
+            provider_trace_id="trace-S001",
+        )
+        learning_map = LearningMapV1.model_validate(
+            {
+                "schema_version": "learning-map.v1",
+                "manifest_id": "job-concurrent",
+                "units": [
+                    {
+                        "id": f"unit-{order:03d}",
+                        "order": order,
+                        "outline_section_id": None,
+                        "primary_source_id": "S001",
+                        "page_start": order,
+                        "page_end": order,
+                        "block_ids": [f"S001-P{order:03d}-B001"],
+                        "material_section_id": f"unit-{order:03d}",
+                    }
+                    for order in range(1, 7)
+                ],
+            }
+        )
+        coverage = CoverageLedgerV1.model_validate(
+            {
+                "schema_version": "coverage-ledger.v1",
+                "manifest_id": "job-concurrent",
+                "entries": [
+                    {
+                        "block_id": f"S001-P{order:03d}-B001",
+                        "source_id": "S001",
+                        "page_number": order,
+                        "disposition": "used",
+                        "reason": "learning_unit",
+                        "learning_unit_id": f"unit-{order:03d}",
+                    }
+                    for order in range(1, 7)
+                ],
+                "metrics": {
+                    "usable_block_count": 6,
+                    "used_block_count": 6,
+                    "ignored_block_count": 0,
+                    "duplicate_block_count": 0,
+                    "unsupported_block_count": 0,
+                    "coverage_rate": 1.0,
+                    "ignored_reason_counts": {},
+                    "primary_backward_jump_count": 0,
+                    "large_jump_count": 0,
+                    "remote_reference_ratio": 0.0,
+                    "page_distance_p90": 0.0,
+                },
+            }
+        )
+        lock = threading.Lock()
+        release = threading.Event()
+        three_started = threading.Event()
+        active = 0
+        observed_max = 0
+
+        def generator(**kwargs):
+            nonlocal active, observed_max
+            with lock:
+                active += 1
+                observed_max = max(observed_max, active)
+                if active == 3:
+                    three_started.set()
+            self.assertTrue(release.wait(timeout=2))
+            try:
+                return fake_section_generator(**kwargs)
+            finally:
+                with lock:
+                    active -= 1
+
+        captured = {}
+        finished = threading.Event()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            soul = root / "soul.md"
+            mnemonics = root / "mnemonics.md"
+            soul.write_text("soul", encoding="utf-8")
+            mnemonics.write_text("", encoding="utf-8")
+
+            def run():
+                try:
+                    captured["outputs"] = run_mvp(
+                        pdf_path=root / "source.pdf",
+                        soul_path=soul,
+                        mnemonics_path=mnemonics,
+                        api_key_path=root / "missing-key",
+                        output_dir=root / "output",
+                        chat_model="chat",
+                        embed_model="embed",
+                        api_key="secret-provider-key",
+                        package_id="job-concurrent",
+                        section_generator=generator,
+                        parsed_documents=[document],
+                        courseware_manifest=manifest,
+                        learning_map=learning_map,
+                        coverage_ledger=coverage,
+                        generation_max_concurrency=3,
+                    )
+                except BaseException as exc:
+                    captured["error"] = exc
+                finally:
+                    finished.set()
+
+            thread = threading.Thread(target=run)
+            thread.start()
+            self.assertTrue(three_started.wait(timeout=2))
+            self.assertEqual(observed_max, 3)
+            release.set()
+            self.assertTrue(finished.wait(timeout=2))
+            thread.join(timeout=0)
+            self.assertNotIn("error", captured)
+            package = json.loads(
+                captured["outputs"]["package"].read_text(encoding="utf-8")
+            )
+            trace = json.loads(
+                captured["outputs"]["trace"].read_text(encoding="utf-8")
+            )
+
+        self.assertEqual(
+            [item["order"] for item in package["sections"]],
+            [1, 2, 3, 4, 5, 6],
+        )
+        metrics = trace["generation_metrics"]
+        self.assertEqual(metrics["max_concurrency"], 3)
+        self.assertEqual(metrics["section_count"], 6)
+        self.assertGreaterEqual(metrics["total_duration_ms"], 0)
+        self.assertEqual(
+            [item["section_id"] for item in metrics["sections"]],
+            [f"unit-{order:03d}" for order in range(1, 7)],
+        )
+        for order, timing in enumerate(metrics["sections"], start=1):
+            self.assertEqual(
+                set(timing),
+                {"section_id", "order", "status", "duration_ms"},
+            )
+            self.assertEqual(timing["order"], order)
+            self.assertEqual(timing["status"], "generated")
+            self.assertGreaterEqual(timing["duration_ms"], 0)
+        metrics_text = json.dumps(metrics)
+        self.assertNotIn("private courseware text", metrics_text)
+        self.assertNotIn("secret-provider-key", metrics_text)
+
     def test_multi_courseware_runner_is_sequence_only_and_source_scoped(self):
         manifest = CoursewareManifestV1.model_validate(
             {

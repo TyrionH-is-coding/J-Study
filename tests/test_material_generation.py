@@ -526,6 +526,16 @@ class StructuredGenerationTest(unittest.TestCase):
             "Every source-derived table must include at least one citation run",
             system_prompt,
         )
+        self.assertIn(
+            "Do not fully repeat the same workflow or fact as prose, a list, "
+            "and a table.",
+            system_prompt,
+        )
+        self.assertIn(
+            "Choose the single clearest learning representation unless a "
+            "second form adds new information.",
+            system_prompt,
+        )
         user_prompt = provider.call_args.args[0][1]["content"]
         self.assertIn("full-table-content", user_prompt)
         self.assertNotIn('"excerpt"', user_prompt)

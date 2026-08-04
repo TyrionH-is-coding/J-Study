@@ -48,8 +48,8 @@ def _generate_measured(
         section_id=request.section_id,
         order=request.order,
         title=request.title,
-        evidence=request.evidence,
-        source_ids=request.source_ids,
+        evidence=list(request.evidence),
+        source_ids=list(request.source_ids),
         **generator_kwargs,
     )
     duration_ms = int((time.perf_counter() - started) * 1000)
