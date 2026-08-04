@@ -98,6 +98,43 @@ class MaterialSchedulingTest(unittest.TestCase):
         )
         self.assertEqual(captured["value"].max_concurrency, 3)
 
+    def test_cap_four_runs_exactly_four_calls_without_unbounded_threads(self):
+        lock = threading.Lock()
+        release = threading.Event()
+        four_started = threading.Event()
+        active = 0
+        observed_max = 0
+
+        def blocking_generator(**kwargs):
+            nonlocal active, observed_max
+            with lock:
+                active += 1
+                observed_max = max(observed_max, active)
+                if active == 4:
+                    four_started.set()
+            self.assertTrue(release.wait(timeout=2))
+            try:
+                return section_from_call(**kwargs)
+            finally:
+                with lock:
+                    active -= 1
+
+        thread, finished, captured = self.run_in_thread(
+            lambda: generate_sections_bounded(
+                tuple(request(order) for order in range(1, 7)),
+                generator=blocking_generator,
+                generator_kwargs={},
+                max_concurrency=4,
+            )
+        )
+        self.assertTrue(four_started.wait(timeout=2))
+        self.assertEqual(observed_max, 4)
+        release.set()
+        self.assertTrue(finished.wait(timeout=2))
+        thread.join(timeout=0)
+        self.assertNotIn("error", captured)
+        self.assertEqual(captured["value"].max_concurrency, 4)
+
     def test_reverse_completion_order_does_not_change_result_order(self):
         started = {order: threading.Event() for order in range(1, 4)}
         release = {order: threading.Event() for order in range(1, 4)}

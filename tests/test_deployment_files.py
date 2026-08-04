@@ -347,11 +347,11 @@ class DeploymentFilesTest(unittest.TestCase):
 
         self.assertIn(
             "JSTUDY_GENERATION_MAX_CONCURRENCY: "
-            "${JSTUDY_GENERATION_MAX_CONCURRENCY:-3}",
+            "${JSTUDY_GENERATION_MAX_CONCURRENCY:-4}",
             worker_block,
         )
         self.assertIn(
-            "JSTUDY_GENERATION_MAX_CONCURRENCY=3",
+            "JSTUDY_GENERATION_MAX_CONCURRENCY=4",
             env_example,
         )
 
@@ -369,7 +369,7 @@ class DeploymentFilesTest(unittest.TestCase):
         for content in documents:
             self.assertIn("JSTUDY_GENERATION_MAX_CONCURRENCY", content)
             self.assertIn("1..4", content)
-            self.assertIn("默认值 `3`", content)
+            self.assertIn("默认值 `4`", content)
             self.assertIn("串行回滚", content)
             self.assertIn("Worker 副本", content)
             self.assertIn("Supervisor", content)

@@ -146,9 +146,10 @@ experimental decision.
 
 Task 0011 adds bounded, order-preserving section generation without changing
 Manifest, Learning Map, Coverage Ledger, Package v2 or public API contracts.
-`JSTUDY_GENERATION_MAX_CONCURRENCY` has range `1..4`, 默认值 `3`, and value
-`1` is the supported 串行回滚. The cap applies per Job, so total Provider
-concurrency grows with Worker 副本 count. Deterministic tests cover the cap,
+`JSTUDY_GENERATION_MAX_CONCURRENCY` has range `1..4`, 默认值 `4`, and value
+`1` is the supported 串行回滚. One Worker is capped at this value, so total
+Provider concurrency is this value multiplied by Worker 副本 count.
+Deterministic tests cover the cap,
 ordering, failure atomicity and safe trace metrics; the performance milestone
 remains incomplete until the Supervisor reruns the real six-page staging sample
 and confirms median no more than 25 秒 and every run no more than 35 秒.

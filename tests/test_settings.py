@@ -106,7 +106,7 @@ class SettingsTest(unittest.TestCase):
         self.assertEqual(settings.worker_poll_seconds, 1)
         self.assertEqual(settings.worker_lease_seconds, 300)
         self.assertEqual(settings.worker_max_attempts, 2)
-        self.assertEqual(settings.generation_max_concurrency, 3)
+        self.assertEqual(settings.generation_max_concurrency, 4)
 
     def test_generation_max_concurrency_accepts_only_one_to_four(self):
         with tempfile.TemporaryDirectory() as tmp:

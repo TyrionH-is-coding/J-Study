@@ -272,11 +272,12 @@ Runtime settings are centralized in `packages/core/jstudy_core/settings.py`. `JS
 
 Sequence-first generation dispatches one existing model call per Learning Unit
 through a bounded, order-preserving scheduler. `JSTUDY_GENERATION_MAX_CONCURRENCY`
-has legal range `1..4` and 默认值 `3`; value `1` is the supported 串行回滚.
+has legal range `1..4` and 默认值 `4`; value `1` is the supported 串行回滚.
 The immutable Worker claim snapshot fixes the value for the running Job, and
 completion order cannot change `MaterialSection.order`. Total provider
-concurrency multiplies by Worker 副本 count, so replica changes require a fresh
-rate-limit calculation. Deterministic tests verify this architecture, while the
+concurrency is capped at the configured value for one Worker and multiplies by
+Worker 副本 count, so replica changes require a fresh rate-limit calculation.
+Deterministic tests verify this architecture, while the
 Supervisor must still run the real six-page staging gate: median at most 25 秒
 and every run at most 35 秒.
 

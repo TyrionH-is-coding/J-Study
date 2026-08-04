@@ -118,10 +118,11 @@ Rules:
 - A nonempty provider, model, MinerU, Soul/content path, upload-limit, or retention environment variable is an explicit deployment override. It takes precedence over `data/settings` and cannot be hot-updated from the admin page.
 - Leave an admin-managed environment variable empty when `/admin/settings` should own it. The API reloads settings for each new submission and the worker for each new claim; an active claim keeps its starting snapshot.
 - Keep `JSTUDY_JOB_RETENTION_HOURS=72` nonempty for the public pilot so cleanup cannot silently fall back to the application default of `0`.
-- `JSTUDY_GENERATION_MAX_CONCURRENCY` accepts `1..4`, with 默认值 `3`.
+- `JSTUDY_GENERATION_MAX_CONCURRENCY` accepts `1..4`, with 默认值 `4`.
   Set it to `1` for 串行回滚 when Provider throttling or reliability requires
-  a conservative mode. The cap is per Job; total calls multiply with Worker 副本
-  count, so do not scale replicas independently of Provider limits.
+  a conservative mode. One Worker has at most this many active section calls;
+  the process-wide total is this value multiplied by Worker 副本 count, so do
+  not scale replicas independently of Provider limits.
 - Offline deterministic tests do not pass the latency gate. After deployment,
   the Supervisor must run the same six-page sample three times and verify a
   created-to-completed median no more than 25 秒 and no single run over 35 秒.
