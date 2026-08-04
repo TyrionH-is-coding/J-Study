@@ -530,6 +530,31 @@ class StructuredGenerationTest(unittest.TestCase):
             ["list", "table"],
         )
 
+    @patch(
+        "packages.core.jstudy_core.materials.generation.providers.generate_json_object"
+    )
+    def test_list_and_table_are_kept_when_row_citations_differ(self, provider):
+        payload = self.duplicate_list_table_payload()
+        payload["blocks"][1]["rows"][0][1][-1]["evidence_id"] = "E002"
+        payload["blocks"][1]["rows"][1][1][-1]["evidence_id"] = "E001"
+        provider.return_value = payload
+
+        section = generate_material_section(
+            section_id="section-001",
+            order=1,
+            title="绪论",
+            soul="teaching rules",
+            evidence=evidence_items(),
+            source_ids=["S001"],
+            api_key="test-key",
+            model="test-model",
+        )
+
+        self.assertEqual(
+            [block.type for block in section.blocks],
+            ["list", "table"],
+        )
+
     @patch("packages.core.jstudy_core.providers.siliconflow_post")
     def test_json_provider_requests_json_object_mode(self, post):
         post.return_value = {

@@ -238,27 +238,36 @@ def _runs_evidence_ids(runs: Sequence[Any]) -> set[str]:
 
 def _list_table_signature(block: MaterialBlock) -> tuple[Any, ...] | None:
     if block.type == "list":
-        entries = tuple(_runs_text(item) for item in block.items)
-        evidence_ids = set().union(
-            *(_runs_evidence_ids(item) for item in block.items)
+        entries = tuple(
+            (
+                _runs_text(item),
+                tuple(sorted(_runs_evidence_ids(item))),
+            )
+            for item in block.items
         )
     elif block.type == "table":
         entries = tuple(
-            "".join(_runs_text(cell) for cell in row)
-            for row in block.rows
-        )
-        evidence_ids = set().union(
-            *(
-                _runs_evidence_ids(cell)
-                for row in block.rows
-                for cell in row
+            (
+                "".join(_runs_text(cell) for cell in row),
+                tuple(
+                    sorted(
+                        set().union(
+                            *(_runs_evidence_ids(cell) for cell in row)
+                        )
+                    )
+                ),
             )
+            for row in block.rows
         )
     else:
         return None
-    if not entries or any(not entry for entry in entries) or not evidence_ids:
+    if (
+        not entries
+        or any(not text for text, _ in entries)
+        or not any(evidence_ids for _, evidence_ids in entries)
+    ):
         return None
-    return entries, tuple(sorted(evidence_ids))
+    return entries
 
 
 def _remove_exact_list_table_duplicates(
