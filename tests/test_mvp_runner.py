@@ -295,6 +295,8 @@ class MvpRunnerTest(unittest.TestCase):
         self.assertEqual(metrics["provider_call_limit_per_section"], 3)
         self.assertEqual(metrics["max_provider_calls"], 18)
         self.assertEqual(metrics["section_count"], 6)
+        self.assertEqual(metrics["non_failed_section_count"], 6)
+        self.assertEqual(metrics["failed_section_count"], 0)
         self.assertGreaterEqual(metrics["total_duration_ms"], 0)
         self.assertEqual(
             [item["section_id"] for item in metrics["sections"]],

@@ -332,6 +332,14 @@ def _run_sequence_first(
                     * SECTION_PROVIDER_CALL_LIMIT
                 ),
                 "section_count": len(generation_result.sections),
+                "non_failed_section_count": sum(
+                    section.status != "failed"
+                    for section in generation_result.sections
+                ),
+                "failed_section_count": sum(
+                    section.status == "failed"
+                    for section in generation_result.sections
+                ),
                 "total_duration_ms": generation_result.total_duration_ms,
                 "sections": [
                     asdict(timing)
