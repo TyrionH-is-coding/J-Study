@@ -239,8 +239,17 @@ Supervisor handoff 中回传。
 
 - scheduler、generation、pipeline、settings、Worker、deployment：
   `147/147`。
-- 原 Task 0011 full backend/frontend/Compose 门禁将在 corrective 最终提交后
-  重新完整执行。
+- `python -m compileall -q apps packages`：通过。
+- backend full：`405/405`。
+- `apps/web` lint、typecheck：通过。
+- Vitest：`5/5`。
+- Next.js production build：通过。
+- Playwright：`6/6`。
+- Compose services：`postgres`、`jstudy-api`、`jstudy-worker`。
+- corrective range 与 worktree `git diff --check`：通过。
+- corrective range 只包含本节列出的 17 个允许文件。
+- 最终 status 只保留 corrective 开始前已记录的受保护
+  modified/untracked 内容。
 
 ### 8.7 Corrective 精确文件
 
