@@ -292,16 +292,30 @@ class MvpRunnerTest(unittest.TestCase):
         )
         metrics = trace["generation_metrics"]
         self.assertEqual(metrics["max_concurrency"], 3)
+        self.assertEqual(metrics["provider_call_limit_per_section"], 3)
+        self.assertEqual(metrics["max_provider_calls"], 18)
         self.assertEqual(metrics["section_count"], 6)
         self.assertGreaterEqual(metrics["total_duration_ms"], 0)
         self.assertEqual(
             [item["section_id"] for item in metrics["sections"]],
             [f"unit-{order:03d}" for order in range(1, 7)],
         )
+        for item in metrics["sections"]:
+            self.assertEqual(item["attempt_count"], 1)
+            self.assertIsNone(item["failure_category"])
+            self.assertIsNone(item["failure_code"])
         for order, timing in enumerate(metrics["sections"], start=1):
             self.assertEqual(
                 set(timing),
-                {"section_id", "order", "status", "duration_ms"},
+                {
+                    "section_id",
+                    "order",
+                    "status",
+                    "duration_ms",
+                    "attempt_count",
+                    "failure_category",
+                    "failure_code",
+                },
             )
             self.assertEqual(timing["order"], order)
             self.assertEqual(timing["status"], "generated")

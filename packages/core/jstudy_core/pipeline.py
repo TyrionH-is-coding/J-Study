@@ -23,7 +23,9 @@ from packages.core.jstudy_core.materials.compatibility import (
     render_compatibility_markdown,
 )
 from packages.core.jstudy_core.materials.generation import (
+    SECTION_PROVIDER_CALL_LIMIT,
     generate_material_section,
+    generate_material_section_with_diagnostics,
 )
 from packages.core.jstudy_core.materials.models import (
     MaterialPackageV2,
@@ -221,7 +223,9 @@ def _run_sequence_first(
         mnemonics,
         limit=rag_config.mnemonic_limit,
     )
-    generate_section = section_generator or generate_material_section
+    generate_section = (
+        section_generator or generate_material_section_with_diagnostics
+    )
     outline_titles = (
         {
             section.id: section.title
@@ -322,6 +326,11 @@ def _run_sequence_first(
             ],
             "generation_metrics": {
                 "max_concurrency": generation_result.max_concurrency,
+                "provider_call_limit_per_section": SECTION_PROVIDER_CALL_LIMIT,
+                "max_provider_calls": (
+                    len(generation_result.sections)
+                    * SECTION_PROVIDER_CALL_LIMIT
+                ),
                 "section_count": len(generation_result.sections),
                 "total_duration_ms": generation_result.total_duration_ms,
                 "sections": [

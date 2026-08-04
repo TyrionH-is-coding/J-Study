@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -14,6 +15,7 @@ from .models import (
     MaterialSection,
     SectionQuality,
 )
+from .scheduling import SectionGenerationOutcome
 from .validation import (
     MaterialValidationError,
     citation_ids_for_section,
@@ -27,6 +29,10 @@ class _GeneratedSectionContent(BaseModel):
     blocks: list[MaterialBlock] = Field(min_length=1, max_length=120)
 
 
+SECTION_PROVIDER_CALL_LIMIT = 3
+_SAFE_FAILURE_CODE = re.compile(r"^[a-z0-9_]{1,64}$")
+
+
 def _messages(
     *,
     soul: str,
@@ -36,6 +42,7 @@ def _messages(
     evidence: Sequence[Mapping[str, Any]],
     source_ids: Sequence[str],
     validation_summary: str | None = None,
+    targeted_recovery: bool = False,
 ) -> list[dict[str, str]]:
     allowed_evidence_ids = [
         str(item["id"]) for item in evidence if item.get("id") is not None
@@ -164,6 +171,11 @@ def _messages(
             "\nThe previous result was invalid. Generate a new complete object. "
             f"Safe validation summary: {validation_summary}"
         )
+    if targeted_recovery:
+        prompt += (
+            "\nTargeted recovery for this section only: return the smallest "
+            "complete valid block set that preserves supported facts and citations."
+        )
     return [
         {
             "role": "system",
@@ -185,6 +197,26 @@ def _validation_summary(exc: Exception) -> str:
             summaries.append(f"{location}:{item['type']}")
         return ";".join(summaries)
     return "invalid_material_section"
+
+
+def _failure_diagnostic(exc: Exception) -> tuple[str, str]:
+    if isinstance(exc, providers.ProviderJSONError):
+        category = "provider_json"
+        candidate = str(exc)
+        fallback = "provider_json_error"
+    elif isinstance(exc, MaterialValidationError):
+        category = "material_validation"
+        candidate = exc.code
+        fallback = "material_validation_error"
+    elif isinstance(exc, ValidationError):
+        category = "schema_validation"
+        errors = exc.errors(include_url=False, include_context=False)
+        candidate = str(errors[0]["type"]) if errors else ""
+        fallback = "schema_validation_error"
+    else:
+        return "generation", "invalid_material_section"
+    code = candidate if _SAFE_FAILURE_CODE.fullmatch(candidate) else fallback
+    return category, code
 
 
 def _validate_generated_section(
@@ -315,6 +347,86 @@ def _weak_evidence_section(
     )
 
 
+def generate_material_section_with_diagnostics(
+    *,
+    section_id: str,
+    order: int,
+    title: str,
+    soul: str,
+    evidence: Sequence[Mapping[str, Any]],
+    source_ids: Sequence[str],
+    api_key: str,
+    model: str,
+    base_url: str = providers.SILICONFLOW_BASE_URL,
+) -> SectionGenerationOutcome:
+    if not evidence:
+        return SectionGenerationOutcome(
+            section=_weak_evidence_section(
+                section_id=section_id,
+                order=order,
+                title=title,
+            ),
+            attempt_count=0,
+            failure_category=None,
+            failure_code=None,
+        )
+
+    validation_summary: str | None = None
+    failure_category = "generation"
+    failure_code = "invalid_material_section"
+    for attempt in range(1, SECTION_PROVIDER_CALL_LIMIT + 1):
+        messages = _messages(
+            soul=soul,
+            section_id=section_id,
+            order=order,
+            title=title,
+            evidence=evidence,
+            source_ids=source_ids,
+            validation_summary=validation_summary,
+            targeted_recovery=(attempt == SECTION_PROVIDER_CALL_LIMIT),
+        )
+        try:
+            payload = providers.generate_json_object(
+                messages,
+                api_key=api_key,
+                model=model,
+                base_url=base_url,
+            )
+            return SectionGenerationOutcome(
+                section=_validate_generated_section(
+                    payload,
+                    section_id=section_id,
+                    order=order,
+                    title=title,
+                    evidence=evidence,
+                    source_ids=source_ids,
+                ),
+                attempt_count=attempt,
+                failure_category=None,
+                failure_code=None,
+            )
+        except (
+            providers.ProviderJSONError,
+            MaterialValidationError,
+            ValidationError,
+        ) as exc:
+            validation_summary = _validation_summary(exc)
+            failure_category, failure_code = _failure_diagnostic(exc)
+
+    return SectionGenerationOutcome(
+        section=_failed_section(
+            section_id=section_id,
+            order=order,
+            title=title,
+            evidence=evidence,
+            source_ids=source_ids,
+        ),
+        attempt_count=SECTION_PROVIDER_CALL_LIMIT,
+        failure_category=failure_category,
+        failure_code=failure_code,
+    )
+
+
 def generate_material_section(
     *,
     section_id: str,
@@ -327,52 +439,14 @@ def generate_material_section(
     model: str,
     base_url: str = providers.SILICONFLOW_BASE_URL,
 ) -> MaterialSection:
-    if not evidence:
-        return _weak_evidence_section(
-            section_id=section_id,
-            order=order,
-            title=title,
-        )
-
-    validation_summary: str | None = None
-    for attempt in range(2):
-        messages = _messages(
-            soul=soul,
-            section_id=section_id,
-            order=order,
-            title=title,
-            evidence=evidence,
-            source_ids=source_ids,
-            validation_summary=validation_summary,
-        )
-        try:
-            payload = providers.generate_json_object(
-                messages,
-                api_key=api_key,
-                model=model,
-                base_url=base_url,
-            )
-            return _validate_generated_section(
-                payload,
-                section_id=section_id,
-                order=order,
-                title=title,
-                evidence=evidence,
-                source_ids=source_ids,
-            )
-        except (
-            providers.ProviderJSONError,
-            MaterialValidationError,
-            ValidationError,
-        ) as exc:
-            validation_summary = _validation_summary(exc)
-            if attempt == 1:
-                break
-
-    return _failed_section(
+    return generate_material_section_with_diagnostics(
         section_id=section_id,
         order=order,
         title=title,
+        soul=soul,
         evidence=evidence,
         source_ids=source_ids,
-    )
+        api_key=api_key,
+        model=model,
+        base_url=base_url,
+    ).section

@@ -9,9 +9,6 @@ from typing import Any
 from .models import MaterialSection
 
 
-SectionGenerator = Callable[..., MaterialSection]
-
-
 @dataclass(frozen=True)
 class SectionGenerationRequest:
     section_id: str
@@ -22,11 +19,25 @@ class SectionGenerationRequest:
 
 
 @dataclass(frozen=True)
+class SectionGenerationOutcome:
+    section: MaterialSection
+    attempt_count: int
+    failure_category: str | None
+    failure_code: str | None
+
+
+SectionGenerator = Callable[..., MaterialSection | SectionGenerationOutcome]
+
+
+@dataclass(frozen=True)
 class SectionTiming:
     section_id: str
     order: int
     status: str
     duration_ms: int
+    attempt_count: int
+    failure_category: str | None
+    failure_code: str | None
 
 
 @dataclass(frozen=True)
@@ -44,7 +55,7 @@ def _generate_measured(
     generator_kwargs: Mapping[str, Any],
 ) -> tuple[MaterialSection, SectionTiming]:
     started = time.perf_counter()
-    section = generator(
+    generated = generator(
         section_id=request.section_id,
         order=request.order,
         title=request.title,
@@ -52,12 +63,29 @@ def _generate_measured(
         source_ids=list(request.source_ids),
         **generator_kwargs,
     )
+    if isinstance(generated, SectionGenerationOutcome):
+        outcome = generated
+    else:
+        outcome = SectionGenerationOutcome(
+            section=generated,
+            attempt_count=1,
+            failure_category=(
+                "generation" if generated.status == "failed" else None
+            ),
+            failure_code=(
+                "section_failed" if generated.status == "failed" else None
+            ),
+        )
+    section = outcome.section
     duration_ms = int((time.perf_counter() - started) * 1000)
     return section, SectionTiming(
         section_id=request.section_id,
         order=request.order,
         status=section.status,
         duration_ms=duration_ms,
+        attempt_count=outcome.attempt_count,
+        failure_category=outcome.failure_category,
+        failure_code=outcome.failure_code,
     )
 
 

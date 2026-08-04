@@ -6,6 +6,7 @@ from packages.core.jstudy_core.materials.models import (
     SectionQuality,
 )
 from packages.core.jstudy_core.materials.scheduling import (
+    SectionGenerationOutcome,
     SectionGenerationRequest,
     generate_sections_bounded,
 )
@@ -197,6 +198,27 @@ class MaterialSchedulingTest(unittest.TestCase):
                         generator_kwargs={},
                         max_concurrency=value,
                     )
+
+    def test_safe_generation_diagnostics_are_preserved_in_timing(self):
+        def diagnostic_generator(**kwargs):
+            return SectionGenerationOutcome(
+                section=section_from_call(**kwargs),
+                attempt_count=3,
+                failure_category="schema_validation",
+                failure_code="list_type",
+            )
+
+        result = generate_sections_bounded(
+            (request(1),),
+            generator=diagnostic_generator,
+            generator_kwargs={},
+            max_concurrency=1,
+        )
+
+        timing = result.timings[0]
+        self.assertEqual(timing.attempt_count, 3)
+        self.assertEqual(timing.failure_category, "schema_validation")
+        self.assertEqual(timing.failure_code, "list_type")
 
 
 if __name__ == "__main__":

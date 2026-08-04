@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 from packages.core.jstudy_core.materials.generation import (
     generate_material_section,
+    generate_material_section_with_diagnostics,
 )
 from packages.core.jstudy_core.materials.compatibility import (
     render_compatibility_markdown,
@@ -649,6 +650,7 @@ class StructuredGenerationTest(unittest.TestCase):
         provider.side_effect = [
             {"raw": "FIRST-PRIVATE-TEXT"},
             {"raw": "SECOND-PRIVATE-TEXT"},
+            {"raw": "THIRD-PRIVATE-TEXT"},
         ]
 
         section = generate_material_section(
@@ -662,12 +664,77 @@ class StructuredGenerationTest(unittest.TestCase):
             model="test-model",
         )
 
-        self.assertEqual(provider.call_count, 2)
+        self.assertEqual(provider.call_count, 3)
         self.assertEqual(section.status, "failed")
         self.assertEqual(section.blocks, [])
         dumped = str(section.model_dump())
         self.assertNotIn("FIRST-PRIVATE-TEXT", dumped)
         self.assertNotIn("SECOND-PRIVATE-TEXT", dumped)
+        self.assertNotIn("THIRD-PRIVATE-TEXT", dumped)
+        recovery_messages = provider.call_args_list[2].args[0]
+        self.assertIn(
+            "Targeted recovery for this section only",
+            recovery_messages[-1]["content"],
+        )
+
+    @patch(
+        "packages.core.jstudy_core.materials.generation.providers.generate_json_object"
+    )
+    def test_targeted_recovery_returns_safe_bounded_diagnostics(self, provider):
+        provider.side_effect = [
+            {"raw": "FIRST-PRIVATE-TEXT"},
+            {"raw": "SECOND-PRIVATE-TEXT"},
+            {"raw": "THIRD-PRIVATE-TEXT"},
+        ]
+
+        outcome = generate_material_section_with_diagnostics(
+            section_id="section-001",
+            order=1,
+            title="绪论",
+            soul="teaching rules",
+            evidence=evidence_items()[:1],
+            source_ids=["S001"],
+            api_key="credential-must-not-appear",
+            model="test-model",
+        )
+
+        self.assertEqual(provider.call_count, 3)
+        self.assertEqual(outcome.section.status, "failed")
+        self.assertEqual(outcome.attempt_count, 3)
+        self.assertEqual(outcome.failure_category, "schema_validation")
+        self.assertEqual(outcome.failure_code, "list_type")
+        diagnostics = str(outcome)
+        self.assertNotIn("FIRST-PRIVATE-TEXT", diagnostics)
+        self.assertNotIn("SECOND-PRIVATE-TEXT", diagnostics)
+        self.assertNotIn("THIRD-PRIVATE-TEXT", diagnostics)
+        self.assertNotIn("credential-must-not-appear", diagnostics)
+
+    @patch(
+        "packages.core.jstudy_core.materials.generation.providers.generate_json_object"
+    )
+    def test_targeted_recovery_can_restore_only_the_failed_section(self, provider):
+        provider.side_effect = [
+            ProviderJSONError("invalid_json"),
+            {"raw": "still-invalid"},
+            generated_section_payload(),
+        ]
+
+        outcome = generate_material_section_with_diagnostics(
+            section_id="section-001",
+            order=1,
+            title="绪论",
+            soul="teaching rules",
+            evidence=evidence_items()[:1],
+            source_ids=["S001"],
+            api_key="test-key",
+            model="test-model",
+        )
+
+        self.assertEqual(provider.call_count, 3)
+        self.assertEqual(outcome.section.status, "generated")
+        self.assertEqual(outcome.attempt_count, 3)
+        self.assertIsNone(outcome.failure_category)
+        self.assertIsNone(outcome.failure_code)
 
     @patch(
         "packages.core.jstudy_core.materials.generation.providers.generate_json_object"
